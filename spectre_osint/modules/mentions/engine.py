@@ -20,6 +20,11 @@ from spectre_osint.modules.mentions.providers import (
     default_mention_providers,
 )
 from spectre_osint.modules.mentions.relevance import classify_mention
+from spectre_osint.modules.username.matching import (
+    EXACT_MATCH,
+    SIMILAR_CANDIDATE,
+    classify_username_match,
+)
 
 logger = get_logger("spectre.mentions")
 
@@ -87,12 +92,27 @@ def _finding_from_raw(
     relevance: str,
     relevance_reason: str,
     associated_with: list[str],
+    originating_lead: str = "",
 ) -> tuple[MentionRecord, Entity, Any, Finding]:
     conf = _confidence(match_type)
     canonical = _canonical_url(raw.url)
     observed_at = utcnow()
     reason = f"{match_type} in {matched_field}"
     sources = [raw.provider] if raw.provider else []
+
+    match_classification = match_type
+    if kind == "username":
+        u_match = classify_username_match(query, matched_value)
+        if u_match == SIMILAR_CANDIDATE:
+            conf = Confidence.LOW
+            match_classification = SIMILAR_CANDIDATE
+            summary = f"OBSERVED mention of similar candidate @{matched_value} (lead: @{originating_lead or query}): {raw.title}"
+        else:
+            match_classification = EXACT_MATCH
+            summary = f"OBSERVED mention of @{query}: {raw.title}"
+    else:
+        summary = f"OBSERVED mention of {safe_query}: {raw.title}"
+
     mention = MentionRecord(
         query=query,
         source=raw.provider,
@@ -124,7 +144,7 @@ def _finding_from_raw(
         canonical or raw.title,
         source=raw.provider,
         confidence=conf,
-        tags=["public-mention", "not-profile"],
+        tags=["public-mention", "not-profile"] + (["similar-candidate"] if match_classification == SIMILAR_CANDIDATE else []),
         metadata={
             "query": safe_query,
             "input_type": kind,
@@ -132,6 +152,10 @@ def _finding_from_raw(
             "url": canonical,
             "not_identity": True,
             "match_type": match_type,
+            "match_classification": match_classification,
+            "requested_username": query if kind == "username" else "",
+            "observed_username": matched_value if kind == "username" else "",
+            "originating_lead": originating_lead or query,
             "relevance": relevance,
         },
     )
@@ -146,6 +170,8 @@ def _finding_from_raw(
             "query": safe_query,
             "matched_field": matched_field,
             "match_type": match_type,
+            "match_classification": match_classification,
+            "originating_lead": originating_lead or query,
         },
         entity_id=entity.id,
         notes="Public mention. Not a social profile.",
@@ -154,7 +180,7 @@ def _finding_from_raw(
         module="mentions",
         title="Public mention",
         status=FindingStatus.OBSERVED,
-        summary=f"OBSERVED mention of {safe_query}: {raw.title}",
+        summary=summary,
         data={
             "query": safe_query,
             "kind": kind,
@@ -169,6 +195,10 @@ def _finding_from_raw(
             "matched_value": matched_value,
             "matched_field": matched_field,
             "match_type": match_type,
+            "match_classification": match_classification,
+            "requested_username": query if kind == "username" else "",
+            "observed_username": matched_value if kind == "username" else "",
+            "originating_lead": originating_lead or query,
             "published_at": raw.published_at,
             "observed_at": observed_at.isoformat(),
             "source_type": "public_index",
@@ -246,6 +276,7 @@ async def collect_public_mentions(
     providers: list[MentionProvider] | None = None,
     unavailable_logged: set[str] | None = None,
     case_inputs: dict[str, Any] | None = None,
+    originating_lead: str = "",
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Search public indexes, then accept only verified matches."""
@@ -254,6 +285,7 @@ async def collect_public_mentions(
     if not value:
         return {"findings": [], "entities": [], "evidence": [], "mentions": []}
     safe_query = redact_text(value) if kind == "email" else value
+    lead = originating_lead or value
     backends = providers if providers is not None else default_mention_providers()
     findings: list[Finding] = []
     entities: list[Entity] = []
@@ -363,6 +395,7 @@ async def collect_public_mentions(
                 relevance=relevance,
                 relevance_reason=relevance_reason,
                 associated_with=associated_with,
+                originating_lead=lead,
             )
             mentions.append(mention)
             entities.append(entity)

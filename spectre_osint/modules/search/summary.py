@@ -84,6 +84,16 @@ def build_intelligence_summary(result: InvestigationResult) -> dict[str, Any]:
         for f in result.findings
         if f.module == "search" and str((f.data or {}).get("kind") or "") == "discovered_profile"
     ]
+    exact_discovered = [
+        f
+        for f in discovered
+        if str((f.data or {}).get("match_type") or "EXACT_MATCH") == "EXACT_MATCH"
+    ]
+    similar_candidates = [
+        f
+        for f in discovered
+        if str((f.data or {}).get("match_type") or "") == "SIMILAR_CANDIDATE"
+    ]
     indicators = [
         f
         for f in result.findings
@@ -153,6 +163,8 @@ def build_intelligence_summary(result: InvestigationResult) -> dict[str, Any]:
             "search_results": int(coverage.get("results") or 0),
             "relevant": int(coverage.get("relevant") or 0),
             "discovered_profiles": len(discovered),
+            "exact_discovered_profiles": len(exact_discovered),
+            "similar_candidates": len(similar_candidates),
             "new_indicators": len(indicators),
             "automatic_pivots": len(auto_pivots),
         },

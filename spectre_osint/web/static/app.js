@@ -125,9 +125,6 @@
         if (evt.key === "Enter" || evt.key === ",") {
           evt.preventDefault();
           commit();
-        } else if ((evt.key === "Backspace" || evt.key === "Delete") && !input.value) {
-          var chips = list.querySelectorAll(".chip");
-          if (chips.length) chips[chips.length - 1].remove();
         }
       });
       input.addEventListener("blur", commit);

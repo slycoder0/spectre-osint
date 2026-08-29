@@ -43,15 +43,37 @@ def lead_host(value: str) -> str:
 
 def normalize_case_inputs(raw: dict[str, Any] | None) -> dict[str, list[str]]:
     data = dict(raw or {})
-    usernames = [str(item).strip().lstrip("@") for item in (data.get("usernames") or []) if str(item).strip()]
-    names = [str(item).strip() for item in (data.get("names") or []) if str(item).strip()]
-    emails = [str(item).strip() for item in (data.get("emails") or []) if str(item).strip()]
-    domains = [lead_host(str(item)) for item in (data.get("domains") or [])]
+    raw_usernames = list(data.get("usernames") or [])
+    if "username" in data and data["username"]:
+        raw_usernames.append(data["username"])
+    if "aliases" in data and isinstance(data["aliases"], list):
+        raw_usernames.extend(data["aliases"])
+    usernames = [str(item).strip().lstrip("@") for item in raw_usernames if str(item).strip()]
+
+    raw_names = list(data.get("names") or [])
+    if "display_name" in data and data["display_name"]:
+        raw_names.append(data["display_name"])
+    if "name" in data and data["name"]:
+        raw_names.append(data["name"])
+    names = [str(item).strip() for item in raw_names if str(item).strip()]
+
+    raw_emails = list(data.get("emails") or [])
+    if "email" in data and data["email"]:
+        raw_emails.append(data["email"])
+    emails = [str(item).strip() for item in raw_emails if str(item).strip()]
+
+    raw_domains = list(data.get("domains") or [])
+    if "domain" in data and data["domain"]:
+        raw_domains.append(data["domain"])
+    if "website" in data and data["website"]:
+        raw_domains.append(data["website"])
+    domains = [lead_host(str(item)) for item in raw_domains]
+
     return {
-        "usernames": [item for item in usernames if item],
-        "names": [item for item in names if item],
-        "emails": [item for item in emails if item],
-        "domains": [item for item in domains if item],
+        "usernames": list(dict.fromkeys([item for item in usernames if item])),
+        "names": list(dict.fromkeys([item for item in names if item])),
+        "emails": list(dict.fromkeys([item for item in emails if item])),
+        "domains": list(dict.fromkeys([item for item in domains if item])),
     }
 
 

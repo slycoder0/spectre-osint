@@ -27,6 +27,8 @@ def _add(
     source: str,
     original_finding: str,
     extraction_rule: str,
+    match_type: str = "EXACT_MATCH",
+    originating_lead: str = "",
 ) -> None:
     raw = str(value or "").strip()
     if not raw:
@@ -54,6 +56,8 @@ def _add(
             "sources": [source] if source else [],
             "original_finding": original_finding,
             "extraction_rule": extraction_rule,
+            "match_type": match_type,
+            "originating_lead": originating_lead,
             "observed_at": _now(),
         }
     )
@@ -173,6 +177,8 @@ def extract_indicators(
                 )
         if finding.module == "search" and str(data.get("kind") or "") == "discovered_profile":
             handle = str(data.get("username") or "")
+            match_type = str(data.get("match_type") or "EXACT_MATCH")
+            originating_lead = str(data.get("originating_lead") or "")
             if handle and handle.lower() not in operator:
                 _add(
                     out,
@@ -182,6 +188,8 @@ def extract_indicators(
                     source=str(data.get("source") or "search"),
                     original_finding=fid,
                     extraction_rule="discovered_profile_username",
+                    match_type=match_type,
+                    originating_lead=originating_lead,
                 )
             url = str(data.get("profile_url") or "")
             if url:

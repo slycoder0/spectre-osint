@@ -271,6 +271,7 @@ class InvestigationRunner:
                     settings=self.settings,
                     unavailable_logged=mention_unavailable,
                     case_inputs=mention_leads,
+                    originating_lead=entity.normalized_value,
                     progress=self._progress,
                 )
                 _extend_bundle(bundle, mentions)
@@ -447,6 +448,7 @@ class InvestigationRunner:
                     settings=self.settings,
                     unavailable_logged=mention_unavailable,
                     case_inputs=mention_leads,
+                    originating_lead=value,
                     progress=self._progress,
                 )
                 _extend_bundle(merged, mention_bundle)

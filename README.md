@@ -199,7 +199,7 @@ spectre auth status
 
 ## [09] Project Status
 
-- **Version:** `0.1.0b1` (Beta validated — release candidate ready)
+- **Version:** `0.1.0b1` (Public Beta)
 - **License:** [MIT](LICENSE)
 - **Security:** Report vulnerabilities via GitHub Security Advisories ([SECURITY.md](SECURITY.md))
 - **Contributing:** Guidelines and synthetic testing requirements in [CONTRIBUTING.md](CONTRIBUTING.md)

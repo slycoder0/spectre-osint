@@ -1,13 +1,11 @@
 # Release
 
-SPECTRE is **beta `0.1.0b1` (validated on CI, ready to tag)**. Tag has **not** been executed.
-
-Reading this file is **not** authorization to tag.
+SPECTRE is **beta `0.1.0b1` (released)**. Tag `0.1.0b1` published.
 
 ## Channel
 
 ```
-0.1.0b1 (validated on CI)  →  remote tag & release  →  later betas  →  stable
+0.1.0b1 (released)  →  subsequent betas  →  stable
 ```
 
 `CHANGELOG.md` uses Keep a Changelog. Until a tag exists, work stays under

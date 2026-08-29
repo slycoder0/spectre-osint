@@ -41,10 +41,12 @@ from spectre_osint.modules.search.providers import (
     SearxngProvider,
     default_search_providers,
 )
+from spectre_osint.modules.username.matching import (
+    SIMILAR_CANDIDATE,
+    UNRELATED,
+)
 
 logger = get_logger("spectre.search")
-
-UNRELATED = "UNRELATED"
 
 
 class SearchEngine:
@@ -126,6 +128,10 @@ def _query_kind(planned: PlannedQuery) -> str:
 
 
 def _match_value(planned: PlannedQuery, leads: dict[str, list[str]]) -> str:
+    if planned.target_value:
+        return planned.target_value
+    if planned.originating_lead:
+        return planned.originating_lead
     kind = _query_kind(planned)
     if kind == "username":
         return (leads.get("usernames") or [""])[0]
@@ -173,6 +179,7 @@ async def _run_queries(
         stats["queries_issued"] += 1
         kind = _query_kind(planned)
         seed = _match_value(planned, leads) or planned.text
+        originating_lead = planned.originating_lead or seed
         safe = _safe_query(kind, seed)
         for provider in providers:
             name = str(getattr(provider, "name", "search"))
@@ -225,17 +232,18 @@ async def _run_queries(
                 )
                 discovered = False
                 relevance = UNRELATED
+                disc_res = None
                 if kind == "username":
-                    ok, rel = classify_discovered_profile(
+                    disc_res = classify_discovered_profile(
                         url=hit.url,
                         title=hit.title,
                         snippet=hit.snippet,
                         username=seed,
                         known_hosts=known_hosts,
                     )
-                    if ok:
+                    if disc_res.is_candidate:
                         discovered = True
-                        relevance = rel
+                        relevance = disc_res.relevance
                 if matched_row is None and not discovered:
                     stats["unrelated"] += 1
                     continue
@@ -259,22 +267,35 @@ async def _run_queries(
                 if canonical in seen_urls:
                     continue
                 seen_urls.add(canonical)
-                if discovered:
+                if discovered and disc_res is not None:
                     stats["discovered"] += 1
                     host = (urlparse(hit.url).hostname or "").lower().removeprefix("www.")
-                    handle = seed.lstrip("@")
+                    handle = disc_res.observed_username or seed.lstrip("@")
+                    match_type = disc_res.match_type
+                    if match_type == SIMILAR_CANDIDATE:
+                        summary = f"Similar profile candidate on {host}: @{handle} (lead: @{originating_lead.lstrip('@')})"
+                        confidence = Confidence.LOW
+                        tags = ["candidate", "discovered", "similar"]
+                    else:
+                        summary = f"Candidate profile on {host}: @{handle}"
+                        confidence = Confidence.LOW
+                        tags = ["candidate", "discovered"]
                     findings.append(
                         Finding(
                             module="search",
                             title="Discovered profile",
                             status=FindingStatus.OBSERVED,
-                            summary=f"Candidate profile on {host}",
-                            confidence=Confidence.LOW,
+                            summary=summary,
+                            confidence=confidence,
                             data={
                                 "kind": "discovered_profile",
                                 "platform": "discovered",
                                 "host": host,
                                 "username": handle,
+                                "requested_username": seed.lstrip("@"),
+                                "observed_username": handle,
+                                "originating_lead": originating_lead.lstrip("@"),
+                                "match_type": match_type,
                                 "profile_url": canonical,
                                 "source": name,
                                 "relevance": relevance,
@@ -293,20 +314,25 @@ async def _run_queries(
                             EntityType.SOCIAL_PROFILE,
                             canonical,
                             source=name,
-                            confidence=Confidence.LOW,
-                            tags=["candidate", "discovered"],
+                            confidence=confidence,
+                            tags=tags,
                             metadata={
                                 "candidate": True,
                                 "host": host,
                                 "username": handle,
+                                "requested_username": seed.lstrip("@"),
+                                "observed_username": handle,
+                                "originating_lead": originating_lead.lstrip("@"),
+                                "match_type": match_type,
                                 "not_confirmed": True,
                             },
                         )
                     )
                     logger.debug(
-                        "discovered profile host=%s input=username relevance=%s",
+                        "discovered profile host=%s input=username relevance=%s match_type=%s",
                         host,
                         relevance,
+                        match_type,
                     )
                     continue
                 if matched_row is None:
@@ -323,6 +349,7 @@ async def _run_queries(
                     relevance=relevance,
                     relevance_reason=relevance_reason,
                     associated_with=associated_with,
+                    originating_lead=originating_lead.lstrip("@"),
                 )
                 findings.append(finding)
                 entities.append(entity)
