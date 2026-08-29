@@ -21,6 +21,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Privacy and hygiene scan
+        run: |
+          if git ls-files | grep -Ei '(\.(db|sqlite3?|pem|key|pfx|p12)|storage_state\.json|cookies\.json|\.env|\.auth)$'; then
+            echo "Privacy check failed: sensitive artifact tracked in git" >&2
+            exit 1
+          fi
       - name: pip check
         run: pip check
       - name: Tests
