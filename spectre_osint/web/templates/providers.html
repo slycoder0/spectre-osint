@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "macros.html" import status_badge with context %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ t('nav.system') }}</h1>
+    <p class="muted">{{ t('providers_page.help') }} <code>{{ t('providers_page.probe_cmd') }}</code></p>
+  </div>
+  <div class="seg">
+    <a class="seg-item" href="/providers"><span>{{ t('nav.providers') }}</span></a>
+    <a class="seg-item" href="/sessions"><span>{{ t('nav.sessions') }}</span></a>
+  </div>
+</div>
+<div class="sys-kpis">
+  <article class="metric-card">
+    <p class="label">{{ t('system.providers') }}</p>
+    <p class="num" data-count="{{ system_stats.provider_count }}">{{ system_stats.provider_count }}</p>
+  </article>
+  <article class="metric-card">
+    <p class="label">{{ t('system.apis') }}</p>
+    <p class="num" data-count="{{ system_stats.configured_providers }}">{{ system_stats.configured_providers }}</p>
+  </article>
+  <article class="metric-card">
+    <p class="label">{{ t('system.sessions_active') }}</p>
+    <p class="num" data-count="{{ system_stats.active_sessions }}">{{ system_stats.active_sessions }}</p>
+  </article>
+  <article class="metric-card">
+    <p class="label">{{ t('system.degraded') }}</p>
+    <p class="num" data-count="{{ system_stats.degraded }}">{{ system_stats.degraded }}</p>
+  </article>
+</div>
+
+<h2>{{ t('providers_page.title') }}</h2>
+<p class="filters pills" role="navigation" aria-label="{{ t('common.filter') }}">
+  <a class="tag {% if provider_filter == 'all' %}active{% endif %}" href="?filter=all">{{ t('providers_page.filter_all') }}</a>
+  <a class="tag {% if provider_filter == 'available' %}active{% endif %}" href="?filter=available">{{ t('providers_page.filter_available') }}</a>
+  <a class="tag {% if provider_filter == 'not_configured' %}active{% endif %}" href="?filter=not_configured">{{ t('providers_page.filter_not_configured') }}</a>
+  <a class="tag {% if provider_filter == 'not_probed' %}active{% endif %}" href="?filter=not_probed">{{ t('providers_page.filter_not_probed') }}</a>
+  <a class="tag {% if provider_filter == 'unavailable' %}active{% endif %}" href="?filter=unavailable">{{ t('providers_page.filter_unavailable') }}</a>
+</p>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{ t('providers_page.provider') }}</th>
+      <th>{{ t('providers_page.type') }}</th>
+      <th>{{ t('providers_page.configured') }}</th>
+      <th>{{ t('providers_page.reachability') }}</th>
+      <th>{{ t('providers_page.rate_limit') }}</th>
+      <th>{{ t('providers_page.last_check') }}</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in providers %}
+  {% set st = p.status.replace(' ', '_') if p.status else '' %}
+  <tr>
+    <td>
+      <span class="dot {% if p.available is sameas true %}on{% elif p.available is sameas false %}fail{% else %}off{% endif %}"></span>
+      {{ p.name }}
+    </td>
+    <td class="mono">{{ p.key_type }}</td>
+    <td>{{ p.configured_label }}</td>
+    <td>
+      {% if p.available is sameas true %}{{ status_badge('ACTIVE') }}
+      {% elif p.available is sameas false %}{{ status_badge('PROVIDER_UNAVAILABLE') }}
+      {% else %}{{ status_badge(st if st and st != 'NOT_PROBED' else 'NOT_CONFIGURED') if p.status == 'NOT CONFIGURED' else t('common.not_probed') }}{% endif %}
+    </td>
+    <td>{{ p.rate_limit }}</td>
+    <td class="ts">{{ format_ts(p.last_check) if p.last_check else '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

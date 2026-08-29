@@ -1,0 +1,3 @@
+# Install with: pip install -e ".[dev]"
+# Reproducible pin set is requirements.lock (generated on the CI/Python used).
+-e .

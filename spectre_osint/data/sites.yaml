@@ -1,0 +1,763 @@
+# Passive username catalog. HTTP 200 is never sufficient for CONFIRMED.
+# check_method: json_api | generic_html | login_wall
+sites:
+  - name: GitHub
+    category: Development
+    profile_url: "https://github.com/{username}"
+    check_url: "https://api.github.com/users/{username}"
+    check_method: json_api
+    json_id_field: login
+    display_name_fields: [name, login]
+    website_fields: [blog]
+    bio_field: bio
+    avatar_field: avatar_url
+    location_field: location
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+    notes: Public users API. Token optional for quota.
+
+  - name: GitLab
+    category: Development
+    profile_url: "https://gitlab.com/{username}"
+    check_url: "https://gitlab.com/{username}"
+    check_method: generic_html
+    success_patterns: ["p-name", "user-profile"]
+    not_found_patterns: ["sign in or sign up", "page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.4
+
+  - name: Bitbucket
+    category: Development
+    profile_url: "https://bitbucket.org/{username}/"
+    check_method: generic_html
+    success_patterns: ["user-avatar"]
+    not_found_patterns: ["page not found", "repository not found", "404"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+
+  - name: Codeberg
+    category: Development
+    profile_url: "https://codeberg.org/{username}"
+    check_method: generic_html
+    success_patterns: ["user-profile", "profile-avatar"]
+    not_found_patterns: ["not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+
+  - name: Reddit
+    category: Social
+    profile_url: "https://www.reddit.com/user/{username}"
+    check_url: "https://www.reddit.com/user/{username}/about.json"
+    check_method: json_api
+    json_id_field: data.name
+    display_name_fields: [data.name, data.subreddit.title]
+    website_fields: []
+    expected_status: [200]
+    not_found_status: [404]
+    not_found_patterns: ["sorry, nobody on reddit goes by that name"]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.6
+
+  - name: HackerNews
+    category: Forums
+    profile_url: "https://news.ycombinator.com/user?id={username}"
+    check_method: generic_html
+    success_patterns: ["created:", "karma:"]
+    not_found_patterns: ["no such user"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+
+  - name: Dev.to
+    category: Development
+    profile_url: "https://dev.to/{username}"
+    check_method: generic_html
+    success_patterns: ["crayons-header"]
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+
+  - name: Medium
+    category: Social
+    profile_url: "https://medium.com/@{username}"
+    check_method: generic_html
+    success_patterns: ['"@type":"Person"']
+    not_found_patterns: ["out of nothing, something", "page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Keybase
+    category: Security
+    profile_url: "https://keybase.io/{username}"
+    check_url: "https://keybase.io/_/api/1.0/user/lookup.json?username={username}"
+    check_method: json_api
+    json_id_field: them.0.id
+    display_name_fields: [them.0.profile.full_name]
+    website_fields: [them.0.profile.location]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+    notes: Lookup API. them[] empty means not found — handled as missing identity field.
+
+  - name: Docker Hub
+    category: Development
+    profile_url: "https://hub.docker.com/u/{username}"
+    check_url: "https://hub.docker.com/v2/users/{username}/"
+    check_method: json_api
+    json_id_field: username
+    display_name_fields: [full_name, username]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+
+  - name: npm
+    category: Development
+    profile_url: "https://www.npmjs.com/~{username}"
+    check_method: generic_html
+    success_patterns: ["npm-avatar"]
+    not_found_patterns: ["not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+
+  - name: PyPI
+    category: Development
+    profile_url: "https://pypi.org/user/{username}/"
+    check_method: generic_html
+    success_patterns: ["author-profile"]
+    not_found_patterns: ["not found"]
+    soft_404_patterns: ["we looked everywhere"]
+    redirect_home: not_found
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: Profile pages use title/canonical /user/{username}/. HTTP 200 on the request URL is not enough.
+
+  - name: Replit
+    category: Development
+    profile_url: "https://replit.com/@{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["not found", "404", "doesn't exist"]
+    redirect_home: not_found
+    redirect_search: not_found
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+    notes: SPA shell is INCONCLUSIVE. Need canonical/og:url + title with @{username}.
+
+  - name: Kaggle
+    category: Tech
+    profile_url: "https://www.kaggle.com/{username}"
+    check_method: generic_html
+    success_patterns: ["kaggle-component"]
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Pinterest
+    category: Art
+    profile_url: "https://www.pinterest.com/{username}/"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["couldn't find", "user not found"]
+    login_patterns: ["signup", "log in"]
+    redirect_home: not_found
+    redirect_search: not_found
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    rate_limit: 0.6
+    notes: Branding/og:title tag names are not evidence. Need profile canonical/og:url + title.
+
+  - name: Tumblr
+    category: Social
+    profile_url: "https://{username}.tumblr.com/"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["there's nothing here"]
+    soft_404_patterns: ["there's nothing here"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Steam
+    category: Gaming
+    profile_url: "https://steamcommunity.com/id/{username}"
+    check_method: generic_html
+    success_patterns: ["profile_header"]
+    not_found_patterns: ["the specified profile could not be found"]
+    redirect_home: not_found
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+    notes: /id/{username} resolving to /profiles/{steamid} is a positive identity signal.
+
+  - name: YouTube
+    category: Video
+    profile_url: "https://www.youtube.com/@{username}"
+    check_method: generic_html
+    success_patterns: ['"channelId"']
+    not_found_patterns: ["this page isn't available"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Twitch
+    category: Video
+    profile_url: "https://www.twitch.tv/{username}"
+    auth_platform: twitch
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["sorry. unless you've got a time machine", "page not found"]
+    login_patterns: ["passport"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    rate_limit: 0.6
+    notes: SPA; Helix API requires a key we do not require.
+
+  - name: Vimeo
+    category: Video
+    profile_url: "https://vimeo.com/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["sorry, we couldn't find that page"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: SoundCloud
+    category: Music
+    profile_url: "https://soundcloud.com/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["we can't find that user"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Last.fm
+    category: Music
+    profile_url: "https://www.last.fm/user/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["page not found"]
+    redirect_home: not_found
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: Need /user/{username} canonical or og:url plus title match. og:title tag name is not evidence.
+
+  - name: Chess.com
+    category: Gaming
+    profile_url: "https://www.chess.com/member/{username}"
+    check_url: "https://api.chess.com/pub/player/{username}"
+    check_method: json_api
+    json_id_field: username
+    display_name_fields: [name, username]
+    website_fields: [url]
+    avatar_field: avatar
+    location_field: location
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.6
+
+  - name: Lichess
+    category: Gaming
+    profile_url: "https://lichess.org/@/{username}"
+    check_url: "https://lichess.org/api/user/{username}"
+    check_method: json_api
+    json_id_field: id
+    display_name_fields: [username, title]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+
+  - name: Bluesky
+    category: Social
+    profile_url: "https://bsky.app/profile/{username}"
+    check_url: "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor={username}"
+    check_method: json_api
+    json_id_field: handle
+    display_name_fields: [displayName, handle]
+    website_fields: []
+    avatar_field: avatar
+    expected_status: [200]
+    not_found_status: [400, 404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+    notes: Public AppView API. Handle may need domain (user.bsky.social).
+
+  - name: Mastodon-mastodon.social
+    category: Social
+    profile_url: "https://mastodon.social/@{username}"
+    check_url: "https://mastodon.social/.well-known/webfinger?resource=acct:{username}@mastodon.social"
+    check_method: json_api
+    json_id_field: subject
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.6
+    notes: Only mastodon.social. Other instances are not enumerated.
+
+  - name: Linktree
+    category: Social
+    profile_url: "https://linktr.ee/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["this page is missing", "page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: HackerOne
+    category: Security
+    profile_url: "https://hackerone.com/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Bugcrowd
+    category: Security
+    profile_url: "https://bugcrowd.com/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Behance
+    category: Art
+    profile_url: "https://www.behance.net/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Dribbble
+    category: Art
+    profile_url: "https://dribbble.com/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["whoops", "page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: ArtStation
+    category: Art
+    profile_url: "https://www.artstation.com/{username}"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Flickr
+    category: Art
+    profile_url: "https://www.flickr.com/people/{username}/"
+    check_method: generic_html
+    success_patterns: []
+    not_found_patterns: ["page not found", "doesn't exist"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+
+  - name: Telegram
+    category: Social
+    profile_url: "https://t.me/{username}"
+    check_method: generic_html
+    success_patterns: ["tgme_page_photo"]
+    not_found_patterns: []
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    rate_limit: 0.6
+    notes: t.me contact shells are INCONCLUSIVE. LIKELY only with tgme_page_photo and username in title. Never CONFIRMED.
+
+  - name: Instagram
+    category: Social
+    profile_url: "https://www.instagram.com/{username}/"
+    auth_platform: instagram
+    check_method: login_wall
+    login_patterns: ["log in", "login", "signup"]
+    blocked_patterns: ["restrict"]
+    challenge_patterns: ["checkpoint"]
+    captcha_patterns: ["captcha"]
+    not_found_patterns: ["sorry, this page isn't available"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    notes: No public unauthenticated profile API. Never CONFIRMED.
+
+  - name: Facebook
+    category: Social
+    profile_url: "https://www.facebook.com/{username}"
+    auth_platform: facebook
+    check_method: login_wall
+    login_patterns: ["log in", "login", "create new account"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    notes: Login wall. No reliable public existence check.
+
+  - name: Threads
+    category: Social
+    profile_url: "https://www.threads.net/@{username}"
+    auth_platform: threads
+    check_method: login_wall
+    login_patterns: ["log in", "login"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    notes: Same constraints as Instagram.
+
+  - name: TikTok
+    category: Social
+    profile_url: "https://www.tiktok.com/@{username}"
+    auth_platform: tiktok
+    check_method: login_wall
+    login_patterns: ["log in", "login", "sign up"]
+    blocked_patterns: ["restricted"]
+    captcha_patterns: ["captcha"]
+    challenge_patterns: ["verify your identity"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    notes: Challenge/login pages are common. Never CONFIRMED.
+
+  - name: X
+    category: Social
+    profile_url: "https://x.com/{username}"
+    auth_platform: x
+    check_method: login_wall
+    login_patterns: ["log in", "sign in", "javascript is not available"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: never_confirmed
+    notes: Official API is authenticated. Public HTML is not a reliable existence oracle. Authenticated Playwright login may be refused; anonymous lookup is unchanged.
+
+  # Conservative coverage expansion. HTTP 200 is never CONFIRMED without explicit API identity.
+  - name: GOG
+    category: Gaming
+    profile_url: "https://www.gog.com/u/{username}"
+    check_method: generic_html
+    success_patterns: ["user-profile", "user-stats"]
+    not_found_patterns: ["page not found", "404"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "URL /u/{username}. HTML profile markers. 404 = NOT_FOUND. HTTP 200 only = INCONCLUSIVE. CONFIRMED not possible."
+
+  - name: WordPress.org
+    category: Development
+    profile_url: "https://profiles.wordpress.org/{username}/"
+    check_method: generic_html
+    success_patterns: ["member since", "user-profile"]
+    not_found_patterns: ["page not found", "not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "profiles.wordpress.org/{username}. Member-since text. Soft-404 via not_found_patterns. Never CONFIRMED."
+
+  - name: WordPress Support
+    category: Forums
+    profile_url: "https://wordpress.org/support/users/{username}/"
+    check_method: generic_html
+    success_patterns: ["user-profile", "bbp-user"]
+    not_found_patterns: ["not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "support/users/{username}. Forum profile chrome. 404 = NOT_FOUND. CONFIRMED not possible."
+
+  - name: Freelancer
+    category: Freelance
+    profile_url: "https://www.freelancer.com/u/{username}"
+    check_method: generic_html
+    success_patterns: ["user-profile", "fl-profile"]
+    not_found_patterns: ["page not found", "user not found"]
+    login_patterns: ["log in", "sign up"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+    notes: "freelancer.com/u/{username}. Login wall possible. HTTP 200 only INCONCLUSIVE."
+
+  - name: NameMC
+    category: Gaming
+    profile_url: "https://namemc.com/profile/{username}"
+    check_method: generic_html
+    success_patterns: ["minecraft", "profile"]
+    not_found_patterns: ["invalid username", "not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "Public Minecraft name history. Title/canonical still required by evidence layer. Never CONFIRMED."
+
+  - name: Scratch
+    category: Gaming
+    profile_url: "https://scratch.mit.edu/users/{username}"
+    check_method: generic_html
+    success_patterns: ["profile-details", "joined"]
+    not_found_patterns: ["not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "scratch.mit.edu/users/{username}. 404 if missing. CONFIRMED not possible."
+
+  - name: Letterboxd
+    category: Social
+    profile_url: "https://letterboxd.com/{username}/"
+    check_method: generic_html
+    success_patterns: ["profile-mini-person", "js-watchlist"]
+    not_found_patterns: ["sorry, we can’t find", "page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "letterboxd.com/{username}. Soft-404 copy. Never CONFIRMED."
+
+  - name: Hugging Face
+    category: Development
+    profile_url: "https://huggingface.co/{username}"
+    check_url: "https://huggingface.co/api/users/{username}/overview"
+    check_method: json_api
+    json_id_field: user
+    display_name_fields: [fullname, user]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+    notes: "JSON overview API. json_id_field user. 404 = NOT_FOUND. CONFIRMED possible from API identity."
+
+  - name: SourceForge
+    category: Development
+    profile_url: "https://sourceforge.net/u/{username}/profile/"
+    check_method: generic_html
+    success_patterns: ["user-profile", "joined"]
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "u/{username}/profile. HTML only. Never CONFIRMED."
+
+  - name: Launchpad
+    category: Development
+    profile_url: "https://launchpad.net/~{username}"
+    check_method: generic_html
+    success_patterns: ["member since", "launchpad"]
+    not_found_patterns: ["lost something", "not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "launchpad.net/~{username}. 404/lost-something. CONFIRMED not possible."
+
+  - name: crates.io
+    category: Development
+    profile_url: "https://crates.io/users/{username}"
+    check_url: "https://crates.io/api/v1/users/{username}"
+    check_method: json_api
+    json_id_field: user.login
+    display_name_fields: [user.name, user.login]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+    notes: "Official JSON API. CONFIRMED possible when user.login matches."
+
+  - name: RubyGems
+    category: Development
+    profile_url: "https://rubygems.org/profiles/{username}"
+    check_method: generic_html
+    success_patterns: ["profile", "gems"]
+    not_found_patterns: ["not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "HTML profile. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
+
+  - name: Modrinth
+    category: Gaming
+    profile_url: "https://modrinth.com/user/{username}"
+    check_url: "https://api.modrinth.com/v2/user/{username}"
+    check_method: json_api
+    json_id_field: username
+    display_name_fields: [name, username]
+    bio_field: bio
+    avatar_field: avatar_url
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: explicit_api
+    rate_limit: 0.5
+    notes: "Official user API. CONFIRMED possible. Minecraft-related public profile."
+
+  - name: itch.io
+    category: Gaming
+    profile_url: "https://itch.io/profile/{username}"
+    check_method: generic_html
+    success_patterns: ["user_profile", "profile_header"]
+    not_found_patterns: ["not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "itch.io/profile/{username}. HTML. Never CONFIRMED."
+
+  - name: TryHackMe
+    category: Development
+    profile_url: "https://tryhackme.com/p/{username}"
+    check_method: generic_html
+    success_patterns: ["user-profile", "completed rooms"]
+    not_found_patterns: ["not found"]
+    login_patterns: ["log in"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.6
+    notes: "tryhackme.com/p/{username}. Login wall possible. Never CONFIRMED."
+
+  - name: Ko-fi
+    category: Creator
+    profile_url: "https://ko-fi.com/{username}"
+    check_method: generic_html
+    success_patterns: ["kofi-profile", "display-name"]
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "ko-fi.com/{username}. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
+
+  - name: About.me
+    category: Identity
+    profile_url: "https://about.me/{username}"
+    check_method: generic_html
+    success_patterns: ["aboutme", "profile"]
+    not_found_patterns: ["page not found", "doesn't exist"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "about.me/{username}. Public HTML. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
+
+  - name: CodePen
+    category: Development
+    profile_url: "https://codepen.io/{username}"
+    check_method: generic_html
+    success_patterns: ["profile-header", "user-profile"]
+    not_found_patterns: ["page not found"]
+    expected_status: [200]
+    not_found_status: [404]
+    enabled: true
+    confidence_strategy: multi_signal
+    rate_limit: 0.5
+    notes: "codepen.io/{username}. Public HTML. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
+

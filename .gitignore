@@ -1,0 +1,75 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+# Runtime case store / cache (never commit operator investigations)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/provider_health.json
+data/*.sqlite
+data/*.sqlite3
+data/cache/
+# Nested accidental layouts (SPECTRE_DATA_DIR inside reports/, etc.)
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+logs/*.log
+*.log
+logs/**
+!logs/.gitkeep
+
+# Generated reports at any depth
+reports/**
+!reports/.gitkeep
+.idea/
+.vscode/
+*.swp
+.DS_Store
+tests/_tmp_data/
+tests/_tmp_reports/
+tests/_tmp_logs/
+tests/_tmp_auth/
+
+# Operator auth sessions — never commit cookies or storage_state
+.auth/
+data/auth/
+storage_state.json
+**/auth/*/storage_state.json
+**/auth/*/storage_state.json.enc
+cookies.json
+**/cookies.json
+*session*.json
+*storage_state*.json
+
+# SPECTRE-owned Chromium profiles — never the operator's real browser
+browser-profiles/
+**/browser-profiles/
+tests/_tmp_browser_profiles/
+.spectre/
+**/chrome-profiles/
+tests/_tmp_chrome_profiles/
+requirements.lock
+.test-runtime/
+
+# Private keys, certificates and credentials
+*.pem
+*.key
+*.p12
+*.pfx

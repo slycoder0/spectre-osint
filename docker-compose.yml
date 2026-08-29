@@ -1,0 +1,31 @@
+services:
+  spectre:
+    build: .
+    image: spectre-osint:0.1.0-alpha
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SPECTRE_DATA_DIR: /app/data
+      SPECTRE_REPORTS_DIR: /app/reports
+      SPECTRE_LOGS_DIR: /app/logs
+      SPECTRE_ALLOW_PUBLIC_BIND: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    volumes:
+      - spectre-data:/app/data
+      - spectre-reports:/app/reports
+      - spectre-logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Publish on loopback only. Inside the container uvicorn still listens on
+    # 0.0.0.0 so the published port works; the host mapping is 127.0.0.1.
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: ["web", "--host", "0.0.0.0", "--port", "8000"]
+    user: "1000:1000"
+    read_only: false
+
+volumes:
+  spectre-data:
+  spectre-reports:
+  spectre-logs:

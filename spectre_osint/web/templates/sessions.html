@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "macros.html" import status_badge, copy_btn, session_dot, session_label with context %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ t('sessions_page.title') }}</h1>
+    <p class="muted">{{ t('sessions_page.help') }}</p>
+  </div>
+  <div class="seg">
+    <a class="seg-item" href="/providers"><span>{{ t('nav.providers') }}</span></a>
+    <a class="seg-item" href="/sessions"><span>{{ t('nav.sessions') }}</span></a>
+  </div>
+</div>
+{% if system_stats %}
+<div class="sys-kpis">
+  <article class="metric-card">
+    <p class="label">{{ t('system.providers') }}</p>
+    <p class="num">{{ system_stats.provider_count }}</p>
+  </article>
+  <article class="metric-card">
+    <p class="label">{{ t('system.apis') }}</p>
+    <p class="num">{{ system_stats.configured_providers }}</p>
+  </article>
+  <article class="metric-card">
+    <p class="label">{{ t('system.sessions_active') }}</p>
+    <p class="num">{{ system_stats.active_sessions }}</p>
+  </article>
+  <article class="metric-card">
+    <p class="label">{{ t('system.degraded') }}</p>
+    <p class="num">{{ system_stats.degraded }}</p>
+  </article>
+</div>
+{% endif %}
+
+<section class="section">
+  <h2>{{ t('sessions_page.sources') }}</h2>
+  <div class="sess-grid">
+    {% for s in sessions %}
+    <article class="card sess-card">
+      <h3>
+        <span>{{ session_dot(s.session) }} {{ s.platform }}</span>
+        {{ status_badge(s.session) }}
+      </h3>
+      <p class="muted">{{ session_label(s.session) }}</p>
+      {% if s.mode %}<p>{{ status_badge(s.mode) }}</p>{% endif %}
+      <p class="muted ts">{{ format_ts(s.last_verified) if s.last_verified else '—' }}</p>
+      {% if s.suggestion %}
+      <p class="muted">{{ s.suggestion }} {{ t('sessions_page.anonymous_unaffected') }}</p>
+      {% endif %}
+      {% if s.session != 'ACTIVE' and s.session != 'NOT_CONFIGURED' %}
+      <p><a href="#manual">{{ t('sessions_page.reauth') }} →</a></p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card" id="manual">
+  <h2>{{ t('sessions_page.manual') }}</h2>
+  <p>{{ t('sessions_page.manual_help') }}</p>
+  {% for cmd in [
+    'spectre auth login instagram',
+    'spectre auth login facebook',
+    'spectre auth login threads',
+    'spectre auth login tiktok',
+    'spectre auth login x',
+    'spectre auth login twitch'
+  ] %}
+  <p class="cmd-row"><code>{{ cmd }}</code> {{ copy_btn(cmd, t('sessions_page.copy_cmd')) }}</p>
+  {% endfor %}
+  <p class="muted">{{ t('sessions_page.blocked_help') }}</p>
+  <p class="muted">{{ t('sessions_page.official_api') }} {{ t('sessions_page.anonymous_unaffected') }}</p>
+</section>
+<section class="card legend">
+  <h2>{{ t('sessions_page.access_modes') }}</h2>
+  <p><code>ANONYMOUS_PUBLIC</code> — {{ t('sessions_page.anon_help') }}</p>
+  <p><code>AUTHENTICATED_PUBLIC</code> — {{ t('sessions_page.auth_help') }}</p>
+</section>
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% from "macros.html" import empty_state with context %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ t('entities_page.title') }}</h1>
+    <p class="muted">{{ t('entities_page.help') }}</p>
+  </div>
+  <div class="seg" role="group" aria-label="{{ t('entities_page.view') }}" data-ent-view>
+    <label class="seg-item"><input type="radio" name="ent-view" value="visual" checked /><span>{{ t('entities_page.visual') }}</span></label>
+    <label class="seg-item"><input type="radio" name="ent-view" value="table" /><span>{{ t('entities_page.table') }}</span></label>
+  </div>
+</div>
+<p class="filters" role="navigation" aria-label="{{ t('common.filter') }}">
+  <a class="tag {% if observation == 'LATEST' %}active{% endif %}" href="?observation=LATEST">{{ t('entities_page.filter_latest') }}</a>
+  <a class="tag {% if observation == 'HISTORICAL' %}active{% endif %}" href="?observation=HISTORICAL">{{ t('entities_page.filter_historical') }}</a>
+  <a class="tag {% if observation == 'ALL' %}active{% endif %}" href="?observation=ALL">{{ t('entities_page.filter_all') }}</a>
+</p>
+<p class="legend muted">
+  {{ t('entities_page.latest_help') }}
+  {{ t('entities_page.historical_help') }}
+  {{ t('entities_page.superseded_help') }}
+</p>
+
+{% if by_type %}
+<div class="ent-visual visual-mode" data-ent-visual>
+  {% for etype, rows in by_type.items() %}
+  <section class="ent-group">
+    <h3>{{ etype }} · {{ rows|length }}</h3>
+    <div class="ent-cards">
+      {% for e in rows %}
+      <article class="ent-card {% if e.superseded %}is-historical{% endif %}">
+        <div class="val" title="{{ e.value }}">{{ e.value }}</div>
+        <p class="muted">{{ e.confidence }} · {{ e.source }}</p>
+        <p class="muted ts">{{ format_ts(e.last_seen) }}</p>
+        <p>
+          {% if e.kind == 'LATEST' %}
+            <span class="obs latest">{{ t('common.latest') }}</span>
+          {% else %}
+            <span class="obs historical">{{ t('common.historical') }}</span>
+          {% endif %}
+          {% if e.superseded %}
+            <span class="obs superseded" title="{{ t('entities_page.superseded_help') }}">{{ t('common.superseded') }}</span>
+          {% endif %}
+        </p>
+        <p><a href="{{ e.case_href }}">{{ t('entities_page.open_investigation') }}</a></p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if by_case %}
+<div class="table-mode" data-ent-table hidden>
+{% for case_name, rows in by_case.items() %}
+<h2>{{ case_name }} <a class="muted" href="{{ rows[0].case_href }}">{{ t('entities_page.open_investigation') }}</a></h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{ t('common.type') }}</th>
+      <th>{{ t('common.value') }}</th>
+      <th>{{ t('common.confidence') }}</th>
+      <th>{{ t('common.source') }}</th>
+      <th>{{ t('common.case') }}</th>
+      <th>{{ t('common.run') }}</th>
+      <th>{{ t('common.first_seen') }}</th>
+      <th>{{ t('common.last_seen') }}</th>
+      <th>{{ t('common.observation') }}</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for e in rows %}
+  <tr class="{% if e.superseded %}is-historical{% endif %}">
+    <td>{{ e.type }}</td>
+    <td><code title="{{ e.value }}">{{ e.value }}</code></td>
+    <td>{{ e.confidence }}</td>
+    <td>{{ e.source }}</td>
+    <td>{{ e.case_name }}</td>
+    <td class="mono">{% if e.run_id %}<code>{{ e.run_id }}</code>{% else %}—{% endif %}</td>
+    <td class="ts">{{ format_ts(e.first_seen) }}</td>
+    <td class="ts">{{ format_ts(e.last_seen) }}</td>
+    <td>
+      {% if e.kind == 'LATEST' %}
+        <span class="obs latest">{{ t('common.latest') }}</span>
+      {% else %}
+        <span class="obs historical">{{ t('common.historical') }}</span>
+      {% endif %}
+      {% if e.superseded %}
+        <span class="obs superseded" title="{{ t('entities_page.superseded_help') }}">{{ t('common.superseded') }}</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endfor %}
+</div>
+{% else %}
+{{ empty_state(t('entities_page.empty')) }}
+{% endif %}
+{% endblock %}

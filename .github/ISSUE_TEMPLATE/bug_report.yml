@@ -1,0 +1,57 @@
+name: Bug report
+description: Something SPECTRE did incorrectly or unexpectedly
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste API keys, cookies, session files, Chrome profiles, or unsanitized reports of real people.
+        Prefer `spectre doctor --json` (secrets are not printed).
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "e.g. Debian 12 / WSL2 / macOS 14"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python
+      placeholder: "3.12 or 3.13"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SPECTRE version
+      description: Output of `spectre --version`
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Sanitized `spectre doctor` output
+      description: Paste text or JSON. Strip any leftover personal data.
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command used
+      placeholder: spectre username alice_example
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true

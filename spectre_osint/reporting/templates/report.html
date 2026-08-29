@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SPECTRE OSINT — {{ result.target }}</title>
+  <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  <style>
+    :root {
+      --bg-0: #03050a;
+      --bg-1: #070b12;
+      --bg-2: #0c1220;
+      --bg: #03050a;
+      --panel: #101826;
+      --line: #1c2a42;
+      --text: #e8f1ff;
+      --muted: #7f93b3;
+      --accent: #3ee8ff;
+      --neon-green: #39ff88;
+      --neon-cyan: #3ee8ff;
+      --neon-purple: #c77dff;
+      --warn: #ffbf47;
+      --bad: #ff6b6b;
+      --ok: #39ff88;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #132033, var(--bg) 45%);
+      color: var(--text);
+    }
+    header {
+      padding: 28px 40px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0; letter-spacing: .18em; font-size: 22px; }
+    .sub { color: var(--muted); margin-top: 8px; }
+    main { padding: 24px 40px 80px; display: grid; gap: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px 18px;
+    }
+    .score { font-size: 36px; font-weight: 700; color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #1b2c44; font-size: 11px; }
+    .CONFIRMED { color: var(--ok); }
+    .HIGH { color: var(--accent); }
+    .MEDIUM { color: var(--warn); }
+    .LOW, .INFERENCE { color: #fda4af; }
+    .NOT_FOUND, .NOT_CONFIGURED, .PROVIDER_UNAVAILABLE { color: var(--muted); }
+    #cy { height: 420px; background: #0b1220; border-radius: 12px; }
+    ul.explain { color: var(--muted); padding-left: 18px; }
+    code { color: var(--accent); }
+    footer { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SPECTRE OSINT</h1>
+    <div class="sub">Investigation Intelligence · Passive-first · Evidence-backed</div>
+  </header>
+  <main>
+    <section class="card">
+      <strong>Target</strong> <code>{{ result.target }}</code>
+      &nbsp;· type <span class="tag">{{ result.target_type }}</span>
+      &nbsp;· mode <span class="tag">{{ result.mode }}</span>
+      &nbsp;· case <code>{{ result.case_name }}</code>
+      <div class="sub">{{ result.started_at }} → {{ result.finished_at }}</div>
+      <div class="sub">Entities: {{ result.entities|length }} · Relationships: {{ result.relationships|length }} · Providers: {{ result.providers_queried|join(', ') }}</div>
+    </section>
+
+    {% if result.scores %}
+    <section class="grid">
+      <div class="card"><div>Confidence</div><div class="score">{{ result.scores.confidence_score }}</div>
+        <ul class="explain">{% for k, v in result.scores.confidence_breakdown.items() %}<li>{{ k }}: {{ v }}</li>{% endfor %}</ul>
+        <ul class="explain">{% for x in result.scores.confidence_explain %}<li>{{ x }}</li>{% endfor %}</ul>
+      </div>
+      <div class="card"><div>Risk</div><div class="score">{{ result.scores.risk_score }}</div>
+        <div class="tag">{{ result.scores.risk_level }}</div>
+        <ul class="explain">{% for x in result.scores.risk_explain %}<li>{{ x }}</li>{% endfor %}</ul>
+      </div>
+      <div class="card"><div>Reputation</div><div class="score">{{ result.scores.reputation_score }}</div>
+        <ul class="explain">{% for x in result.scores.reputation_explain %}<li>{{ x }}</li>{% endfor %}</ul>
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Graph</h2>
+      <div id="cy"></div>
+    </section>
+
+    <section class="card">
+      <h2>Entities</h2>
+      <table>
+        <tr><th>Type</th><th>Value</th><th>Confidence</th><th>Source</th></tr>
+        {% for e in result.entities %}
+        <tr>
+          <td>{{ e.type }}</td>
+          <td><code>{{ e.normalized_value }}</code></td>
+          <td class="{{ e.confidence }}">{{ e.confidence }}</td>
+          <td>{{ e.source }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+
+    {% if username_rows %}
+    <section class="card">
+      <h2>Username platforms</h2>
+      <p class="sub">checked={{ username_counts.checked }} found={{ username_counts.found }} confirmed={{ username_counts.confirmed }} likely={{ username_counts.likely }} not_found={{ username_counts.not_found }} login_required={{ username_counts.login_required }} blocked={{ username_counts.blocked }} unavailable={{ username_counts.provider_unavailable }} inconclusive={{ username_counts.inconclusive }}</p>
+      <table>
+        <tr><th>Platform</th><th>Status</th><th>Access</th><th>Cache</th><th>Confidence</th><th>URL</th><th>Detail</th></tr>
+        {% for row in username_rows %}
+        <tr>
+          <td>{{ row.platform }}</td>
+          <td class="{{ row.status }}">{{ row.status }}</td>
+          <td class="{{ row.access_mode }}">{{ row.access_mode }}</td>
+          <td>{{ row.cache_state }}</td>
+          <td>{{ row.confidence or '—' }}</td>
+          <td>{% if row.profile_url %}<a href="{{ row.profile_url }}" target="_blank" rel="noopener noreferrer">{{ row.profile_url }}</a>{% endif %}</td>
+          <td>
+            {{ row.detail }}
+            {% if row.observed %}
+            <div class="sub">Observed profile data</div>
+            <ul class="explain">
+              {% for item in row.observed %}
+              <li>{{ item.field }}: {% if item.value is string %}{{ item.value }}{% else %}{{ item.value|join(', ') }}{% endif %}{% if item.source %} ({{ item.source }}){% endif %}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+    {% endif %}
+
+    {% if result.identity_correlation and result.identity_correlation.records > 1 %}
+    <section class="card">
+      <h2>Identity Correlation</h2>
+      <p class="sub">Public-evidence only. Same username is not identity. Max pairwise score: {{ result.identity_correlation.max_score }}</p>
+      {% for cluster in result.identity_correlation.clusters %}
+      <h3>{{ cluster.id }} · {{ cluster.band }} {{ cluster.score }}</h3>
+      <p>Profiles: {% for p in cluster.profiles %}<code>{{ p.platform }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+      <p class="sub">Positive: {{ cluster.evidence|join(', ') or 'none' }}</p>
+      <p class="sub">Conflicts: {{ cluster.conflicts|join(', ') or 'none' }}</p>
+      {% endfor %}
+      {% if result.identity_correlation.unclustered %}
+      <p class="sub">Unclustered: {{ result.identity_correlation.unclustered|join(', ') }}</p>
+      {% endif %}
+      <table>
+        <tr><th>Pair</th><th>Score</th><th>Band</th><th>Evidence</th><th>Conflicts</th></tr>
+        {% for pair in result.identity_correlation.pairs %}
+        <tr>
+          <td>{{ pair.left }} ↔ {{ pair.right }}</td>
+          <td>{{ pair.score }}</td>
+          <td>{{ pair.band }}</td>
+          <td>{{ pair.evidence|join(', ') }}
+            {% if pair.evidence_detail %}
+            <details><summary>Why this score?</summary>
+              <ul class="explain">
+              {% for detail in pair.evidence_detail %}
+                <li>{{ detail.code }}: {{ detail.left.value }}{% if detail.left.source %} ({{ detail.left.source }}){% endif %} ↔ {{ detail.right.value }}{% if detail.right.source %} ({{ detail.right.source }}){% endif %}</li>
+              {% endfor %}
+              </ul>
+            </details>
+            {% endif %}
+          </td>
+          <td>{{ pair.conflicts|join(', ') or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Findings</h2>
+      <table>
+        <tr><th>Platform / module</th><th>Status</th><th>Summary</th></tr>
+        {% for f in result.findings %}
+        <tr>
+          <td>{{ f.data.platform or f.data.site or f.title }} ({{ f.module }})</td>
+          <td class="{{ f.status }}">{{ f.data.check_status or f.status }}</td>
+          <td>{{ f.summary }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Evidence</h2>
+      <table>
+        <tr><th>Provider</th><th>Source</th><th>URL</th><th>Confidence</th><th>Timestamp</th></tr>
+        {% for ev in result.evidence %}
+        <tr>
+          <td>{{ ev.provider }}</td>
+          <td>{{ ev.source }}</td>
+          <td>{% if ev.url %}<a href="{{ ev.url }}" style="color:#5eead4">{{ ev.url }}</a>{% endif %}</td>
+          <td class="{{ ev.confidence }}">{{ ev.confidence }}</td>
+          <td>{{ ev.timestamp }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Relationships</h2>
+      <table>
+        <tr><th>From</th><th>Relation</th><th>To</th><th>Source</th><th>Confidence</th></tr>
+        {% for r in result.relationships %}
+        <tr>
+          <td><code>{{ r.from_entity_id }}</code></td>
+          <td>{{ r.relation }}</td>
+          <td><code>{{ r.to_entity_id }}</code></td>
+          <td>{{ r.source }}</td>
+          <td class="{{ r.confidence }}">{{ r.confidence }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Timeline</h2>
+      <table>
+        <tr><th>When</th><th>Event</th><th>Source</th></tr>
+        {% for ev in result.timeline %}
+        <tr>
+          <td>{{ ev.timestamp or 'unknown' }}</td>
+          <td>{{ ev.label }}</td>
+          <td>{{ ev.source }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Suggested pivots</h2>
+      <ul>
+        {% for p in result.pivots %}
+        <li>{{ p.action }} → <code>{{ p.target }}</code> — {{ p.reason }} ({{ p.confidence }}, {{ p.source }})</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <footer class="card">
+      SPECTRE never invents facts. NOT FOUND means no data. INFERENCE is not CONFIRMED.
+      AUTHENTICATED_PUBLIC is public content with an operator session — not private access.
+      Heuristic risk is not a malware verdict. Every row above traces to a source.
+    </footer>
+  </main>
+  <script>
+    const payload = {{ graph | tojson }};
+    cytoscape({
+      container: document.getElementById('cy'),
+      elements: payload.elements,
+      style: [
+        { selector: 'node', style: {
+          'background-color': '#5eead4', 'label': 'data(label)', 'color': '#dbeafe',
+          'font-size': 10, 'text-wrap': 'wrap', 'text-max-width': 80, 'width': 18, 'height': 18
+        }},
+        { selector: 'edge', style: {
+          'line-color': '#334155', 'target-arrow-color': '#334155', 'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier', 'label': 'data(relation)', 'font-size': 8, 'color': '#94a3b8',
+          'width': 1
+        }}
+      ],
+      layout: { name: 'cose', animate: false }
+    });
+  </script>
+</body>
+</html>

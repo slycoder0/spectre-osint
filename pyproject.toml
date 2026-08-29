@@ -1,0 +1,114 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spectre-osint"
+dynamic = ["version"]
+description = "SPECTRE OSINT — Passive-first OSINT and Threat Intelligence (v0.1-alpha)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "SPECTRE OSINT" }]
+keywords = ["osint", "threat-intelligence", "soc", "blue-team", "investigation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+dependencies = [
+    "httpx>=0.27.0,<0.29",
+    "beautifulsoup4>=4.12.0,<5",
+    "lxml>=5.2.0,<7",
+    "dnspython>=2.6.0,<3",
+    "tldextract>=5.1.0,<6",
+    "rich>=13.7.0,<16",
+    "typer>=0.12.0,<0.28",
+    "pydantic>=2.8.0,<3",
+    "pydantic-settings>=2.4.0,<3",
+    "sqlalchemy>=2.0.32,<3",
+    "alembic>=1.13.0,<2",
+    "networkx>=3.3,<4",
+    "jinja2>=3.1.4,<4",
+    "python-dotenv>=1.0.1,<2",
+    "orjson>=3.10.0,<4",
+    "pyyaml>=6.0.1,<7",
+    "Pillow>=10.4.0,<13",
+    "exifread>=3.0.0,<4",
+    "pypdf>=4.3.0,<7",
+    "fastapi>=0.115.0,<0.142",
+    "starlette>=0.46.0,<1.7",
+    "uvicorn[standard]>=0.30.0,<0.53",
+    "python-multipart>=0.0.9,<0.1",
+    "playwright>=1.49.0,<1.56",
+    "keyring>=25.0.0,<26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+    "types-PyYAML>=6.0.12",
+    "pip-audit>=2.7.0",
+]
+postgres = [
+    "psycopg[binary]>=3.2.0",
+]
+
+[project.scripts]
+spectre = "spectre_osint.main:app"
+
+[tool.setuptools.dynamic]
+version = {attr = "spectre_osint.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["spectre_osint*"]
+
+[tool.setuptools.package-data]
+spectre_osint = [
+    "data/*",
+    "reporting/templates/*",
+    "web/templates/*",
+    "web/static/*",
+    "web/static/fonts/*",
+    "web/i18n/*",
+    "migrations/*.py",
+    "migrations/*.mako",
+    "migrations/versions/*.py",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+branch = true
+source = ["spectre_osint"]
+omit = ["spectre_osint/migrations/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+ignore = ["B008", "N802", "N818", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_unused_ignores = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+exclude = ["spectre_osint/migrations"]

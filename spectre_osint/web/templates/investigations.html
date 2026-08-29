@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ t('investigations.title') }}</h1>
+    <p class="muted">{{ cases|length }} {{ t('dashboard.cases')|lower }}</p>
+  </div>
+</div>
+{% if case_cards %}
+<div class="toolbar">
+  <input type="search" data-inv-search placeholder="{{ t('investigations.search') }}" />
+  <label class="sr-only" for="inv-sort">{{ t('investigations.sort') }}</label>
+  <select id="inv-sort" data-inv-sort style="max-width:180px">
+    <option value="updated">{{ t('investigations.sort_updated') }}</option>
+    <option value="name">{{ t('investigations.sort_name') }}</option>
+  </select>
+  <div class="seg" role="group" aria-label="{{ t('investigations.view') }}">
+    <label class="seg-item"><input type="radio" name="inv-view" value="list" checked /><span>{{ t('investigations.view_list') }}</span></label>
+    <label class="seg-item"><input type="radio" name="inv-view" value="grid" /><span>{{ t('investigations.view_grid') }}</span></label>
+  </div>
+</div>
+<div class="inv-grid" data-inv-grid>
+  {% for c in case_cards %}
+  <a class="inv-card" href="/investigations/{{ c.id }}"
+     data-name="{{ c.title }}"
+     data-target="{{ c.target }}"
+     data-updated="{{ c.updated_at }}"
+     title="{{ c.name }}">
+    <div>
+      <div class="title">{{ c.title }}</div>
+      <div class="aliases">
+        {% if c.target %}<span>@{{ c.target }}</span>{% endif %}
+        {% if c.aliases %}<span class="muted"> · {{ t('collect.aliases') }} {% for a in c.aliases[:4] %}@{{ a }}{% if not loop.last %} {% endif %}{% endfor %}</span>{% endif %}
+      </div>
+      <div class="stats">
+        {% if c.target_type %}<span class="tag">{{ c.target_type }}</span>{% endif %}
+        {{ c.confirmed }} {{ t('investigation.confirmed') }}
+        · {{ c.likely }} {{ t('investigation.likely') }}
+        · {{ c.mentions }} {{ t('investigation.mention_count') }}
+      </div>
+      <div class="muted ts">{{ format_ts(c.updated_at) }}{% if c.updated_at %} · {{ relative_age(c.updated_at) }}{% endif %}</div>
+    </div>
+    <span class="go">{{ t('investigations.open') }} →</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+{% from "macros.html" import empty_state with context %}
+{{ empty_state(t('investigations.empty')) }}
+{% endif %}
+{% endblock %}

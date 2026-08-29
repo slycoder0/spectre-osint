@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a passive-first public OSINT improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        SPECTRE is passive-first. Requests that require CAPTCHA bypass, private-message access, stealth browsers, or TLS spoofing will be declined.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who benefits, and what existing classifiers/scoring must stay unchanged?
+    validations:
+      required: true
+  - type: dropdown
+    id: data
+    attributes:
+      label: Data surface
+      options:
+        - Public unauthenticated
+        - Authenticated public (operator session, not private)
+        - Unsure
+    validations:
+      required: true

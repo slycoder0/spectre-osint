@@ -1,0 +1,53 @@
+providers:
+  - name: crtsh
+    requires_key: false
+    entities: [DOMAIN, SUBDOMAIN]
+    cache_ttl: 21600
+  - name: rdap
+    requires_key: false
+    entities: [DOMAIN, SUBDOMAIN, IP]
+    cache_ttl: 86400
+  - name: wayback
+    requires_key: false
+    entities: [DOMAIN, SUBDOMAIN, URL]
+    cache_ttl: 1800
+  - name: virustotal
+    requires_key: true
+    entities: [DOMAIN, SUBDOMAIN, IP, URL, HASH]
+    cache_ttl: 3600
+  - name: alienvault
+    requires_key: false
+    entities: [DOMAIN, SUBDOMAIN, IP, URL, HASH]
+    cache_ttl: 3600
+  - name: urlscan
+    requires_key: false
+    entities: [DOMAIN, SUBDOMAIN, IP, URL]
+    cache_ttl: 1800
+  - name: abuseipdb
+    requires_key: true
+    entities: [IP]
+    cache_ttl: 3600
+  - name: shodan
+    requires_key: true
+    entities: [IP]
+    cache_ttl: 3600
+  - name: censys
+    requires_key: true
+    entities: [IP, DOMAIN, SUBDOMAIN]
+    cache_ttl: 3600
+  - name: hibp
+    requires_key: true
+    entities: [EMAIL]
+    cache_ttl: 3600
+  - name: github
+    requires_key: false
+    entities: [USERNAME, EMAIL, DOMAIN, COMPANY, PERSON]
+    cache_ttl: 1800
+  - name: ipinfo
+    requires_key: false
+    entities: [IP]
+    cache_ttl: 86400
+  - name: greynoise
+    requires_key: false
+    entities: [IP]
+    cache_ttl: 3600
