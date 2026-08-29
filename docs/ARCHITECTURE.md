@@ -94,11 +94,11 @@ Primary commands: `username`, `email`, `domain`, `ip`, `url`, `hash`, `company`,
 
 ### Username catalog — `modules/username/`
 
-- **Responsibility:** per-site public presence + HTML evidence + enrichment.
+- **Responsibility:** per-site public presence + typed Site Catalog 2.0 schema validation + HTML evidence + enrichment.
 - **Inputs:** username entity, `HttpClient`, concurrency, cache.
 - **Outputs:** findings with `check_status`, observed fields + provenance, identity artifacts.
 - **Side effects:** result cache under `data/cache/`; optional authenticated fetch via browser.
-- **Deps:** `data/sites.yaml`, `browser` when a session exists, `result_cache`.
+- **Deps:** `data/sites.yaml`, `modules/username/catalog.py`, `browser` when a session exists, `result_cache`.
 
 ### Mentions — `modules/mentions/`
 

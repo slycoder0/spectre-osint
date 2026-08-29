@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import yaml
 from bs4 import BeautifulSoup
 
-from spectre_osint.core.config import BUNDLED_DATA_DIR, get_settings
+from spectre_osint.core.config import get_settings
 from spectre_osint.core.entities import Entity, Finding, Relationship
 from spectre_osint.core.evidence import make_evidence
 from spectre_osint.core.exceptions import (
@@ -33,6 +32,7 @@ from spectre_osint.core.types import (
     RelationType,
     UsernameCheckStatus,
 )
+from spectre_osint.modules.username.catalog import load_catalog
 from spectre_osint.modules.username.correlate import link_public_website
 from spectre_osint.modules.username.enrichment import enrich_profile, flatten_observed
 from spectre_osint.modules.username.evidence import (
@@ -78,20 +78,8 @@ STATUS_TO_CONFIDENCE = {
 
 
 def load_sites(path: Path | None = None) -> list[dict[str, Any]]:
-    sites_path = path or (BUNDLED_DATA_DIR / "sites.yaml")
-    data = yaml.safe_load(sites_path.read_text(encoding="utf-8")) or {}
-    sites = data.get("sites") or []
-    out: list[dict[str, Any]] = []
-    for site in sites:
-        if not site.get("enabled", True):
-            continue
-        row = dict(site)
-        if "url_template" not in row and row.get("profile_url"):
-            row["url_template"] = row["profile_url"]
-        if "profile_url" not in row and row.get("url_template"):
-            row["profile_url"] = row["url_template"]
-        out.append(row)
-    return out
+    catalog = load_catalog(path)
+    return catalog.to_dict_list(enabled_only=True)
 
 
 def _pattern_hit(haystack: str, patterns: list[str] | None) -> str | None:
@@ -537,16 +525,41 @@ async def _check_site(
         min_interval_f = float(min_interval) if min_interval is not None else None
     except (TypeError, ValueError):
         min_interval_f = None
+    http_method = str(site.get("http_method") or "GET").strip().upper()
+    custom_headers = site.get("headers") or None
     async with semaphore:
         try:
-            response = await http.get(
-                check_url,
-                provider=name,
-                follow_redirects=True,
-                use_cache=not refresh,
-                accept_statuses=set(range(200, 600)),
-                min_interval=min_interval_f,
-            )
+            if http_method == "HEAD" and hasattr(http, "head"):
+                response = await http.head(
+                    check_url,
+                    provider=name,
+                    headers=custom_headers,
+                    follow_redirects=True,
+                    use_cache=not refresh,
+                    accept_statuses=set(range(200, 600)),
+                    min_interval=min_interval_f,
+                )
+            elif http_method == "GET" and hasattr(http, "get"):
+                response = await http.get(
+                    check_url,
+                    provider=name,
+                    headers=custom_headers,
+                    follow_redirects=True,
+                    use_cache=not refresh,
+                    accept_statuses=set(range(200, 600)),
+                    min_interval=min_interval_f,
+                )
+            else:
+                response = await http.request(
+                    http_method,
+                    check_url,
+                    provider=name,
+                    headers=custom_headers,
+                    follow_redirects=True,
+                    use_cache=not refresh,
+                    accept_statuses=set(range(200, 600)),
+                    min_interval=min_interval_f,
+                )
         except asyncio.CancelledError:
             raise
         except RateLimitExceeded as exc:
