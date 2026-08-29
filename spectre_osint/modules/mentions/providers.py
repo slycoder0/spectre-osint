@@ -146,7 +146,11 @@ class GitHubSearchProvider:
         limit: int,
     ) -> list[RawMention]:
         headers = {"Accept": "application/vnd.github+json"}
-        token = settings.github_token.get_secret_value() if settings.github_token else ""
+        token = (
+            settings.github_token.get_secret_value()
+            if settings.secret_present("github_token") and settings.github_token
+            else ""
+        )
         if token:
             headers["Authorization"] = f"Bearer {token}"
         response = await http.get(

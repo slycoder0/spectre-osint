@@ -433,7 +433,7 @@ class HttpClient:
                     redact_text(str(exc)),
                 )
                 raise ProviderUnavailable(f"{provider} unavailable: {redact_text(str(exc))}") from exc
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, UnicodeError) as exc:
                 if _is_tls_verification_error(exc):
                     logger.warning(
                         "TLS certificate verification failed provider=%s url=%s err=%s",

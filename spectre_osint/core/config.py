@@ -6,13 +6,78 @@ import os
 import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = PACKAGE_DIR.parent
 BUNDLED_DATA_DIR = PACKAGE_DIR / "data"
+
+_KNOWN_PLACEHOLDERS = frozenset(
+    {
+        "placeholder",
+        "your_api_key_here",
+        "your_token_here",
+        "your_key_here",
+        "your_api_key",
+        "your_token",
+        "your_api_id",
+        "your_api_secret",
+        "changeme",
+        "change_me",
+        "none",
+        "null",
+        "undefined",
+        "xxx",
+        "xxxx",
+        "todo",
+    }
+)
+
+
+def _is_valid_credential_string(raw: str) -> bool:
+    """Check if a string represents a valid, non-placeholder, ASCII credential."""
+    if not raw:
+        return False
+    stripped = raw.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("#"):
+        return False
+    if stripped.startswith("<") and stripped.endswith(">") and len(stripped) > 2:
+        return False
+    if stripped.lower() in _KNOWN_PLACEHOLDERS:
+        return False
+    try:
+        raw_bytes = stripped.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    if any(b < 32 or b == 127 for b in raw_bytes):
+        return False
+    return True
+
+
+def normalize_secret(v: Any) -> SecretStr | None:
+    if v is None:
+        return None
+    if isinstance(v, SecretStr):
+        raw = v.get_secret_value()
+    else:
+        raw = str(v)
+    if not _is_valid_credential_string(raw):
+        return None
+    return SecretStr(raw.strip())
+
+
+def normalize_optional_str(v: Any) -> str | None:
+    if v is None:
+        return None
+    raw = str(v)
+    if not _is_valid_credential_string(raw):
+        return None
+    return raw.strip()
 
 
 class Settings(BaseSettings):
@@ -90,6 +155,34 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1"
     llm_enabled: bool = False
 
+    @field_validator(
+        "virustotal_api_key",
+        "shodan_api_key",
+        "censys_api_id",
+        "censys_api_secret",
+        "urlscan_api_key",
+        "abuseipdb_api_key",
+        "hibp_api_key",
+        "ipinfo_token",
+        "greynoise_api_key",
+        "github_token",
+        "otx_api_key",
+        "google_api_key",
+        "openai_api_key",
+        "anthropic_api_key",
+        "openrouter_api_key",
+        "gemini_api_key",
+        mode="before",
+    )
+    @classmethod
+    def _validate_secrets(cls, v: Any) -> SecretStr | None:
+        return normalize_secret(v)
+
+    @field_validator("google_cse_id", mode="before")
+    @classmethod
+    def _validate_google_cse_id(cls, v: Any) -> str | None:
+        return normalize_optional_str(v)
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
@@ -124,8 +217,8 @@ class Settings(BaseSettings):
         if value is None:
             return False
         if isinstance(value, SecretStr):
-            return bool(value.get_secret_value().strip())
-        return bool(str(value).strip())
+            return _is_valid_credential_string(value.get_secret_value())
+        return _is_valid_credential_string(str(value))
 
 
 @lru_cache(maxsize=1)
