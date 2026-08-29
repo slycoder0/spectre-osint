@@ -39,8 +39,8 @@ spectre_osint/
   providers/              optional/keyless threat-intel HTTP providers
   browser/                authenticated-public sessions, Chrome/CDP, Playwright
   correlation/            graph + generic pivot suggestions + confidence merge
-  reporting/              HTML/JSON/MD/CSV/GraphML
-  web/                    localhost FastAPI + Jinja2 GUI
+  reporting/              standalone HTML/JSON/MD/CSV/GraphML artifact generators
+  web/                    localhost FastAPI + Jinja2 GUI (DEPRECATED: scheduled for removal in 0.1.0b2)
   data/                   bundled sites.yaml, providers.yaml, user_agents.txt
   migrations/             Alembic 0001_initial
   llm/                    optional, disabled, not in default pipeline
@@ -152,8 +152,9 @@ Primary commands: `username`, `email`, `domain`, `ip`, `url`, `hash`, `company`,
 - **Responsibility:** cases, runs, entities, findings, evidence, relationships.
 - **Side effects:** SQLite (default) writes under `SPECTRE_DATA_DIR`.
 
-### Web GUI — `web/`
+### Web GUI — `web/` (DEPRECATED)
 
+- **Status:** Deprecated in milestone 0.1.0b2; scheduled for staged removal in favor of CLI-first workflow.
 - **Responsibility:** single-operator localhost workstation (dossier, graph, sessions, providers).
 - **Inputs:** same `CaseManager` / pipeline as CLI.
 - **Side effects:** in-memory collection jobs (`web/jobs.py`); file reports.
@@ -161,7 +162,7 @@ Primary commands: `username`, `email`, `domain`, `ip`, `url`, `hash`, `company`,
 
 ### Reporting — `reporting/`
 
-- **Responsibility:** artifacts from an `InvestigationResult`.
+- **Responsibility:** standalone artifacts from an `InvestigationResult` (HTML, Markdown, JSON, CSV, GraphML).
 - **Side effects:** files under `SPECTRE_REPORTS_DIR` (gitignored).
 
 ### Correlation extras — `correlation/`

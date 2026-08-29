@@ -30,7 +30,7 @@ spectre [OPTIONS] COMMAND [ARGS]...
 | `spectre auth` | Manage authenticated-public browser sessions (`login`, `status`, `logout`). |
 | `spectre cache` | Inspect and purge HTTP result caches. |
 | `spectre doctor` | Environment diagnostics and dependency health verification. |
-| `spectre dashboard` | Launch the localhost web workstation (`spectre web`). |
+| `spectre dashboard` | Launch the localhost web workstation (`spectre web`) *(Deprecated)*. |
 | `spectre version` | Display installed version and build status. |
 
 ---

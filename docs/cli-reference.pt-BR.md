@@ -30,7 +30,7 @@ spectre [OPÇÕES] COMANDO [ARGS]...
 | `spectre auth` | Gerenciamento de sessões authenticated-public (`login`, `status`, `logout`). |
 | `spectre cache` | Inspeção e limpeza do cache local de respostas HTTP. |
 | `spectre doctor` | Diagnóstico do ambiente e integridade das dependências. |
-| `spectre dashboard` | Inicialização da workstation web local (`spectre web`). |
+| `spectre dashboard` | Inicialização da workstation web local (`spectre web`) *(Obsoleto / Deprecated)*. |
 | `spectre version` | Exibição da versão instalada e status da compilação. |
 
 ---

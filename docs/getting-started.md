@@ -118,26 +118,6 @@ Overall: READY WITH OPTIONAL FEATURES MISSING
 
 ---
 
-## Launching the Workstation GUI
-
-Start the localhost web dashboard:
-
-```bash
-spectre dashboard
-# or
-spectre web
-```
-
-Open your browser at `http://127.0.0.1:8000`.
-
-Features available in the GUI:
-- **Live Dossier:** View real-time investigation findings, catalog checks, and mention provenance.
-- **Interactive Graph:** Visual cluster of correlated identities and observed relationships.
-- **Evidence Drawer:** Inspect raw HTTP status codes, extraction rules, and novelty classifications.
-- **Session Manager:** Audit active authenticated-public browser profiles without exposing cookies.
-
----
-
 ## Running Your First Investigation via CLI
 
 Investigate a public username target:
@@ -155,6 +135,25 @@ spectre username alice_osint \
   --email alice@example.com \
   --website alice.example
 ```
+
+Upon completion, SPECTRE outputs the structured intelligence findings directly to your terminal and generates comprehensive standalone HTML, Markdown, and JSON reports under `./reports/`.
+
+---
+
+## Web Dashboard (Deprecated)
+
+> [!NOTE]
+> The web dashboard is deprecated and scheduled for removal in milestone 0.1.0b2. SPECTRE is a CLI-first workstation with rich standalone HTML/JSON reporting.
+
+Start the legacy localhost web dashboard:
+
+```bash
+spectre dashboard
+# or
+spectre web
+```
+
+Open your browser at `http://127.0.0.1:8000`.
 
 ---
 

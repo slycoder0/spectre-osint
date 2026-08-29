@@ -118,26 +118,6 @@ Overall: READY WITH OPTIONAL FEATURES MISSING
 
 ---
 
-## Iniciando a Interface Web (Workstation GUI)
-
-Inicie o painel local:
-
-```bash
-spectre dashboard
-# ou
-spectre web
-```
-
-Acesse o endereço `http://127.0.0.1:8000` no seu navegador.
-
-Recursos disponíveis na interface web:
-- **Dossiê ao Vivo:** Acompanhamento de achados em tempo real, varredura de catálogo e proveniência de menções.
-- **Grafo Interativo:** Visualização de clusters de identidades correlacionadas e relacionamentos observados.
-- **Gaveta de Evidências:** Inspeção de códigos de status HTTP brutos, regras de extração e novidade.
-- **Gerenciador de Sessões:** Auditoria de perfis authenticated-public sem exibir cookies.
-
----
-
 ## Primeira Investigação via Linha de Comando (CLI)
 
 Investigue um username público:
@@ -155,6 +135,25 @@ spectre username alice_osint \
   --email alice@example.com \
   --website alice.example
 ```
+
+Ao concluir, o SPECTRE exibe os achados diretamente no terminal e gera relatórios completos e autocontidos em HTML, Markdown e JSON no diretório `./reports/`.
+
+---
+
+## Painel Web (Obsoleto / Deprecated)
+
+> [!NOTE]
+> A interface web está obsoleta e programada para remoção no marco 0.1.0b2. O SPECTRE é uma estação focada prioritariamente na CLI com geração de relatórios autocontidos em HTML/JSON.
+
+Inicie o painel local legado:
+
+```bash
+spectre dashboard
+# ou
+spectre web
+```
+
+Acesse o endereço `http://127.0.0.1:8000` no seu navegador.
 
 ---
 
