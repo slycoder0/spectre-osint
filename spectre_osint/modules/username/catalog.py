@@ -358,6 +358,29 @@ class AccessDefinition(CatalogBaseModel):
     auth_platform: str | None = None
     requires_auth: bool = False
 
+    @field_validator("auth_platform")
+    @classmethod
+    def validate_auth_platform(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(f"auth_platform must be a string, got {type(v).__name__}")
+        v_clean = v.strip().lower()
+        if not v_clean:
+            raise ValueError("auth_platform cannot be an empty string")
+        return v_clean
+
+    @model_validator(mode="after")
+    def validate_auth_contract(self) -> AccessDefinition:
+        """Enforce strict consistency between requires_auth and auth_platform."""
+        if self.requires_auth and not self.auth_platform:
+            raise ValueError("requires_auth is true but auth_platform is missing")
+        if not self.requires_auth and self.auth_platform:
+            raise ValueError(
+                f"auth_platform '{self.auth_platform}' is specified but requires_auth is false"
+            )
+        return self
+
 
 class SiteDefinition(CatalogBaseModel):
     """Typed, validated public site definition for username collection."""
@@ -456,8 +479,20 @@ class SiteDefinition(CatalogBaseModel):
 
         access_data = d.pop("access", None)
         if access_data is None:
-            auth_plat = d.pop("auth_platform", None)
-            req_auth = bool(d.pop("requires_auth", False) or auth_plat)
+            raw_auth_plat = d.pop("auth_platform", None)
+            raw_req_auth = d.pop("requires_auth", None)
+            if raw_req_auth is not None and not isinstance(raw_req_auth, bool):
+                raise ValueError(f"Site 'requires_auth' must be a bool, got {type(raw_req_auth).__name__}")
+            if raw_auth_plat is not None and not isinstance(raw_auth_plat, str):
+                raise ValueError(f"Site 'auth_platform' must be a string, got {type(raw_auth_plat).__name__}")
+
+            auth_plat = str(raw_auth_plat).strip().lower() if raw_auth_plat else None
+            # If requires_auth is omitted (None) and auth_platform is present -> derive True (backward compatibility)
+            if raw_req_auth is None:
+                req_auth = bool(auth_plat is not None)
+            else:
+                req_auth = bool(raw_req_auth)
+
             access_data = {
                 "auth_platform": auth_plat,
                 "requires_auth": req_auth,
@@ -530,6 +565,10 @@ class SiteDefinition(CatalogBaseModel):
             if not self.detection.json_id_field:
                 raise ValueError(
                     f"Site '{self.name}' with strategy 'json_api' must specify 'json_id_field'"
+                )
+            if self.request.http_method.upper() != "GET":
+                raise ValueError(
+                    f"Site '{self.name}' with strategy 'json_api' must use HTTP method 'GET' (got '{self.request.http_method}')"
                 )
         elif self.detection.strategy == CheckMethod.LOGIN_WALL:
             if not self.detection.login_patterns:

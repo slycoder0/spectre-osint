@@ -502,13 +502,15 @@ async def _check_site(
     check_url = str(site.get("check_url") or profile_url).format(username=username)
     name = site["name"]
     method = str(site.get("check_method") or "generic_html")
-    auth_platform = str(site.get("auth_platform") or "").strip().lower()
+    requires_auth = bool(site.get("requires_auth", False))
+    auth_platform = str(site.get("auth_platform") or "").strip().lower() if requires_auth else ""
     if not refresh and result_cache is not None:
         cached_auth = result_cache.get(
             "username", name, username, AccessMode.AUTHENTICATED_PUBLIC.value
         )
         if (
             cached_auth
+            and requires_auth
             and auth_platform
             and auth_service is not None
             and auth_service.has_active(auth_platform)
@@ -518,7 +520,7 @@ async def _check_site(
         if cached and cached.payload.get("check_status") != UsernameCheckStatus.LOGIN_REQUIRED.value:
             return _bundle_from_cached(entity, cached.payload, cached)
         if cached and cached.payload.get("check_status") == UsernameCheckStatus.LOGIN_REQUIRED.value:
-            if not auth_platform or auth_service is None or not auth_service.has_active(auth_platform):
+            if not requires_auth or not auth_platform or auth_service is None or not auth_service.has_active(auth_platform):
                 return _bundle_from_cached(entity, cached.payload, cached)
     min_interval = site.get("rate_limit")
     try:
@@ -684,7 +686,7 @@ async def _check_site(
     authenticated_status = None
     session_status = None
     auth_meta: dict[str, str] = {}
-    if status == UsernameCheckStatus.LOGIN_REQUIRED and auth_platform and auth_service is not None:
+    if status == UsernameCheckStatus.LOGIN_REQUIRED and requires_auth and auth_platform and auth_service is not None:
         auth_hit = await _authenticated_public(auth_service, site, username, profile_url)
         if auth_hit is not None:
             status, reason, conf, access_mode, session_status, auth_meta = auth_hit

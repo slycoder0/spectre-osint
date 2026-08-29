@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 from spectre_osint.core.config import Settings
 from spectre_osint.core.entities import Entity
 from spectre_osint.core.http_client import HttpClient
-from spectre_osint.core.types import Confidence, EntityType, UsernameCheckStatus
+from spectre_osint.core.types import AccessMode, Confidence, EntityType, UsernameCheckStatus
 from spectre_osint.modules.username.catalog import (
     CatalogValidationError,
     CheckMethod,
@@ -480,6 +481,41 @@ def test_json_api_strategy_requires_json_id_field() -> None:
     assert "json_id_field" in str(exc_info.value)
 
 
+def test_json_api_requires_get_method() -> None:
+    """Invariant: json_api strategy requires HTTP method GET (HEAD is rejected)."""
+    valid_json_get = _valid_site_dict(
+        name="Valid API Site",
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        http_method="GET",
+    )
+    site_get = SiteDefinition.model_validate(valid_json_get)
+    assert site_get.request.http_method == "GET"
+
+    invalid_json_head = _valid_site_dict(
+        name="Invalid API Site",
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        http_method="HEAD",
+    )
+    with pytest.raises(Exception) as exc_head:
+        SiteDefinition.model_validate(invalid_json_head)
+    err_head = str(exc_head.value)
+    assert "json_api" in err_head
+    assert "GET" in err_head
+
+    # generic_html may use HEAD or GET
+    valid_html_head = _valid_site_dict(
+        name="Valid HTML HEAD Site",
+        check_method="generic_html",
+        http_method="HEAD",
+    )
+    site_html = SiteDefinition.model_validate(valid_html_head)
+    assert site_html.request.http_method == "HEAD"
+
+
 def test_login_wall_strategy_requires_login_patterns() -> None:
     valid_wall = _valid_site_dict(
         check_method="login_wall",
@@ -499,6 +535,62 @@ def test_login_wall_strategy_requires_login_patterns() -> None:
     with pytest.raises(Exception) as exc_info:
         SiteDefinition.model_validate(invalid_wall)
     assert "login_patterns" in str(exc_info.value)
+
+
+def test_auth_contract_schema_rules() -> None:
+    """Enforce strict auth_platform and requires_auth consistency contract."""
+    # A. Public / anonymous definition: requires_auth=False, no auth_platform -> accepted
+    site_pub = SiteDefinition.model_validate({
+        "name": "Public Service",
+        "category": "Development",
+        "profile_url": "https://pub.example/{username}",
+        "access": {"requires_auth": False, "auth_platform": None},
+    })
+    assert site_pub.access.requires_auth is False
+    assert site_pub.access.auth_platform is None
+
+    # B. Explicit authenticated definition: requires_auth=True, auth_platform present -> accepted
+    site_auth = SiteDefinition.model_validate({
+        "name": "Auth Service",
+        "category": "Social",
+        "profile_url": "https://auth.example/{username}",
+        "access": {"requires_auth": True, "auth_platform": "instagram"},
+    })
+    assert site_auth.access.requires_auth is True
+    assert site_auth.access.auth_platform == "instagram"
+
+    # C. requires_auth=True with missing auth_platform -> rejected
+    with pytest.raises(Exception) as exc_c:
+        SiteDefinition.model_validate({
+            "name": "Invalid Missing Platform",
+            "category": "Social",
+            "profile_url": "https://auth.example/{username}",
+            "access": {"requires_auth": True, "auth_platform": None},
+        })
+    assert "missing" in str(exc_c.value).lower() or "requires_auth" in str(exc_c.value).lower()
+
+    # D. Explicit requires_auth=False with auth_platform present -> rejected
+    with pytest.raises(Exception) as exc_d:
+        SiteDefinition.model_validate({
+            "name": "Invalid Contradictory Auth",
+            "category": "Social",
+            "profile_url": "https://auth.example/{username}",
+            "access": {"requires_auth": False, "auth_platform": "instagram"},
+        })
+    assert "false" in str(exc_d.value).lower() or "specified" in str(exc_d.value).lower()
+
+    # E. Legacy flat auth_platform with omitted requires_auth -> normalized to requires_auth=True
+    site_legacy = SiteDefinition.model_validate({
+        "name": "Legacy Service",
+        "category": "Social",
+        "profile_url": "https://auth.example/{username}",
+        "auth_platform": "instagram",
+    })
+    assert site_legacy.access.requires_auth is True
+    assert site_legacy.access.auth_platform == "instagram"
+    assert site_legacy["requires_auth"] is True
+    assert site_legacy["auth_platform"] == "instagram"
+
 
 
 def test_validation_error_identifies_affected_site() -> None:
@@ -675,9 +767,41 @@ async def test_runtime_http_method_and_headers_mock_transport(tmp_path: Any) -> 
         await http.close()
 
 
+@dataclass
+class _FakeAuthOutcome:
+    status: str = "ok"
+    redirected_to_login: bool = False
+    status_code: int = 200
+    body: str = "<html><title>Alice (@alice-sec) on Platform</title><body>Alice (@alice-sec) on Platform</body></html>"
+    title: str = "Alice (@alice-sec) on Platform"
+    url: str = "https://instagram.com/alice-sec"
+    og_title: str = "Alice (@alice-sec)"
+    og_url: str = "https://instagram.com/alice-sec"
+    canonical_url: str = "https://instagram.com/alice-sec"
+    detail: str = ""
+
+
+class _FakeAuthService:
+    def __init__(self) -> None:
+        self.called_platforms: list[str] = []
+
+    def has_active(self, platform: str) -> bool:
+        return platform.lower() in {"instagram", "instagram_plat"}
+
+    async def fetch_public_profile(self, site_name: str, username: str, profile_url: str) -> _FakeAuthOutcome:
+        self.called_platforms.append(site_name)
+        return _FakeAuthOutcome(
+            url=f"https://instagram.com/{username}",
+            og_url=f"https://instagram.com/{username}",
+            canonical_url=f"https://instagram.com/{username}",
+            og_title=f"Alice (@{username})",
+            title=f"Alice (@{username}) on Platform",
+        )
+
+
 @pytest.mark.asyncio
-async def test_runtime_requires_auth_login_gated_effect(tmp_path: Any) -> None:
-    """Verify that requires_auth preserves LOGIN_REQUIRED when unauthenticated."""
+async def test_runtime_requires_auth_isolated_behavior(tmp_path: Any) -> None:
+    """Verify that requires_auth strictly gates authenticated-public session elevation."""
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<html><body>Please log in to see this profile</body></html>")
 
@@ -694,12 +818,38 @@ async def test_runtime_requires_auth_login_gated_effect(tmp_path: Any) -> None:
     entity = Entity.create(EntityType.USERNAME, "alice-sec", "test", Confidence.CONFIRMED)
 
     try:
-        site_auth = SiteDefinition.model_validate({
-            "name": "Gated Platform",
+        # 1. Public site (requires_auth=False, auth_platform=None)
+        # Even with an active auth service present, authenticated-public fetch is never attempted.
+        auth_service_pub = _FakeAuthService()
+        site_pub = SiteDefinition.model_validate({
+            "name": "Public Platform",
             "category": "Social",
-            "profile_url": "https://gated.example/{username}",
+            "profile_url": "https://public.example/{username}",
             "access": {
-                "auth_platform": "gated_plat",
+                "auth_platform": None,
+                "requires_auth": False,
+            },
+            "detection": {
+                "strategy": "login_wall",
+                "login_patterns": ["Please log in"],
+            },
+        }).to_dict()
+
+        res_pub = await _check_site(entity, site_pub, http, sem, auth_service=auth_service_pub)
+        assert len(auth_service_pub.called_platforms) == 0
+        finding_pub = res_pub["finding"]
+        assert finding_pub.data["check_status"] == UsernameCheckStatus.LOGIN_REQUIRED.value
+        assert finding_pub.data["access_mode"] == AccessMode.ANONYMOUS_PUBLIC.value
+
+        # 2. Authenticated site (requires_auth=True, auth_platform="instagram")
+        # When an active operator session exists, authenticated-public fetch is executed.
+        auth_service_auth = _FakeAuthService()
+        site_auth = SiteDefinition.model_validate({
+            "name": "Instagram",
+            "category": "Social",
+            "profile_url": "https://instagram.com/{username}",
+            "access": {
+                "auth_platform": "instagram",
                 "requires_auth": True,
             },
             "detection": {
@@ -708,9 +858,14 @@ async def test_runtime_requires_auth_login_gated_effect(tmp_path: Any) -> None:
             },
         }).to_dict()
 
-        res = await _check_site(entity, site_auth, http, sem)
-        finding = res["finding"]
-        assert finding.data["check_status"] == UsernameCheckStatus.LOGIN_REQUIRED.value
-        assert finding.data["access_mode"] == "ANONYMOUS_PUBLIC"
+        res_auth = await _check_site(entity, site_auth, http, sem, auth_service=auth_service_auth)
+        assert len(auth_service_auth.called_platforms) == 1
+        assert auth_service_auth.called_platforms[0] == "Instagram"
+        finding_auth = res_auth["finding"]
+        assert finding_auth.data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert finding_auth.data["check_status"] in {
+            UsernameCheckStatus.CONFIRMED.value,
+            UsernameCheckStatus.LIKELY.value,
+        }
     finally:
         await http.close()
