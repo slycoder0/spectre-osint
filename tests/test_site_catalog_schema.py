@@ -869,7 +869,7 @@ async def test_runtime_requires_auth_isolated_behavior(tmp_path: Any) -> None:
 
         res_auth = await _check_site(entity, site_auth, http, sem, auth_service=auth_service_auth)
         assert len(auth_service_auth.called_platforms) == 1
-        assert auth_service_auth.called_platforms[0] == "Instagram"
+        assert auth_service_auth.called_platforms[0] == "instagram"
         finding_auth = res_auth["finding"]
         assert finding_auth.data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
         assert finding_auth.data["check_status"] in {
@@ -3243,3 +3243,205 @@ async def test_real_http_client_408_provider_unavailable(tmp_path: Any) -> None:
         assert finding.status.value == "PROVIDER_UNAVAILABLE"
     finally:
         await http.close()
+
+
+@pytest.mark.asyncio
+async def test_json_api_top_level_list_identity_and_metadata(tmp_path: Any) -> None:
+    """Verify that JSON API correctly traverses top-level list arrays for identity and metadata extraction."""
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    sem = asyncio.Semaphore(5)
+
+    # 1. Top-level array with matching identity field and metadata
+    list_payload = [
+        {
+            "id": "alice",
+            "name": "Alice Example",
+            "website": "https://example.com/alice",
+            "bio": "Security researcher and open source builder",
+            "avatar_url": "https://example.com/avatars/alice.png",
+            "location": "San Francisco, CA",
+        }
+    ]
+
+    site_dict = {
+        "name": "List API Platform",
+        "category": "Development",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "0.id",
+        "display_name_fields": ["0.name"],
+        "website_fields": ["0.website"],
+        "bio_field": "0.bio",
+        "avatar_field": "0.avatar_url",
+        "location_field": "0.location",
+        "expected_status": [200],
+        "not_found_status": [404],
+        "http_method": "GET",
+    }
+    site = SiteDefinition.model_validate(site_dict).to_dict()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=list_payload)
+
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+    try:
+        res = await _check_site(entity, site, http, sem)
+        finding = res["finding"]
+        assert finding.data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert finding.confidence == Confidence.CONFIRMED
+        assert "0.id=alice" in finding.data["reason"]
+        assert finding.data["display_name"] == "Alice Example"
+        assert finding.data["website"] == "https://example.com/alice"
+        assert finding.data["bio"] == "Security researcher and open source builder"
+        assert finding.data["avatar_url"] == "https://example.com/avatars/alice.png"
+        assert finding.data["public_location"] == "San Francisco, CA"
+    finally:
+        await http.close()
+
+    # 2. Nested list traversal (e.g. users.0.id)
+    nested_payload = {
+        "users": [
+            {
+                "id": "alice",
+                "name": "Alice Nested",
+            }
+        ]
+    }
+    site_nested_dict = {
+        "name": "Nested List API Platform",
+        "category": "Development",
+        "profile_url": "https://api.example.com/search?q={username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "users.0.id",
+        "expected_status": [200],
+        "not_found_status": [404],
+        "http_method": "GET",
+    }
+    site_nested = SiteDefinition.model_validate(site_nested_dict).to_dict()
+
+    def handler_nested(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=nested_payload)
+
+    http_nested = HttpClient(settings, transport=httpx.MockTransport(handler_nested))
+    try:
+        res_nested = await _check_site(entity, site_nested, http_nested, sem)
+        assert res_nested["finding"].data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert res_nested["finding"].confidence == Confidence.CONFIRMED
+    finally:
+        await http_nested.close()
+
+
+@pytest.mark.asyncio
+async def test_json_api_top_level_list_edge_cases_and_status_precedence(tmp_path: Any) -> None:
+    """Verify edge cases (empty list, missing ID, out-of-range, non-digit segment, scalar roots) and status precedence."""
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    sem = asyncio.Semaphore(5)
+
+    site_dict = {
+        "name": "List Edge API",
+        "category": "Development",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "0.id",
+        "expected_status": [200],
+        "not_found_status": [404],
+        "http_method": "GET",
+    }
+    site = SiteDefinition.model_validate(site_dict).to_dict()
+
+    async def run_payload(payload: Any, status_code: int = 200, username: str = "alice") -> dict[str, Any]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status_code, json=payload)
+
+        http = HttpClient(settings, transport=httpx.MockTransport(handler))
+        ent = Entity.create(EntityType.USERNAME, username, "test", Confidence.CONFIRMED)
+        try:
+            return await _check_site(ent, site, http, sem)
+        finally:
+            await http.close()
+
+    # A. Missing ID field in top-level array element -> NOT_FOUND
+    res_missing = await run_payload([{"name": "Alice"}], username="alice_missing")
+    assert res_missing["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+
+    # B. Empty top-level array -> NOT_FOUND (no IndexError)
+    res_empty = await run_payload([], username="alice_empty")
+    assert res_empty["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+
+    # C. Out-of-range index (json_id_field="5.id" on 1-element list) -> NOT_FOUND
+    site_oor = {**site, "json_id_field": "5.id"}
+    def handler_oor(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": "alice"}])
+    http_oor = HttpClient(settings, transport=httpx.MockTransport(handler_oor))
+    ent_oor = Entity.create(EntityType.USERNAME, "alice_oor", "test", Confidence.CONFIRMED)
+    try:
+        res_oor = await _check_site(ent_oor, site_oor, http_oor, sem)
+        assert res_oor["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http_oor.close()
+
+    # D. Invalid non-digit path segment on list root (e.g. "users.id") -> NOT_FOUND
+    site_inv = {**site, "json_id_field": "users.id"}
+    def handler_inv(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": "alice"}])
+    http_inv = HttpClient(settings, transport=httpx.MockTransport(handler_inv))
+    ent_inv = Entity.create(EntityType.USERNAME, "alice_inv", "test", Confidence.CONFIRMED)
+    try:
+        res_inv = await _check_site(ent_inv, site_inv, http_inv, sem)
+        assert res_inv["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http_inv.close()
+
+    # E. Scalar JSON roots ("alice", 123, True) -> NOT_FOUND (no exception)
+    for i, scalar in enumerate(["alice", 123, True]):
+        res_scalar = await run_payload(scalar, username=f"alice_scalar_{i}")
+        assert res_scalar["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+
+    # F. Status precedence overrides positive list payload:
+    # HTTP 400 + [{"id": "alice"}] -> INCONCLUSIVE / LOW
+    res_400 = await run_payload([{"id": "alice", "name": "Alice"}], status_code=400, username="alice_400")
+    assert res_400["finding"].data["check_status"] == UsernameCheckStatus.INCONCLUSIVE.value
+    assert res_400["finding"].confidence == Confidence.LOW
+    assert res_400["finding"].data["display_name"] is None
+
+    # HTTP 404 + [{"id": "alice"}] -> NOT_FOUND
+    res_404 = await run_payload([{"id": "alice"}], status_code=404, username="alice_404")
+    assert res_404["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+
+    # HTTP 401 + [{"id": "alice"}] -> BLOCKED
+    res_401 = await run_payload([{"id": "alice"}], status_code=401, username="alice_401")
+    assert res_401["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
+
+    # HTTP 403 + [{"id": "alice"}] -> BLOCKED
+    res_403 = await run_payload([{"id": "alice"}], status_code=403, username="alice_403")
+    assert res_403["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
+
+    # HTTP 408 + [{"id": "alice"}] -> PROVIDER_UNAVAILABLE
+    res_408 = await run_payload([{"id": "alice"}], status_code=408, username="alice_408")
+    assert res_408["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+
+    # HTTP 429 + [{"id": "alice"}] -> RATE_LIMITED
+    res_429 = await run_payload([{"id": "alice"}], status_code=429, username="alice_429")
+    assert res_429["finding"].data["check_status"] == UsernameCheckStatus.RATE_LIMITED.value
+
+    # HTTP 500 + [{"id": "alice"}] -> PROVIDER_UNAVAILABLE
+    res_500 = await run_payload([{"id": "alice"}], status_code=500, username="alice_500")
+    assert res_500["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value

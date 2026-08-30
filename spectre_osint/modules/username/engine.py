@@ -652,25 +652,25 @@ async def _check_site(
             )
         else:
             id_field = site.get("json_id_field") or "login"
-            ident = _dig(data, id_field) if isinstance(data, dict) else None
+            ident = _dig(data, id_field)
             json_ok = ident is not None
             if json_ok:
                 for field in site.get("display_name_fields") or ["name", "displayName"]:
-                    val = _dig(data, field) if isinstance(data, dict) else None
+                    val = _dig(data, field)
                     if val:
                         json_name = str(val)
                         break
                 for field in site.get("website_fields") or ["blog", "url", "website"]:
-                    val = _dig(data, field) if isinstance(data, dict) else None
+                    val = _dig(data, field)
                     if val:
                         json_website = str(val)
                         break
-                json_bio = _dig(data, site.get("bio_field") or "bio") if isinstance(data, dict) else None
+                json_bio = _dig(data, site.get("bio_field") or "bio")
                 json_avatar = (
-                    _dig(data, site.get("avatar_field") or "avatar_url") if isinstance(data, dict) else None
+                    _dig(data, site.get("avatar_field") or "avatar_url")
                 )
                 json_location = (
-                    _dig(data, site.get("location_field") or "location") if isinstance(data, dict) else None
+                    _dig(data, site.get("location_field") or "location")
                 )
                 status = UsernameCheckStatus.CONFIRMED
                 reason = f"JSON identity field {id_field}={ident}"
@@ -748,11 +748,11 @@ async def _check_site(
         "username": username,
         "profile_url": profile_url,
         "final_url": response.url,
-        "display_name": flat.get("display_name") if observed else (json_name or public_name),
-        "bio": flat.get("bio") if observed else (str(json_bio)[:300] if json_bio else description),
-        "avatar_url": flat.get("avatar_url") if observed else (json_avatar or avatar),
-        "website": flat.get("website") if observed else (json_website or website),
-        "public_location": flat.get("public_location") if observed else json_location,
+        "display_name": flat.get("display_name") or json_name or public_name,
+        "bio": flat.get("bio") or (str(json_bio)[:300] if json_bio else description),
+        "avatar_url": flat.get("avatar_url") or json_avatar or avatar,
+        "website": flat.get("website") or json_website or website,
+        "public_location": flat.get("public_location") or json_location,
         "organization": flat.get("organization"),
         "public_email": flat.get("public_email"),
         "public_id": flat.get("public_id"),
@@ -866,10 +866,16 @@ async def _authenticated_public(
 ) -> tuple[UsernameCheckStatus, str, Confidence | None, AccessMode, str, dict[str, str]] | None:
     from spectre_osint.core.types import SessionStatus
 
-    if not auth_service.has_active(str(site.get("auth_platform") or site.get("name") or "")):
+    auth_platform = str(
+        site.get("auth_platform")
+        or site.get("name")
+        or ""
+    ).strip().lower()
+
+    if not auth_platform or not auth_service.has_active(auth_platform):
         return None
     try:
-        outcome = await auth_service.fetch_public_profile(site["name"], username, profile_url)
+        outcome = await auth_service.fetch_public_profile(auth_platform, username, profile_url)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Authenticated public fetch failed: %s", type(exc).__name__)
         return None
