@@ -32,6 +32,7 @@ from pydantic import (
     model_validator,
 )
 
+from spectre_osint.browser.models import normalize_platform
 from spectre_osint.core.config import BUNDLED_DATA_DIR
 
 
@@ -458,7 +459,10 @@ class AccessDefinition(CatalogBaseModel):
         v_clean = v.strip().lower()
         if not v_clean:
             raise ValueError("auth_platform cannot be an empty string")
-        return v_clean
+        try:
+            return normalize_platform(v_clean)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported auth platform: {v_clean}") from exc
 
     @model_validator(mode="after")
     def validate_auth_contract(self) -> AccessDefinition:

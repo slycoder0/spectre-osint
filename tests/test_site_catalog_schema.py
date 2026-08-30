@@ -9,6 +9,11 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from spectre_osint.browser.models import (
+    AUTH_PLATFORMS,
+    normalize_platform,
+    platform_for_site,
+)
 from spectre_osint.core.config import Settings
 from spectre_osint.core.entities import Entity
 from spectre_osint.core.http_client import HttpClient
@@ -21,6 +26,7 @@ from spectre_osint.core.types import (
     UsernameCheckStatus,
 )
 from spectre_osint.modules.username.catalog import (
+    AccessDefinition,
     CatalogSafeLoader,
     CatalogValidationError,
     CheckMethod,
@@ -228,7 +234,7 @@ def test_accepted_fields_survive_legacy_round_trip() -> None:
         "http_method": "HEAD",
         "headers": {"Accept": "application/json", "User-Agent": "Spectre/1.0"},
         "rate_limit": 1.5,
-        "auth_platform": "synthetic_auth",
+        "auth_platform": "instagram",
         "requires_auth": True,
         "sensitive": True,
         "notes": "Comprehensive synthetic test platform",
@@ -262,7 +268,7 @@ def test_accepted_fields_survive_legacy_round_trip() -> None:
     assert site.headers == {"Accept": "application/json", "User-Agent": "Spectre/1.0"}
     assert site.requires_auth is True
     assert site.rate_limit == 1.5
-    assert site.auth_platform == "synthetic_auth"
+    assert site.auth_platform == "instagram"
     assert site.sensitive is True
     assert site.notes == "Comprehensive synthetic test platform"
     assert site.check_url == "https://api.example.com/{username}"
@@ -600,6 +606,124 @@ def test_auth_contract_schema_rules() -> None:
     assert site_legacy["requires_auth"] is True
     assert site_legacy["auth_platform"] == "instagram"
 
+
+def test_auth_platform_canonicalization_and_rejection() -> None:
+    """Verify that auth_platform canonicalizes supported aliases and strictly rejects unsupported platforms and typos."""
+    # 1. Canonical slugs are preserved identically
+    for canonical in ["instagram", "facebook", "threads", "tiktok", "x", "twitch"]:
+        site = SiteDefinition.model_validate({
+            "name": f"{canonical.capitalize()} Service",
+            "category": "Social",
+            "profile_url": "https://example.com/{username}",
+            "access": {"requires_auth": True, "auth_platform": canonical},
+        })
+        assert site.access.auth_platform == canonical
+        assert site.to_dict()["auth_platform"] == canonical
+
+    # 2. Supported aliases canonicalize across both flat and nested forms
+    alias_map = {
+        "twitter": "x",
+        "ig": "instagram",
+        "fb": "facebook",
+        "tt": "tiktok",
+        "www.instagram.com": "instagram",
+        "instagram.com": "instagram",
+        "IG": "instagram",
+        "TWITTER": "x",
+        "  fb  ": "facebook",
+    }
+    for alias, expected in alias_map.items():
+        # Flat legacy form with alias (omitted requires_auth -> derives True)
+        site_flat = SiteDefinition.model_validate({
+            "name": f"Flat Alias {alias}",
+            "category": "Social",
+            "profile_url": "https://example.com/{username}",
+            "auth_platform": alias,
+        })
+        assert site_flat.access.requires_auth is True
+        assert site_flat.access.auth_platform == expected
+        d_flat = site_flat.to_dict()
+        assert d_flat["auth_platform"] == expected
+
+        # Flat explicit form with alias
+        site_flat_exp = SiteDefinition.model_validate({
+            "name": f"Flat Explicit {alias}",
+            "category": "Social",
+            "profile_url": "https://example.com/{username}",
+            "auth_platform": alias,
+            "requires_auth": True,
+        })
+        assert site_flat_exp.access.auth_platform == expected
+        assert site_flat_exp.to_dict()["auth_platform"] == expected
+
+        # Nested form with alias
+        site_nested = SiteDefinition.model_validate({
+            "name": f"Nested Alias {alias}",
+            "category": "Social",
+            "profile_url": "https://example.com/{username}",
+            "access": {"requires_auth": True, "auth_platform": alias},
+        })
+        assert site_nested.access.auth_platform == expected
+        assert site_nested.to_dict()["auth_platform"] == expected
+
+        # Direct AccessDefinition model validation
+        acc = AccessDefinition(requires_auth=True, auth_platform=alias)
+        assert acc.auth_platform == expected
+
+        # Round-trip preserves canonical value without alias reappearing
+        round_tripped = SiteDefinition.model_validate(site_nested.to_dict())
+        assert round_tripped.access.auth_platform == expected
+        assert round_tripped.to_dict()["auth_platform"] == expected
+
+    # 3. Unsupported platforms, typos, and unknown names fail validation
+    unsupported_platforms = [
+        "instgram",
+        "snapchat",
+        "discord",
+        "unknown",
+        "foo",
+        "reddit",
+        "github",
+        "google",
+    ]
+    for bad_plat in unsupported_platforms:
+        # Nested failure
+        with pytest.raises(ValidationError) as exc_nested:
+            SiteDefinition.model_validate({
+                "name": f"Bad Nested {bad_plat}",
+                "category": "Social",
+                "profile_url": "https://example.com/{username}",
+                "access": {"requires_auth": True, "auth_platform": bad_plat},
+            })
+        assert "Unsupported auth platform" in str(exc_nested.value) or "auth_platform" in str(exc_nested.value)
+
+        # Flat failure
+        with pytest.raises(ValidationError) as exc_flat:
+            SiteDefinition.model_validate({
+                "name": f"Bad Flat {bad_plat}",
+                "category": "Social",
+                "profile_url": "https://example.com/{username}",
+                "auth_platform": bad_plat,
+                "requires_auth": True,
+            })
+        assert "Unsupported auth platform" in str(exc_flat.value) or "auth_platform" in str(exc_flat.value)
+
+        # Direct AccessDefinition failure
+        with pytest.raises(ValidationError):
+            AccessDefinition(requires_auth=True, auth_platform=bad_plat)
+
+
+def test_auth_platforms_resolve_via_platform_for_site() -> None:
+    """Verify that every canonical AUTH_PLATFORMS key resolves successfully through platform_for_site."""
+    for slug, spec in AUTH_PLATFORMS.items():
+        # Canonical slug must be idempotent under normalize_platform
+        assert normalize_platform(slug) == slug
+
+        # Canonical slug must resolve through platform_for_site
+        resolved = platform_for_site(slug)
+        assert resolved is not None
+        assert resolved.slug == slug
+        assert resolved == spec
 
 
 def test_validation_error_identifies_affected_site() -> None:

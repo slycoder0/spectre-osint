@@ -323,3 +323,59 @@ async def test_authenticated_json_api_fallback_and_cache_transition(tmp_path: An
         assert res_na["finding"].data["access_mode"] == AccessMode.ANONYMOUS_PUBLIC.value
     finally:
         await http_no_auth.close()
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_auth_routing_with_platform_alias(tmp_path: Any) -> None:
+    """Verify that catalog platform alias canonicalizes before runtime and routes through AuthService without alias leakage."""
+    settings = _settings(tmp_path)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+
+    called_platforms: list[str] = []
+
+    class AliasMockAuthService:
+        def has_active(self, platform: str) -> bool:
+            return platform == "instagram"
+
+        async def fetch_public_profile(self, platform: str, username: str, url: str) -> FetchOutcome:
+            called_platforms.append(platform)
+            return FetchOutcome(
+                status="OK",
+                status_code=200,
+                body=f'<html><head><title>{username} on Instagram</title></head><body><h1>{username}</h1><a href="https://instagram.com/{username}">Profile</a></body></html>',
+                url=url,
+                title=f"{username} on Instagram",
+                og_title=username,
+            )
+
+    # 1. Alias input in catalog definition
+    site_def = SiteDefinition.model_validate({
+        "name": "Instagram Web",
+        "category": "Social",
+        "profile_url": "https://www.instagram.com/{username}/",
+        "check_method": "login_wall",
+        "auth_platform": "ig",
+        "login_patterns": ["Please log in"],
+    }).to_dict()
+
+    # Catalog model exports canonical slug, not raw alias
+    assert site_def["auth_platform"] == "instagram"
+
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, text="Please log in to continue")))
+    try:
+        res = await _check_site(entity, site_def, http, sem, auth_service=AliasMockAuthService())
+        assert len(called_platforms) == 1
+        # AuthService received canonical slug, never raw alias
+        assert called_platforms[0] == "instagram"
+
+        finding = res["finding"]
+        # Human-facing display name is preserved
+        assert finding.data["platform"] == "Instagram Web"
+        assert finding.data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert finding.data["check_status"] in {
+            UsernameCheckStatus.CONFIRMED.value,
+            UsernameCheckStatus.LIKELY.value,
+        }
+    finally:
+        await http.close()
