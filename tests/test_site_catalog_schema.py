@@ -1843,3 +1843,112 @@ def test_redirect_policy_runtime_classification() -> None:
     )
     assert status_search == UsernameCheckStatus.NOT_FOUND
     assert reason_search == "redirect_search"
+
+
+def test_strict_boolean_fields_rejection() -> None:
+    """Verify that catalog boolean fields (enabled, sensitive, requires_auth) accept only actual booleans."""
+    # 1. enabled
+    # Omitted defaults to True
+    site_def = SiteDefinition.model_validate(_valid_site_dict())
+    assert site_def.enabled is True
+    assert isinstance(site_def.enabled, bool)
+
+    # Valid bools accepted
+    site_true = SiteDefinition.model_validate(_valid_site_dict(enabled=True))
+    assert site_true.enabled is True
+    site_false = SiteDefinition.model_validate(_valid_site_dict(enabled=False))
+    assert site_false.enabled is False
+
+    # Invalid enabled inputs rejected
+    for bad in ["true", "false", "TRUE", "FALSE", "yes", "no", 1, 0, [], {}, None]:
+        with pytest.raises(ValidationError) as exc_enabled:
+            SiteDefinition.model_validate(_valid_site_dict(enabled=bad))
+        assert "bool" in str(exc_enabled.value).lower()
+
+    # 2. sensitive
+    # Omitted defaults to False
+    assert site_def.sensitive is False
+    assert isinstance(site_def.sensitive, bool)
+
+    # Valid bools accepted
+    site_sens_true = SiteDefinition.model_validate(_valid_site_dict(sensitive=True))
+    assert site_sens_true.sensitive is True
+
+    # Invalid sensitive inputs rejected
+    for bad in ["true", "false", 1, 0, None]:
+        with pytest.raises(ValidationError) as exc_sens:
+            SiteDefinition.model_validate(_valid_site_dict(sensitive=bad))
+        assert "bool" in str(exc_sens.value).lower()
+
+    # 3. requires_auth
+    # Valid boolean combinations
+    site_auth_true = SiteDefinition.model_validate(_valid_site_dict(
+        auth_platform="twitch",
+        requires_auth=True,
+    ))
+    assert site_auth_true.requires_auth is True
+
+    site_auth_false = SiteDefinition.model_validate(_valid_site_dict(
+        requires_auth=False,
+    ))
+    assert site_auth_false.requires_auth is False
+
+    # Invalid requires_auth types rejected (flat and nested)
+    for bad in ["true", "false", 1, 0, None]:
+        with pytest.raises(ValidationError) as exc_auth_flat:
+            SiteDefinition.model_validate(_valid_site_dict(
+                auth_platform="twitch",
+                requires_auth=bad,
+            ))
+        assert "bool" in str(exc_auth_flat.value).lower()
+
+        with pytest.raises(ValidationError) as exc_auth_nested:
+            SiteDefinition.model_validate({
+                "slug": "test_auth",
+                "name": "Test Auth",
+                "category": "Development",
+                "profile_url": "https://example.com/{username}",
+                "access": {
+                    "auth_platform": "twitch",
+                    "requires_auth": bad,
+                },
+            })
+        assert "bool" in str(exc_auth_nested.value).lower()
+
+
+def test_public_yaml_quoted_boolean_rejection(tmp_path: Any) -> None:
+    """Verify that YAML files with quoted booleans ('false', 'true') are rejected by public SiteCatalog loader."""
+    # A. Quoted enabled: "false" is rejected
+    quoted_yaml = tmp_path / "quoted_enabled.yaml"
+    quoted_yaml.write_text(
+        """
+sites:
+  - name: Quoted Example
+    category: Social
+    profile_url: https://example.com/{username}
+    enabled: "false"
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_quoted:
+        SiteCatalog.from_yaml_file(quoted_yaml)
+    assert "bool" in str(exc_quoted.value).lower()
+
+    # B. Unquoted enabled: false is accepted as real boolean False
+    unquoted_yaml = tmp_path / "unquoted_enabled.yaml"
+    unquoted_yaml.write_text(
+        """
+sites:
+  - name: Unquoted Example
+    category: Social
+    profile_url: https://example.com/{username}
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+    catalog = SiteCatalog.from_yaml_file(unquoted_yaml)
+    assert len(catalog.sites) == 1
+    assert catalog.sites[0].enabled is False
+    assert isinstance(catalog.sites[0].enabled, bool)
+    assert catalog.total_sites(enabled_only=True) == 0
+    assert catalog.total_sites(enabled_only=False) == 1

@@ -21,7 +21,15 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from spectre_osint.core.config import BUNDLED_DATA_DIR
 
@@ -393,7 +401,7 @@ class AccessDefinition(CatalogBaseModel):
     """Access mode and authentication requirements."""
 
     auth_platform: str | None = None
-    requires_auth: bool = False
+    requires_auth: StrictBool = False
 
     @field_validator("auth_platform")
     @classmethod
@@ -426,8 +434,8 @@ class SiteDefinition(CatalogBaseModel):
     name: str
     category: str
     profile_url: str
-    enabled: bool = True
-    sensitive: bool = False
+    enabled: StrictBool = True
+    sensitive: StrictBool = False
     notes: str | None = None
     detection: DetectionDefinition = Field(default_factory=DetectionDefinition)
     extraction: ExtractionDefinition = Field(default_factory=ExtractionDefinition)
@@ -441,7 +449,7 @@ class SiteDefinition(CatalogBaseModel):
             return data
         d = dict(data)
 
-        # Strict string type checks on raw scalar inputs before any transformation
+        # Strict string and boolean type checks on raw scalar inputs before any transformation
         raw_name = d.get("name")
         if raw_name is not None and not isinstance(raw_name, str):
             raise ValueError(f"Site 'name' must be a string, got {type(raw_name).__name__}")
@@ -471,6 +479,14 @@ class SiteDefinition(CatalogBaseModel):
         raw_auth_plat = d.get("auth_platform")
         if raw_auth_plat is not None and not isinstance(raw_auth_plat, str):
             raise ValueError(f"Site 'auth_platform' must be a string, got {type(raw_auth_plat).__name__}")
+
+        raw_enabled = d.get("enabled")
+        if raw_enabled is not None and not isinstance(raw_enabled, bool):
+            raise ValueError(f"Site 'enabled' must be a bool, got {type(raw_enabled).__name__}")
+
+        raw_sensitive = d.get("sensitive")
+        if raw_sensitive is not None and not isinstance(raw_sensitive, bool):
+            raise ValueError(f"Site 'sensitive' must be a bool, got {type(raw_sensitive).__name__}")
 
         # Reject unknown top-level legacy keys to prevent silent typos
         for k in d:
@@ -521,18 +537,22 @@ class SiteDefinition(CatalogBaseModel):
         access_data = d.pop("access", None)
         if access_data is None:
             raw_auth_plat = d.pop("auth_platform", None)
-            raw_req_auth = d.pop("requires_auth", None)
-            if raw_req_auth is not None and not isinstance(raw_req_auth, bool):
-                raise ValueError(f"Site 'requires_auth' must be a bool, got {type(raw_req_auth).__name__}")
+            if "requires_auth" in d:
+                raw_req_auth = d.pop("requires_auth")
+                if not isinstance(raw_req_auth, bool):
+                    raise ValueError(
+                        f"Site 'requires_auth' must be a bool, got {type(raw_req_auth).__name__}"
+                    )
+                req_auth = raw_req_auth
+            else:
+                # If requires_auth is omitted and auth_platform is present -> derive True (backward compatibility)
+                auth_plat_check = str(raw_auth_plat).strip().lower() if raw_auth_plat else None
+                req_auth = bool(auth_plat_check is not None)
+
             if raw_auth_plat is not None and not isinstance(raw_auth_plat, str):
                 raise ValueError(f"Site 'auth_platform' must be a string, got {type(raw_auth_plat).__name__}")
 
             auth_plat = str(raw_auth_plat).strip().lower() if raw_auth_plat else None
-            # If requires_auth is omitted (None) and auth_platform is present -> derive True (backward compatibility)
-            if raw_req_auth is None:
-                req_auth = bool(auth_plat is not None)
-            else:
-                req_auth = bool(raw_req_auth)
 
             access_data = {
                 "auth_platform": auth_plat,
