@@ -245,7 +245,7 @@ def enrich_profile(
     username: str,
     profile_url: str,
     site: dict[str, Any] | None = None,
-    json_data: dict[str, Any] | None = None,
+    json_data: dict[str, Any] | list[Any] | None = None,
     html: str = "",
     meta: dict[str, str] | None = None,
     observed_at: str | None = None,
@@ -284,7 +284,7 @@ def enrich_profile(
     if handle:
         put("username", handle, f"{provider_key}.username", original=username)
 
-    if isinstance(json_data, dict):
+    if isinstance(json_data, (dict, list)):
         api = f"{provider_key}_api"
         for path in spec.get("display_name_fields") or ["name", "displayName"]:
             raw = _dig(json_data, str(path))
@@ -315,31 +315,33 @@ def enrich_profile(
         av_url = normalize_url(str(av_raw) if av_raw else "")
         if av_url:
             put("avatar_url", av_url, f"{api}.{av_path}", original=str(av_raw))
-        numeric_id = json_data.get("id")
-        if isinstance(numeric_id, int) or (isinstance(numeric_id, str) and str(numeric_id).isdigit()):
-            put("public_id", str(numeric_id), f"{api}.id")
-        for field, keys in _JSON_FALLBACKS.items():
-            for key in keys:
-                raw = json_data.get(key)
-                if not raw:
-                    continue
-                if field == "public_email" and not _looks_like_email(str(raw)):
-                    continue
-                if field == "organization":
-                    put(field, str(raw)[:120], f"{api}.{key}")
-                elif field == "public_email":
-                    put(field, str(raw).strip().lower(), f"{api}.{key}")
-                elif field == "public_id":
-                    put(field, str(raw).strip(), f"{api}.{key}")
-                elif field == "avatar_url":
-                    canon = normalize_url(str(raw))
-                    if canon:
-                        put(field, canon, f"{api}.{key}", original=str(raw))
-        twitter = json_data.get("twitter_username") or json_data.get("twitter")
-        if twitter:
-            twitter_url = normalize_url(f"https://x.com/{str(twitter).lstrip('@')}")
-            if twitter_url:
-                put("social_links", [twitter_url], f"{api}.twitter_username")
+
+        if isinstance(json_data, dict):
+            numeric_id = json_data.get("id")
+            if isinstance(numeric_id, int) or (isinstance(numeric_id, str) and str(numeric_id).isdigit()):
+                put("public_id", str(numeric_id), f"{api}.id")
+            for field, keys in _JSON_FALLBACKS.items():
+                for key in keys:
+                    raw = json_data.get(key)
+                    if not raw:
+                        continue
+                    if field == "public_email" and not _looks_like_email(str(raw)):
+                        continue
+                    if field == "organization":
+                        put(field, str(raw)[:120], f"{api}.{key}")
+                    elif field == "public_email":
+                        put(field, str(raw).strip().lower(), f"{api}.{key}")
+                    elif field == "public_id":
+                        put(field, str(raw).strip(), f"{api}.{key}")
+                    elif field == "avatar_url":
+                        canon = normalize_url(str(raw))
+                        if canon:
+                            put(field, canon, f"{api}.{key}", original=str(raw))
+            twitter = json_data.get("twitter_username") or json_data.get("twitter")
+            if twitter:
+                twitter_url = normalize_url(f"https://x.com/{str(twitter).lstrip('@')}")
+                if twitter_url:
+                    put("social_links", [twitter_url], f"{api}.twitter_username")
 
     og_title = str(meta.get("og_title") or "")
     title = str(meta.get("title") or "")

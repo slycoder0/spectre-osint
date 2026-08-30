@@ -529,11 +529,27 @@ async def _check_site(
         ):
             return _bundle_from_cached(entity, cached_auth.payload, cached_auth)
         cached = result_cache.get("username", name, username, AccessMode.ANONYMOUS_PUBLIC.value)
-        if cached and cached.payload.get("check_status") != UsernameCheckStatus.LOGIN_REQUIRED.value:
-            return _bundle_from_cached(entity, cached.payload, cached)
-        if cached and cached.payload.get("check_status") == UsernameCheckStatus.LOGIN_REQUIRED.value:
-            if not requires_auth or not auth_platform or auth_service is None or not auth_service.has_active(auth_platform):
-                return _bundle_from_cached(entity, cached.payload, cached)
+        if cached:
+            payload = dict(cached.payload)
+            check_st = payload.get("check_status")
+            http_st = payload.get("http_status")
+            access_m = payload.get("access_mode")
+            if (
+                requires_auth
+                and auth_platform
+                and access_m == AccessMode.ANONYMOUS_PUBLIC.value
+                and check_st == UsernameCheckStatus.BLOCKED.value
+                and http_st in {401, 403}
+            ):
+                check_st = UsernameCheckStatus.LOGIN_REQUIRED.value
+                payload["check_status"] = check_st
+                payload["status"] = check_st
+                payload["verification_status"] = check_st
+
+            if check_st != UsernameCheckStatus.LOGIN_REQUIRED.value:
+                return _bundle_from_cached(entity, payload, cached)
+            elif not requires_auth or not auth_platform or auth_service is None or not auth_service.has_active(auth_platform):
+                return _bundle_from_cached(entity, payload, cached)
     min_interval = site.get("rate_limit")
     try:
         min_interval_f = float(min_interval) if min_interval is not None else None
@@ -618,11 +634,7 @@ async def _check_site(
 
     body = response.text[:50_000]
     title, description, public_name, avatar, website, canonical = _extract_profile_fields(body)
-    json_website = None
     json_name = None
-    json_bio = None
-    json_avatar = None
-    json_location = None
     json_ok = False
     data: Any = None
 
@@ -671,18 +683,6 @@ async def _check_site(
                     if val:
                         json_name = str(val)
                         break
-                for field in site.get("website_fields") or ["blog", "url", "website"]:
-                    val = _dig(data, field)
-                    if val:
-                        json_website = str(val)
-                        break
-                json_bio = _dig(data, site.get("bio_field") or "bio")
-                json_avatar = (
-                    _dig(data, site.get("avatar_field") or "avatar_url")
-                )
-                json_location = (
-                    _dig(data, site.get("location_field") or "location")
-                )
                 status = UsernameCheckStatus.CONFIRMED
                 reason = f"JSON identity field {id_field}={ident}"
                 conf = Confidence.CONFIRMED
@@ -734,7 +734,7 @@ async def _check_site(
 
     observed: dict[str, Any] = {}
     if status in {UsernameCheckStatus.CONFIRMED, UsernameCheckStatus.LIKELY}:
-        json_blob = data if method == "json_api" and isinstance(data, dict) else None
+        json_blob = data if method == "json_api" and isinstance(data, (dict, list)) else None
         html_blob = "" if access_mode == AccessMode.AUTHENTICATED_PUBLIC else (body or "")
         observed = enrich_profile(
             platform=name,
@@ -753,21 +753,36 @@ async def _check_site(
         )
     flat = flatten_observed(observed)
 
+    if method == "json_api":
+        display_name = flat.get("display_name")
+        bio = flat.get("bio")
+        avatar_url = flat.get("avatar_url")
+        website_val = flat.get("website")
+        public_location = flat.get("public_location")
+        public_links = flat.get("public_links") or []
+    else:
+        display_name = flat.get("display_name") or public_name
+        bio = flat.get("bio") or description
+        avatar_url = flat.get("avatar_url") or avatar
+        website_val = flat.get("website") or website
+        public_location = flat.get("public_location")
+        public_links = flat.get("public_links") or ([website] if website else [])
+
     payload = {
         "platform": name,
         "site": name,
         "username": username,
         "profile_url": profile_url,
         "final_url": response.url,
-        "display_name": flat.get("display_name") or json_name or public_name,
-        "bio": flat.get("bio") or (str(json_bio)[:300] if json_bio else description),
-        "avatar_url": flat.get("avatar_url") or json_avatar or avatar,
-        "website": flat.get("website") or json_website or website,
-        "public_location": flat.get("public_location") or json_location,
+        "display_name": display_name,
+        "bio": bio,
+        "avatar_url": avatar_url,
+        "website": website_val,
+        "public_location": public_location,
         "organization": flat.get("organization"),
         "public_email": flat.get("public_email"),
         "public_id": flat.get("public_id"),
-        "public_links": flat.get("public_links") or ([json_website or website] if (json_website or website) else []),
+        "public_links": public_links,
         "observed": observed,
         "verification_status": status.value,
         "check_status": status.value,
@@ -844,7 +859,7 @@ async def _check_site(
     )
     linked = link_public_website(
         entity,
-        json_website or website,
+        website_val,
         source=name,
         evidence_id=evidence.id,
         confidence=confidence or Confidence.MEDIUM,

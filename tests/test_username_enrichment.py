@@ -11,8 +11,9 @@ from spectre_osint.core.config import Settings
 from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.presentation import observed_profile_fields, username_rows
-from spectre_osint.core.types import Confidence, EntityType, FindingStatus
-from spectre_osint.modules.username.engine import analyze_username
+from spectre_osint.core.types import Confidence, EntityType, FindingStatus, UsernameCheckStatus
+from spectre_osint.modules.username.catalog import SiteDefinition
+from spectre_osint.modules.username.engine import _check_site, analyze_username
 from spectre_osint.modules.username.enrichment import enrich_profile
 from spectre_osint.modules.username.identity import (
     BANDS,
@@ -366,3 +367,130 @@ async def test_github_engine_enrichment_debug(tmp_path, caplog: pytest.LogCaptur
     assert any(msg.startswith("profile enrichment provider=GitHub") for msg in messages)
     assert any("fields=" in msg and "sources=" in msg for msg in messages)
     assert all("cookie" not in msg.lower() and "<html" not in msg.lower() for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_json_api_enrichment_filtering_and_provenance_boundaries(tmp_path) -> None:
+    """Verify that rejected raw values (e.g. generic bios, handle display names, malformed avatars, platform URLs) are never resurrected."""
+    settings = _settings(tmp_path)
+    import asyncio
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "t", Confidence.CONFIRMED)
+
+    site_def = SiteDefinition.model_validate({
+        "name": "Filtered JSON Site",
+        "category": "Development",
+        "profile_url": "https://filtered.example/api/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "id",
+        "display_name_fields": ["display_name"],
+        "bio_field": "bio",
+        "avatar_field": "avatar",
+        "website_fields": ["website"],
+        "location_field": "location",
+    }).to_dict()
+
+    # 1. Test payload with invalid/generic values that enrichment MUST reject
+    payload_bad = {
+        "id": "alice",
+        "display_name": "alice",  # Rejected: same as username
+        "bio": "hello",  # Rejected: generic bio and len < 8
+        "avatar": "   ",  # Rejected: empty / whitespace string
+        "website": "https://github.com/alice",  # Rejected: platform-owned URL, not personal website
+        "location": "Earth",
+    }
+    http_bad = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload_bad)))
+    try:
+        res = await _check_site(entity, site_def, http_bad, sem)
+        finding = res["finding"]
+        data = finding.data
+        assert data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        # Authoritative enrichment: rejected raw values MUST NOT be resurrected in final finding metadata
+        assert data["display_name"] is None
+        assert data["bio"] is None
+        assert data["avatar_url"] is None
+        assert data["website"] is None
+        assert data["public_links"] == []
+        assert data["public_location"] == "Earth"
+    finally:
+        await http_bad.close()
+
+    # 2. Test payload with valid personal values that enrichment MUST accept
+    entity_bob = Entity.create(EntityType.USERNAME, "bob", "t", Confidence.CONFIRMED)
+    payload_good = {
+        "id": "bob",
+        "display_name": "Alice In Wonderland",  # Valid display name
+        "bio": "Security researcher and open-source contributor",  # Valid bio
+        "avatar": "https://cdn.example.org/alice.jpg",  # Valid absolute avatar
+        "website": "https://alice.org",  # Valid personal website
+        "location": "Sao Paulo",
+    }
+    http_good = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload_good)))
+    try:
+        res = await _check_site(entity_bob, site_def, http_good, sem)
+        finding = res["finding"]
+        data = finding.data
+        assert data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert data["display_name"] == "Alice In Wonderland"
+        assert data["bio"] == "Security researcher and open-source contributor"
+        assert data["avatar_url"] == "https://cdn.example.org/alice.jpg"
+        assert data["website"] == "https://alice.org/"
+        assert data["public_location"] == "Sao Paulo"
+        assert "https://alice.org/" in data["public_links"]
+    finally:
+        await http_good.close()
+
+
+@pytest.mark.asyncio
+async def test_list_root_json_enrichment_and_provenance(tmp_path) -> None:
+    """Verify that list-root JSON is enriched through configured path-based extractors without raw fallbacks."""
+    settings = _settings(tmp_path)
+    import asyncio
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "t", Confidence.CONFIRMED)
+
+    site_def = SiteDefinition.model_validate({
+        "name": "List Root Site",
+        "category": "Development",
+        "profile_url": "https://list.example/api/users?query={username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "0.id",
+        "display_name_fields": ["0.name"],
+        "bio_field": "0.bio",
+        "website_fields": ["0.website"],
+        "avatar_field": "0.avatar",
+        "location_field": "0.location",
+    }).to_dict()
+
+    list_payload = [
+        {
+            "id": "alice",
+            "name": "Alice Example",
+            "bio": "Security researcher and developer",
+            "website": "https://example.org",
+            "avatar": "https://cdn.example.org/alice.png",
+            "location": "Sao Paulo",
+        }
+    ]
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, json=list_payload)))
+    try:
+        res = await _check_site(entity, site_def, http, sem)
+        finding = res["finding"]
+        data = finding.data
+        assert data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert data["display_name"] == "Alice Example"
+        assert data["bio"] == "Security researcher and developer"
+        assert data["website"] == "https://example.org/"
+        assert data["avatar_url"] == "https://cdn.example.org/alice.png"
+        assert data["public_location"] == "Sao Paulo"
+        # Verify observed provenance contains configured list-index paths
+        observed = data["observed"]
+        assert observed["display_name"]["source"] == "list_root_site_api.0.name"
+        assert observed["bio"]["source"] == "list_root_site_api.0.bio"
+        assert observed["website"]["source"] == "list_root_site_api.0.website"
+        assert observed["avatar_url"]["source"] == "list_root_site_api.0.avatar"
+        assert observed["location"]["source"] == "list_root_site_api.0.location"
+    finally:
+        await http.close()

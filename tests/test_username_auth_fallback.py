@@ -379,3 +379,155 @@ async def test_end_to_end_auth_routing_with_platform_alias(tmp_path: Any) -> Non
         }
     finally:
         await http.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_blocked_cache_reclassification_and_auth_fallback(tmp_path: Any) -> None:
+    """Verify that legacy anonymous BLOCKED entries on 401/403 for requires_auth providers are reclassified to LOGIN_REQUIRED."""
+    settings = _settings(tmp_path)
+    result_cache = ResultCache(settings)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+
+    site_auth = SiteDefinition.model_validate({
+        "name": "Instagram",
+        "category": "Social",
+        "profile_url": "https://www.instagram.com/{username}/",
+        "check_method": "login_wall",
+        "auth_platform": "instagram",
+        "login_patterns": ["Please log in"],
+    }).to_dict()
+
+    site_no_auth = SiteDefinition.model_validate({
+        "name": "Public API",
+        "category": "Development",
+        "profile_url": "https://api.example.com/{username}",
+        "check_method": "generic_html",
+        "requires_auth": False,
+    }).to_dict()
+
+    called_platforms: list[str] = []
+
+    class MockAuthService:
+        def __init__(self, active: bool = False) -> None:
+            self.active = active
+
+        def has_active(self, platform: str) -> bool:
+            return self.active if platform == "instagram" else False
+
+        async def fetch_public_profile(self, platform: str, username: str, url: str) -> FetchOutcome:
+            called_platforms.append(platform)
+            return FetchOutcome(
+                status="OK",
+                status_code=200,
+                body=f"<html><body><h1>{username}</h1></body></html>",
+                url=url,
+                title=f"{username} on Instagram",
+            )
+
+    # 1. Seed legacy anonymous cache entry: check_status="BLOCKED", http_status=401, access_mode="ANONYMOUS_PUBLIC"
+    legacy_payload_401 = {
+        "platform": "Instagram",
+        "username": "alice",
+        "check_status": UsernameCheckStatus.BLOCKED.value,
+        "status": UsernameCheckStatus.BLOCKED.value,
+        "verification_status": UsernameCheckStatus.BLOCKED.value,
+        "http_status": 401,
+        "access_mode": AccessMode.ANONYMOUS_PUBLIC.value,
+        "profile_url": "https://www.instagram.com/alice/",
+    }
+    result_cache.set("username", "Instagram", "alice", legacy_payload_401, access_mode=AccessMode.ANONYMOUS_PUBLIC.value)
+
+    # Without active session -> returns reclassified LOGIN_REQUIRED from cache (preserving cache age, no live auth fetch)
+    auth_inactive = MockAuthService(active=False)
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    try:
+        res1 = await _check_site(entity, site_auth, http, sem, result_cache=result_cache, auth_service=auth_inactive)
+        f1 = res1["finding"]
+        assert f1.data["check_status"] == UsernameCheckStatus.LOGIN_REQUIRED.value
+        assert f1.data["cache_state"] == "CACHED"
+        assert len(called_platforms) == 0
+    finally:
+        await http.close()
+
+    # 2. Test HTTP 403 legacy cache without active session
+    legacy_payload_403 = {
+        "platform": "Instagram",
+        "username": "bob",
+        "check_status": UsernameCheckStatus.BLOCKED.value,
+        "status": UsernameCheckStatus.BLOCKED.value,
+        "verification_status": UsernameCheckStatus.BLOCKED.value,
+        "http_status": 403,
+        "access_mode": AccessMode.ANONYMOUS_PUBLIC.value,
+        "profile_url": "https://www.instagram.com/bob/",
+    }
+    entity_bob = Entity.create(EntityType.USERNAME, "bob", "user", Confidence.CONFIRMED)
+    result_cache.set("username", "Instagram", "bob", legacy_payload_403, access_mode=AccessMode.ANONYMOUS_PUBLIC.value)
+    http_bob = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    try:
+        res_bob = await _check_site(entity_bob, site_auth, http_bob, sem, result_cache=result_cache, auth_service=auth_inactive)
+        f_bob = res_bob["finding"]
+        assert f_bob.data["check_status"] == UsernameCheckStatus.LOGIN_REQUIRED.value
+        assert f_bob.data["cache_state"] == "CACHED"
+        assert len(called_platforms) == 0
+    finally:
+        await http_bob.close()
+
+    # 3. Same legacy 401 cache entry WITH active session -> bypasses anonymous cache, triggers live authenticated fetch
+    auth_active = MockAuthService(active=True)
+    http_active = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(401, text="Unauthorized")))
+    try:
+        res2 = await _check_site(entity, site_auth, http_active, sem, result_cache=result_cache, auth_service=auth_active)
+        f2 = res2["finding"]
+        assert f2.data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert f2.data["check_status"] in {UsernameCheckStatus.CONFIRMED.value, UsernameCheckStatus.LIKELY.value}
+        assert len(called_platforms) == 1
+        assert called_platforms[0] == "instagram"
+    finally:
+        await http_active.close()
+
+    # 4. Genuine BLOCKED (e.g. anti-bot 200) on requires_auth provider MUST remain BLOCKED
+    real_blocked_payload = {
+        "platform": "Instagram",
+        "username": "charlie",
+        "check_status": UsernameCheckStatus.BLOCKED.value,
+        "status": UsernameCheckStatus.BLOCKED.value,
+        "verification_status": UsernameCheckStatus.BLOCKED.value,
+        "http_status": 200,
+        "access_mode": AccessMode.ANONYMOUS_PUBLIC.value,
+        "profile_url": "https://www.instagram.com/charlie/",
+    }
+    entity_charlie = Entity.create(EntityType.USERNAME, "charlie", "user", Confidence.CONFIRMED)
+    result_cache.set("username", "Instagram", "charlie", real_blocked_payload, access_mode=AccessMode.ANONYMOUS_PUBLIC.value)
+    http_charlie = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    try:
+        res_charlie = await _check_site(entity_charlie, site_auth, http_charlie, sem, result_cache=result_cache, auth_service=auth_active)
+        f_charlie = res_charlie["finding"]
+        # Real block must NOT be converted to LOGIN_REQUIRED
+        assert f_charlie.data["check_status"] == UsernameCheckStatus.BLOCKED.value
+        assert f_charlie.data["cache_state"] == "CACHED"
+    finally:
+        await http_charlie.close()
+
+    # 5. Non-auth provider with 401/403 BLOCKED MUST remain BLOCKED
+    no_auth_blocked_payload = {
+        "platform": "Public API",
+        "username": "david",
+        "check_status": UsernameCheckStatus.BLOCKED.value,
+        "status": UsernameCheckStatus.BLOCKED.value,
+        "verification_status": UsernameCheckStatus.BLOCKED.value,
+        "http_status": 401,
+        "access_mode": AccessMode.ANONYMOUS_PUBLIC.value,
+        "profile_url": "https://api.example.com/david",
+    }
+    entity_david = Entity.create(EntityType.USERNAME, "david", "user", Confidence.CONFIRMED)
+    result_cache.set("username", "Public API", "david", no_auth_blocked_payload, access_mode=AccessMode.ANONYMOUS_PUBLIC.value)
+    http_david = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    try:
+        res_david = await _check_site(entity_david, site_no_auth, http_david, sem, result_cache=result_cache, auth_service=auth_active)
+        f_david = res_david["finding"]
+        # Non-auth provider must NOT be reclassified
+        assert f_david.data["check_status"] == UsernameCheckStatus.BLOCKED.value
+        assert f_david.data["cache_state"] == "CACHED"
+    finally:
+        await http_david.close()
