@@ -184,10 +184,12 @@ def slugify_name(name: str) -> str:
 
 
 def _validate_regex_patterns(patterns: list[str], field_name: str) -> None:
-    """Ensure all strings in a pattern list are valid regular expressions."""
+    """Ensure all strings in a pattern list are valid, non-blank regular expressions."""
     for pattern in patterns:
         if not isinstance(pattern, str):
             raise ValueError(f"Pattern in {field_name} must be a string, got {type(pattern).__name__}")
+        if not pattern.strip():
+            raise ValueError(f"Pattern in {field_name} must not be empty or whitespace-only")
         try:
             re.compile(pattern)
         except re.error as exc:
@@ -368,6 +370,18 @@ class DetectionDefinition(CatalogBaseModel):
                 f"{field_name} has invalid policy '{v}'. Only 'not_found' is supported"
             )
         return "not_found"
+
+    @field_validator("json_id_field")
+    @classmethod
+    def validate_json_id_field(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(f"json_id_field must be a string, got {type(v).__name__}")
+        norm = v.strip()
+        if not norm:
+            raise ValueError("json_id_field must not be empty or whitespace-only")
+        return norm
 
 
 class ExtractionDefinition(CatalogBaseModel):

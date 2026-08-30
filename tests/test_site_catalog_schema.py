@@ -2378,3 +2378,245 @@ sites:
     cat = SiteCatalog.from_yaml_file(good_yaml)
     assert len(cat.sites) == 1
     assert cat.sites[0].profile_url == "https://example.com/{username}#profile"
+
+
+@pytest.mark.parametrize(
+    "pattern_field",
+    [
+        "success_patterns",
+        "profile_markers",
+        "not_found_patterns",
+        "soft_404_patterns",
+        "login_patterns",
+        "blocked_patterns",
+        "challenge_patterns",
+        "captcha_patterns",
+    ],
+)
+def test_detection_patterns_blank_and_whitespace_rejection(pattern_field: str) -> None:
+    """Verify that all detection pattern families reject empty and whitespace-only regexes."""
+    # 1. Empty string rejected
+    with pytest.raises(ValidationError) as exc_empty:
+        SiteDefinition.model_validate(_valid_site_dict(**{pattern_field: [""]}))
+    assert "empty or whitespace-only" in str(exc_empty.value).lower()
+
+    # 2. Whitespace-only string rejected
+    with pytest.raises(ValidationError) as exc_ws:
+        SiteDefinition.model_validate(_valid_site_dict(**{pattern_field: ["   "]}))
+    assert "empty or whitespace-only" in str(exc_ws.value).lower()
+
+    # 3. Valid patterns accepted
+    valid_patterns = ["profile", "^user-[a-z0-9]+$", r"\s+", ".*"]
+    site = SiteDefinition.model_validate(_valid_site_dict(**{pattern_field: valid_patterns}))
+    assert getattr(site.detection, pattern_field) == valid_patterns
+
+    # 4. Pattern with deliberate spaces preserved verbatim
+    spaced_pattern = [" foo "]
+    site_spaced = SiteDefinition.model_validate(_valid_site_dict(**{pattern_field: spaced_pattern}))
+    assert getattr(site_spaced.detection, pattern_field) == [" foo "]
+
+    # 5. Malformed regex rejected
+    with pytest.raises(ValidationError) as exc_malformed:
+        SiteDefinition.model_validate(_valid_site_dict(**{pattern_field: ["["]}))
+    assert "invalid regular expression" in str(exc_malformed.value).lower()
+
+
+def test_public_yaml_blank_regex_rejection(tmp_path: Any) -> None:
+    """Verify that public YAML loader rejects empty or whitespace-only detection patterns."""
+    # A. Empty string in not_found_patterns
+    bad_yaml_empty = tmp_path / "bad_empty.yaml"
+    bad_yaml_empty.write_text(
+        """
+sites:
+  - name: Empty Pattern Example
+    category: Social
+    profile_url: https://example.com/{username}
+    not_found_patterns:
+      - ""
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_empty:
+        SiteCatalog.from_yaml_file(bad_yaml_empty)
+    assert "empty or whitespace-only" in str(exc_empty.value).lower()
+
+    # B. Whitespace-only string in success_patterns
+    bad_yaml_ws = tmp_path / "bad_ws.yaml"
+    bad_yaml_ws.write_text(
+        """
+sites:
+  - name: WS Pattern Example
+    category: Social
+    profile_url: https://example.com/{username}
+    success_patterns:
+      - "   "
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_ws:
+        SiteCatalog.from_yaml_file(bad_yaml_ws)
+    assert "empty or whitespace-only" in str(exc_ws.value).lower()
+
+    # C. Valid patterns load cleanly
+    good_yaml = tmp_path / "good_patterns.yaml"
+    good_yaml.write_text(
+        """
+sites:
+  - name: Good Pattern Example
+    category: Social
+    profile_url: https://example.com/{username}
+    success_patterns:
+      - "Profile of"
+      - "^[a-z]+$"
+""",
+        encoding="utf-8",
+    )
+    cat = SiteCatalog.from_yaml_file(good_yaml)
+    assert len(cat.sites) == 1
+    assert cat.sites[0].success_patterns == ["Profile of", "^[a-z]+$"]
+
+
+def test_json_id_field_validation_and_normalization() -> None:
+    """Verify that json_id_field validates non-blank strings, strips surrounding whitespace, and rejects blanks."""
+    # 1. Valid values
+    site_plain = SiteDefinition.model_validate(_valid_site_dict(
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="username",
+    ))
+    assert site_plain.detection.json_id_field == "username"
+
+    site_padded = SiteDefinition.model_validate(_valid_site_dict(
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="  user.id  ",
+    ))
+    assert site_padded.detection.json_id_field == "user.id"
+
+    # None is valid for non-JSON strategies
+    site_none = SiteDefinition.model_validate(_valid_site_dict(json_id_field=None))
+    assert site_none.detection.json_id_field is None
+
+    # 2. Blank values rejected
+    for bad_id in ["", " ", "   ", "\t", "\n"]:
+        # Flat legacy
+        with pytest.raises(ValidationError) as exc_flat:
+            SiteDefinition.model_validate(_valid_site_dict(
+                check_method="json_api",
+                confidence_strategy="explicit_api",
+                json_id_field=bad_id,
+            ))
+        assert "empty or whitespace-only" in str(exc_flat.value).lower()
+
+        # Nested detection
+        with pytest.raises(ValidationError) as exc_nested:
+            SiteDefinition.model_validate({
+                "slug": "bad_json",
+                "name": "Bad JSON",
+                "category": "Development",
+                "profile_url": "https://example.com/{username}",
+                "detection": {
+                    "strategy": "json_api",
+                    "confidence_strategy": "explicit_api",
+                    "json_id_field": bad_id,
+                },
+                "request": {
+                    "http_method": "GET",
+                },
+            })
+        assert "empty or whitespace-only" in str(exc_nested.value).lower()
+
+        # Non-JSON strategy with blank json_id_field must also fail field validation
+        with pytest.raises(ValidationError) as exc_nonjson:
+            SiteDefinition.model_validate(_valid_site_dict(
+                check_method="generic_html",
+                json_id_field=bad_id,
+            ))
+        assert "empty or whitespace-only" in str(exc_nonjson.value).lower()
+
+
+def test_public_yaml_json_id_field_validation(tmp_path: Any) -> None:
+    """Verify that public YAML loader rejects whitespace-only json_id_field and normalizes padded values."""
+    # A. Whitespace-only json_id_field fails
+    bad_yaml = tmp_path / "bad_json_id.yaml"
+    bad_yaml.write_text(
+        """
+sites:
+  - name: Bad JSON ID Example
+    category: Social
+    profile_url: https://example.com/{username}
+    check_method: json_api
+    confidence_strategy: explicit_api
+    json_id_field: "   "
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_yaml:
+        SiteCatalog.from_yaml_file(bad_yaml)
+    assert "empty or whitespace-only" in str(exc_yaml.value).lower()
+
+    # B. Padded json_id_field is normalized
+    good_yaml = tmp_path / "good_json_id.yaml"
+    good_yaml.write_text(
+        """
+sites:
+  - name: Good JSON ID Example
+    category: Social
+    profile_url: https://example.com/{username}
+    check_method: json_api
+    confidence_strategy: explicit_api
+    json_id_field: "  login  "
+""",
+        encoding="utf-8",
+    )
+    cat = SiteCatalog.from_yaml_file(good_yaml)
+    assert len(cat.sites) == 1
+    assert cat.sites[0].json_id_field == "login"
+    assert cat.sites[0].to_dict()["json_id_field"] == "login"
+
+
+@pytest.mark.asyncio
+async def test_json_runtime_normalized_id_field(tmp_path: Any) -> None:
+    """Verify that a padded json_id_field canonicalizes and succeeds in runtime JSON identity check."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"login": "alice", "id": 999})
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+
+    try:
+        site_def = SiteDefinition.model_validate(_valid_site_dict(
+            name="JSON Platform",
+            profile_url="https://api.example.com/users/{username}",
+            check_method="json_api",
+            confidence_strategy="explicit_api",
+            json_id_field="  login  ",
+            http_method="GET",
+        )).to_dict()
+
+        res = await _check_site(entity, site_def, http, sem)
+        finding_data = res["finding"].data
+        assert finding_data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert finding_data["confidence"] == Confidence.CONFIRMED.value
+
+        # Blank json_id_field fails before transport
+        with pytest.raises(ValidationError):
+            SiteDefinition.model_validate(_valid_site_dict(
+                name="Invalid JSON Platform",
+                profile_url="https://api.example.com/users/{username}",
+                check_method="json_api",
+                confidence_strategy="explicit_api",
+                json_id_field="   ",
+                http_method="GET",
+            ))
+    finally:
+        await http.close()
