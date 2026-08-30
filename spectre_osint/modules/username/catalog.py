@@ -13,6 +13,7 @@ Critical Invariants:
 
 from __future__ import annotations
 
+import math
 import re
 import string
 from enum import StrEnum
@@ -368,8 +369,10 @@ class RequestDefinition(CatalogBaseModel):
     @field_validator("rate_limit")
     @classmethod
     def validate_rate_limit(cls, v: float | None) -> float | None:
-        if v is not None and v <= 0:
-            raise ValueError(f"Rate limit must be positive, got {v}")
+        if v is None:
+            return None
+        if not math.isfinite(v) or v <= 0:
+            raise ValueError(f"Rate limit must be a finite positive number, got {v}")
         return v
 
     @field_validator("check_url")
@@ -646,6 +649,10 @@ class SiteDefinition(CatalogBaseModel):
             if self.request.http_method.upper() != "GET":
                 raise ValueError(
                     f"Site '{self.name}' with strategy 'json_api' must use HTTP method 'GET' (got '{self.request.http_method}')"
+                )
+            if self.detection.confidence_strategy != ConfidenceStrategy.EXPLICIT_API:
+                raise ValueError(
+                    f"Site '{self.name}' with strategy 'json_api' must use confidence_strategy 'explicit_api' (got '{self.detection.confidence_strategy.value}')"
                 )
         elif self.detection.strategy == CheckMethod.LOGIN_WALL:
             if not self.detection.login_patterns:

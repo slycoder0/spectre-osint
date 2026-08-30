@@ -1265,6 +1265,7 @@ async def test_custom_headers_disable_response_cache(tmp_path: Any) -> None:
             name="API Site",
             profile_url="https://example.com/api/{username}",
             check_method="json_api",
+            confidence_strategy="explicit_api",
             json_id_field="id",
             headers={"Accept": "application/json"},
         )).to_dict()
@@ -1443,6 +1444,7 @@ async def test_result_cache_request_config_isolation(tmp_path: Any) -> None:
             name="DualSite",
             profile_url="https://example.com/{username}",
             check_method="json_api",
+            confidence_strategy="explicit_api",
             json_id_field="id",
             headers={"Accept": "application/json"},
         )).to_dict()
@@ -1952,3 +1954,171 @@ sites:
     assert isinstance(catalog.sites[0].enabled, bool)
     assert catalog.total_sites(enabled_only=True) == 0
     assert catalog.total_sites(enabled_only=False) == 1
+
+
+def test_json_api_requires_explicit_api_confidence_strategy() -> None:
+    """Invariant: json_api strategy requires confidence_strategy 'explicit_api'."""
+    # 1. Valid explicit_api in flat and nested forms
+    valid_flat = _valid_site_dict(
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        http_method="GET",
+    )
+    site_flat = SiteDefinition.model_validate(valid_flat)
+    assert site_flat.detection.strategy == CheckMethod.JSON_API
+    assert site_flat.detection.confidence_strategy == ConfidenceStrategy.EXPLICIT_API
+
+    valid_nested = {
+        "slug": "nested_json",
+        "name": "Nested JSON",
+        "category": "Development",
+        "profile_url": "https://example.com/{username}",
+        "detection": {
+            "strategy": "json_api",
+            "confidence_strategy": "explicit_api",
+            "json_id_field": "login",
+        },
+        "request": {
+            "http_method": "GET",
+        },
+    }
+    site_nested = SiteDefinition.model_validate(valid_nested)
+    assert site_nested.detection.confidence_strategy == ConfidenceStrategy.EXPLICIT_API
+
+    # 2. Invalid confidence_strategy for json_api (multi_signal, never_confirmed, omitted)
+    for invalid_strat in ["multi_signal", "never_confirmed"]:
+        with pytest.raises(ValidationError) as exc_strat:
+            SiteDefinition.model_validate(_valid_site_dict(
+                check_method="json_api",
+                confidence_strategy=invalid_strat,
+                json_id_field="login",
+                http_method="GET",
+            ))
+        err_msg = str(exc_strat.value)
+        assert "json_api" in err_msg
+        assert "explicit_api" in err_msg
+
+    # Omitted confidence_strategy with json_api (resolves to default multi_signal) must also fail
+    with pytest.raises(ValidationError) as exc_omitted:
+        SiteDefinition.model_validate({
+            "slug": "omitted_conf",
+            "name": "Omitted Conf",
+            "category": "Development",
+            "profile_url": "https://example.com/{username}",
+            "check_method": "json_api",
+            "json_id_field": "login",
+            "http_method": "GET",
+        })
+    err_omitted = str(exc_omitted.value)
+    assert "json_api" in err_omitted
+    assert "explicit_api" in err_omitted
+
+
+@pytest.mark.asyncio
+async def test_json_api_runtime_explicit_api_confirmation(tmp_path: Any) -> None:
+    """Verify that validated json_api + explicit_api site yields CONFIRMED on matching JSON identity."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"login": "alice", "id": 12345})
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+
+    try:
+        # Valid JSON site executes and returns CONFIRMED
+        valid_site = SiteDefinition.model_validate(_valid_site_dict(
+            name="JSON Platform",
+            profile_url="https://api.example.com/users/{username}",
+            check_method="json_api",
+            confidence_strategy="explicit_api",
+            json_id_field="login",
+            http_method="GET",
+        )).to_dict()
+
+        res = await _check_site(entity, valid_site, http, sem)
+        finding_data = res["finding"].data
+        assert finding_data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert finding_data["confidence"] == Confidence.CONFIRMED.value
+
+        # Invalid configuration fails at schema validation time before transport
+        with pytest.raises(ValidationError):
+            SiteDefinition.model_validate(_valid_site_dict(
+                name="Invalid JSON Platform",
+                profile_url="https://api.example.com/users/{username}",
+                check_method="json_api",
+                confidence_strategy="never_confirmed",
+                json_id_field="login",
+                http_method="GET",
+            ))
+    finally:
+        await http.close()
+
+
+def test_rate_limit_finite_positive_validation() -> None:
+    """Verify that rate_limit must be None or a finite positive float."""
+    # 1. Valid values
+    assert SiteDefinition.model_validate(_valid_site_dict(rate_limit=None)).request.rate_limit is None
+    assert SiteDefinition.model_validate(_valid_site_dict(rate_limit=0.01)).request.rate_limit == 0.01
+    assert SiteDefinition.model_validate(_valid_site_dict(rate_limit=0.5)).request.rate_limit == 0.5
+    assert SiteDefinition.model_validate(_valid_site_dict(rate_limit=1.0)).request.rate_limit == 1.0
+    assert SiteDefinition.model_validate(_valid_site_dict(rate_limit=60.0)).request.rate_limit == 60.0
+
+    # 2. Non-finite values rejected
+    for bad_float in [float("inf"), float("-inf"), float("nan")]:
+        with pytest.raises(ValidationError) as exc_nonfinite:
+            SiteDefinition.model_validate(_valid_site_dict(rate_limit=bad_float))
+        err_msg = str(exc_nonfinite.value).lower()
+        assert "rate limit" in err_msg
+        assert "finite positive" in err_msg
+
+    # 3. Non-positive finite values rejected
+    for non_positive in [0, 0.0, -0.1, -1.0, -60.0]:
+        with pytest.raises(ValidationError) as exc_nonpos:
+            SiteDefinition.model_validate(_valid_site_dict(rate_limit=non_positive))
+        err_msg = str(exc_nonpos.value).lower()
+        assert "rate limit" in err_msg
+        assert "finite positive" in err_msg
+
+
+def test_public_yaml_non_finite_rate_limits(tmp_path: Any) -> None:
+    """Verify that YAML files with non-finite rate limits (.inf, -.inf, .nan) fail public validation."""
+    for bad_scalar in [".inf", "-.inf", ".nan"]:
+        yaml_file = tmp_path / f"rate_{bad_scalar.replace('.', '').replace('-', 'neg')}.yaml"
+        yaml_file.write_text(
+            f"""
+sites:
+  - name: Bad Timing Example
+    category: Social
+    profile_url: https://example.com/{{username}}
+    rate_limit: {bad_scalar}
+""",
+            encoding="utf-8",
+        )
+        with pytest.raises(CatalogValidationError) as exc_yaml:
+            SiteCatalog.from_yaml_file(yaml_file)
+        assert "rate limit" in str(exc_yaml.value).lower()
+
+    # Finite rate limit succeeds
+    valid_yaml = tmp_path / "rate_valid.yaml"
+    valid_yaml.write_text(
+        """
+sites:
+  - name: Valid Timing Example
+    category: Social
+    profile_url: https://example.com/{username}
+    rate_limit: 0.5
+""",
+        encoding="utf-8",
+    )
+    cat = SiteCatalog.from_yaml_file(valid_yaml)
+    assert len(cat.sites) == 1
+    assert cat.sites[0].rate_limit == 0.5
