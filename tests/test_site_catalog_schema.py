@@ -3445,3 +3445,121 @@ async def test_json_api_top_level_list_edge_cases_and_status_precedence(tmp_path
     # HTTP 500 + [{"id": "alice"}] -> PROVIDER_UNAVAILABLE
     res_500 = await run_payload([{"id": "alice"}], status_code=500, username="alice_500")
     assert res_500["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+
+
+def test_expected_status_schema_rejects_reserved_and_5xx(tmp_path: Any) -> None:
+    """Verify that expected_status rejects 5xx server errors and 401/403/408/429 reserved statuses."""
+    # 1. Reserved codes in expected_status fail validation
+    for bad_code in [500, 502, 503, 504, 599, 401, 403, 408, 429]:
+        with pytest.raises(ValidationError):
+            SiteDefinition.model_validate(_valid_site_dict(
+                name=f"Bad Expected Site {bad_code}",
+                expected_status=[bad_code],
+            ))
+
+    # Flat legacy format with 401 in expected_status
+    with pytest.raises(ValidationError):
+        SiteDefinition.model_validate({
+            "name": "Flat Legacy Bad Expected",
+            "category": "Development",
+            "profile_url": "https://example.com/users/{username}",
+            "check_method": "generic_html",
+            "confidence_strategy": "multi_signal",
+            "expected_status": [401],
+            "not_found_status": [404],
+            "success_patterns": ["profile"],
+        })
+
+    # Nested detection format with 500 in expected_status
+    with pytest.raises(ValidationError):
+        SiteDefinition.model_validate({
+            "name": "Nested Bad Expected",
+            "category": "Development",
+            "profile_url": "https://example.com/users/{username}",
+            "detection": {
+                "strategy": "generic_html",
+                "confidence_strategy": "multi_signal",
+                "expected_status": [500],
+                "not_found_status": [404],
+                "success_patterns": ["profile"],
+            },
+        })
+
+    # Mixed with valid codes
+    for bad_code in [401, 403, 408, 429, 500]:
+        with pytest.raises(ValidationError):
+            SiteDefinition.model_validate(_valid_site_dict(
+                name=f"Bad Mixed Expected {bad_code}",
+                expected_status=[200, bad_code],
+            ))
+
+    # 2. Public YAML loading fails with CatalogValidationError for reserved expected_status
+    bad_yaml = tmp_path / "bad_expected_sites.yaml"
+    bad_yaml.write_text(
+        """
+sites:
+  - name: "Bad Expected 401 Site"
+    category: "Development"
+    profile_url: "https://example.com/users/{username}"
+    check_method: "generic_html"
+    confidence_strategy: "multi_signal"
+    expected_status: [401]
+    not_found_status: [404]
+    success_patterns: ["profile"]
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError):
+        SiteCatalog.from_yaml_file(bad_yaml)
+
+    # 3. Valid non-reserved expected_status values load cleanly
+    for valid_statuses in [[200], [201], [200, 201], [204], [302], [400]]:
+        site_def = _valid_site_dict(
+            name=f"Valid Expected {valid_statuses}",
+            expected_status=valid_statuses,
+            not_found_status=[404] if 404 not in valid_statuses else [410],
+        )
+        validated = SiteDefinition.model_validate(site_def)
+        assert validated.detection.expected_status == valid_statuses
+
+
+def test_http_status_code_matrix_100_to_599_invariants() -> None:
+    """Exhaustive table-driven invariant audit of all HTTP status codes 100 through 599."""
+    reserved_set = {401, 403, 408, 429}
+
+    for code in range(100, 600):
+        is_reserved = (code in reserved_set) or (500 <= code <= 599)
+
+        if is_reserved:
+            # Must be rejected from expected_status
+            with pytest.raises(ValidationError):
+                SiteDefinition.model_validate(_valid_site_dict(
+                    name=f"Inv Exp {code}",
+                    expected_status=[code],
+                    not_found_status=[404] if code != 404 else [410],
+                ))
+            # Must be rejected from not_found_status
+            with pytest.raises(ValidationError):
+                SiteDefinition.model_validate(_valid_site_dict(
+                    name=f"Inv NF {code}",
+                    expected_status=[200],
+                    not_found_status=[code],
+                ))
+        else:
+            # Non-reserved code must be accepted in expected_status (with distinct not_found_status)
+            nf = 404 if code != 404 else 410
+            site_exp = SiteDefinition.model_validate(_valid_site_dict(
+                name=f"Valid Exp {code}",
+                expected_status=[code],
+                not_found_status=[nf],
+            ))
+            assert site_exp.detection.expected_status == [code]
+
+            # Non-reserved code must be accepted in not_found_status (with distinct expected_status)
+            exp = 200 if code != 200 else 201
+            site_nf = SiteDefinition.model_validate(_valid_site_dict(
+                name=f"Valid NF {code}",
+                expected_status=[exp],
+                not_found_status=[code],
+            ))
+            assert site_nf.detection.not_found_status == [code]

@@ -133,7 +133,11 @@ def classify_html(
     if _pattern_hit(haystack, site.get("challenge_patterns")):
         return UsernameCheckStatus.CHALLENGE_REQUIRED, "challenge presented — not bypassed", None
     if status_code in {401, 403} or _pattern_hit(haystack, site.get("blocked_patterns")):
-        if _pattern_hit(haystack, site.get("login_patterns")) or method == "login_wall":
+        if (
+            _pattern_hit(haystack, site.get("login_patterns"))
+            or method == "login_wall"
+            or (bool(site.get("requires_auth")) and bool(site.get("auth_platform")))
+        ):
             return UsernameCheckStatus.LOGIN_REQUIRED, f"HTTP {status_code} login/wall", None
         return UsernameCheckStatus.BLOCKED, f"HTTP {status_code} blocked", None
     if status_code in {408} or status_code >= 500:
@@ -629,7 +633,14 @@ async def _check_site(
         if response.status_code == 429:
             status, reason, conf = UsernameCheckStatus.RATE_LIMITED, "HTTP 429", None
         elif response.status_code in {401, 403}:
-            status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
+            if requires_auth and auth_platform:
+                status, reason, conf = (
+                    UsernameCheckStatus.LOGIN_REQUIRED,
+                    f"HTTP {response.status_code} login required",
+                    None,
+                )
+            else:
+                status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
         elif response.status_code in {408} or response.status_code >= 500:
             status, reason, conf = (
                 UsernameCheckStatus.PROVIDER_UNAVAILABLE,

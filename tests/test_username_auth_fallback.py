@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import httpx
 import pytest
@@ -27,6 +28,7 @@ def _settings(tmp_path):
         browser_profiles_dir=tmp_path / "browser-profiles",
         browser_backend="fake",
         keyring_enabled=False,
+        ssrf_enabled=False,
     )
     s.ensure_dirs()
     return s
@@ -219,3 +221,105 @@ async def test_authenticated_public_routes_via_auth_platform(tmp_path) -> None:
     assert res_norm["finding"].data["platform"] == "Instagram Custom"
 
     await http.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_json_api_fallback_and_cache_transition(tmp_path: Any) -> None:
+    """Verify that authenticated json_api triggers LOGIN_REQUIRED on 401/403 and transitions cleanly across cache."""
+    settings = _settings(tmp_path)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+    result_cache = ResultCache(settings)
+
+    class MockAuthService:
+        def __init__(self) -> None:
+            self.active_platforms: set[str] = set()
+            self.called_platforms: list[str] = []
+
+        def has_active(self, platform: str) -> bool:
+            return platform in self.active_platforms
+
+        async def fetch_public_profile(self, platform: str, username: str, url: str) -> FetchOutcome:
+            self.called_platforms.append(platform)
+            return FetchOutcome(
+                status="OK",
+                status_code=200,
+                body=f'<html><head><title>{username} Profile</title></head><body><h1>{username}</h1><a href="https://example.com/{username}">Profile</a></body></html>',
+                url=url,
+                title=f"{username} Profile",
+                og_title=username,
+            )
+
+    site_auth = SiteDefinition.model_validate({
+        "name": "JSON Auth Platform",
+        "category": "Social",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "id",
+        "requires_auth": True,
+        "auth_platform": "instagram",
+        "expected_status": [200],
+        "not_found_status": [404],
+    }).to_dict()
+
+    site_no_auth = SiteDefinition.model_validate({
+        "name": "JSON No Auth Platform",
+        "category": "Social",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "id",
+        "requires_auth": False,
+        "expected_status": [200],
+        "not_found_status": [404],
+    }).to_dict()
+
+    auth_svc = MockAuthService()
+
+    # 1. Test 401 on requires_auth=True without active session -> LOGIN_REQUIRED (cached)
+    http_401 = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(401, json={"error": "unauthorized"})))
+    try:
+        res1 = await _check_site(entity, site_auth, http_401, sem, result_cache=result_cache, auth_service=auth_svc)
+        assert res1["finding"].data["check_status"] == UsernameCheckStatus.LOGIN_REQUIRED.value
+        assert res1["finding"].data["access_mode"] == AccessMode.ANONYMOUS_PUBLIC.value
+        assert len(auth_svc.called_platforms) == 0
+
+        # Operator logs in (active session created)
+        auth_svc.active_platforms.add("instagram")
+
+        # 2. Rescan with active session -> Cache does NOT suppress fallback, authenticated fetch executes
+        res2 = await _check_site(entity, site_auth, http_401, sem, result_cache=result_cache, auth_service=auth_svc)
+        assert res2["finding"].data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert res2["finding"].data["check_status"] in {
+            UsernameCheckStatus.CONFIRMED.value,
+            UsernameCheckStatus.LIKELY.value,
+        }
+        assert len(auth_svc.called_platforms) == 1
+        assert auth_svc.called_platforms[0] == "instagram"
+    finally:
+        await http_401.close()
+
+    # 3. Test 403 on requires_auth=True with active session directly -> authenticated fetch executes
+    entity_403 = Entity.create(EntityType.USERNAME, "bob", "user", Confidence.CONFIRMED)
+    http_403 = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(403, json={"error": "forbidden"})))
+    try:
+        res3 = await _check_site(entity_403, site_auth, http_403, sem, result_cache=result_cache, auth_service=auth_svc)
+        assert res3["finding"].data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert res3["finding"].data["check_status"] in {
+            UsernameCheckStatus.CONFIRMED.value,
+            UsernameCheckStatus.LIKELY.value,
+        }
+        assert len(auth_svc.called_platforms) == 2
+        assert auth_svc.called_platforms[1] == "instagram"
+    finally:
+        await http_403.close()
+
+    # 4. Test 401 & 403 on requires_auth=False -> BLOCKED (not LOGIN_REQUIRED)
+    http_no_auth = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(401, json={"error": "unauthorized"})))
+    try:
+        res_na = await _check_site(entity, site_no_auth, http_no_auth, sem, result_cache=result_cache, auth_service=auth_svc)
+        assert res_na["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
+        assert res_na["finding"].data["access_mode"] == AccessMode.ANONYMOUS_PUBLIC.value
+    finally:
+        await http_no_auth.close()

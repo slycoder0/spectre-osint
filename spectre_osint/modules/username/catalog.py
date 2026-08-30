@@ -337,11 +337,11 @@ class DetectionDefinition(CatalogBaseModel):
         for code in v:
             if not isinstance(code, int) or code < 100 or code > 599:
                 raise ValueError(f"Invalid HTTP status code: {code}")
-        if info.field_name == "not_found_status":
+        if info.field_name in {"expected_status", "not_found_status"}:
             for code in v:
                 if 500 <= code <= 599 or code in {401, 403, 408, 429}:
                     raise ValueError(
-                        f"not_found_status cannot contain reserved HTTP status code {code} (must not be 401, 403, 408, 429, or 500-599)"
+                        f"{info.field_name} cannot contain reserved HTTP status code {code} (must not be 401, 403, 408, 429, or 500-599)"
                     )
         return v
 
