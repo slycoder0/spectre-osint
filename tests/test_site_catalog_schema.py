@@ -2281,3 +2281,100 @@ sites:
         "User-Agent": "Custom-UA",
         "Accept-Language": "fr-FR",
     }
+
+
+def test_escaped_brace_fragment_bypass_rejected() -> None:
+    """Verify that templates with escaped braces in base URL and real field in fragment are rejected."""
+    # 1. Escaped-brace fragment bypass on profile_url
+    with pytest.raises(ValidationError) as exc_profile:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com/{{username}}#{username}",
+        ))
+    err_profile = str(exc_profile.value).lower()
+    assert "outside the url fragment" in err_profile
+
+    # 2. Escaped-brace fragment bypass on check_url
+    with pytest.raises(ValidationError) as exc_check:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com/{username}",
+            check_url="https://api.example.com/{{username}}#{username}",
+        ))
+    err_check = str(exc_check.value).lower()
+    assert "outside the url fragment" in err_check
+
+    # 3. Additional fragment-only variants
+    fragment_only_variants = [
+        "https://example.com/static#{username}",
+        "https://example.com/{{username}}#{username}",
+        "https://example.com/{{username}}/static#{username}",
+        "https://example.com/%7Busername%7D#{username}",
+        "https://example.com/path#user={username}",
+        "https://example.com/users/#u={username}",
+    ]
+    for bad_url in fragment_only_variants:
+        with pytest.raises(ValidationError) as exc_var:
+            SiteDefinition.model_validate(_valid_site_dict(profile_url=bad_url))
+        assert "outside the url fragment" in str(exc_var.value).lower()
+
+
+def test_valid_url_templates_with_escaped_and_real_fields() -> None:
+    """Verify that valid templates with real replacement fields in transmitted portions succeed."""
+    # A. Legitimate URL template locations
+    site_path = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://example.com/{username}"))
+    assert site_path.profile_url == "https://example.com/{username}"
+
+    site_query = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://example.com/profile?user={username}"))
+    assert site_query.profile_url == "https://example.com/profile?user={username}"
+
+    site_host = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://{username}.example.com/profile"))
+    assert site_host.profile_url == "https://{username}.example.com/profile"
+
+    # B. Real field before fragment, with static fragment or real field in fragment
+    site_frag = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://example.com/{username}#profile"))
+    assert site_frag.profile_url == "https://example.com/{username}#profile"
+
+    site_both = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://example.com/{username}#{username}"))
+    assert site_both.profile_url == "https://example.com/{username}#{username}"
+
+    # C. Escaped braces alongside real transmitted field
+    site_escaped_path = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://example.com/{{username}}/{username}"))
+    assert site_escaped_path.profile_url == "https://example.com/{{username}}/{username}"
+    # Formats correctly with Python format semantics
+    assert site_escaped_path.profile_url.format(username="alice") == "https://example.com/{username}/alice"
+
+    site_escaped_frag = SiteDefinition.model_validate(_valid_site_dict(profile_url="https://example.com/{username}#{{username}}"))
+    assert site_escaped_frag.profile_url == "https://example.com/{username}#{{username}}"
+    assert site_escaped_frag.profile_url.format(username="alice") == "https://example.com/alice#{username}"
+
+
+def test_public_yaml_escaped_brace_fragment_bypass_rejection(tmp_path: Any) -> None:
+    """Verify that public YAML loader rejects escaped-brace fragment bypass and accepts legitimate templates."""
+    # A. Escaped-brace fragment bypass rejected
+    bad_yaml = tmp_path / "bad_bypass.yaml"
+    bad_yaml.write_text(
+        """
+sites:
+  - name: Bypass Example
+    category: Social
+    profile_url: "https://example.com/{{username}}#{username}"
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_yaml:
+        SiteCatalog.from_yaml_file(bad_yaml)
+    assert "outside the url fragment" in str(exc_yaml.value).lower()
+
+    # B. Legitimate template with fragment succeeds
+    good_yaml = tmp_path / "good_template.yaml"
+    good_yaml.write_text(
+        """
+sites:
+  - name: Good Example
+    category: Social
+    profile_url: "https://example.com/{username}#profile"
+""",
+        encoding="utf-8",
+    )
+    cat = SiteCatalog.from_yaml_file(good_yaml)
+    assert len(cat.sites) == 1
+    assert cat.sites[0].profile_url == "https://example.com/{username}#profile"

@@ -233,13 +233,25 @@ def _validate_url_template(v: str, field_name: str) -> str:
         if conversion:
             raise ValueError(f"{field_name} must not contain conversion flags in placeholder")
 
-    # URL fragments are not transmitted in HTTP requests; {username} must exist in a transmitted component
+    # URL fragments are not transmitted in HTTP requests; a real {username} replacement field must exist before '#'
     base_template, _, _ = v.partition("#")
-    if "{username}" not in base_template:
+    try:
+        base_parsed_fields = list(formatter.parse(base_template))
+    except ValueError:
+        raise ValueError(
+            f"{field_name} has malformed format-string syntax with unbalanced braces"
+        ) from None
+
+    base_replacement_fields = [f for f in base_parsed_fields if f[1] == "username"]
+    if not base_replacement_fields:
         raise ValueError(f"{field_name} must contain '{{username}}' outside the URL fragment")
 
-    # Structured URL parse with a placeholder value
-    dummy_url = v.replace("{username}", "placeholder_user")
+    # Structured URL parse using Python format-string semantics
+    try:
+        dummy_url = v.format(username="placeholder_user")
+    except Exception:
+        raise ValueError(f"{field_name} failed to format with placeholder value") from None
+
     try:
         parsed = urlparse(dummy_url)
         port = parsed.port
