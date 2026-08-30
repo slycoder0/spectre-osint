@@ -109,17 +109,16 @@ KNOWN_CATEGORIES: dict[str, str] = {
 }
 
 # Strict allowlist of safe, static request headers permitted in generic catalog definitions
-_ALLOWED_HEADER_NAMES: frozenset[str] = frozenset(
-    {
-        "accept",
-        "accept-language",
-        "user-agent",
-        "referer",
-        "origin",
-        "content-type",
-        "x-requested-with",
-    }
-)
+_CANONICAL_HEADER_NAMES: dict[str, str] = {
+    "accept": "Accept",
+    "accept-language": "Accept-Language",
+    "user-agent": "User-Agent",
+    "referer": "Referer",
+    "origin": "Origin",
+    "content-type": "Content-Type",
+    "x-requested-with": "X-Requested-With",
+}
+_ALLOWED_HEADER_NAMES: frozenset[str] = frozenset(_CANONICAL_HEADER_NAMES.keys())
 
 # Known legacy flat keys accepted during migration from flat YAML to nested SiteDefinition
 _KNOWN_LEGACY_FLAT_KEYS: frozenset[str] = frozenset(
@@ -260,16 +259,26 @@ def _validate_url_template(v: str, field_name: str) -> str:
 
 
 def _validate_static_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Validate that catalog headers are safe, static, non-sensitive HTTP headers from the allowlist."""
+    """Validate that catalog headers are safe, static, non-sensitive HTTP headers from the allowlist.
+
+    Normalizes all header names to their canonical casing (e.g. 'user-agent' -> 'User-Agent')
+    and rejects case-insensitive duplicate header definitions.
+    """
+    normalized: dict[str, str] = {}
     for name, value in headers.items():
         if not isinstance(name, str) or not isinstance(value, str):
             raise ValueError("Header name and value must be strings")
         name_clean = name.strip().lower()
         if not re.match(r"^[a-zA-Z0-9_-]+$", name):
             raise ValueError(f"Invalid header name '{name}': contains illegal characters")
-        if name_clean not in _ALLOWED_HEADER_NAMES:
+        if name_clean not in _CANONICAL_HEADER_NAMES:
             raise ValueError(
                 f"Header '{name}' is not permitted in static catalog definitions (only safe allowlisted headers allowed)"
+            )
+        canonical_name = _CANONICAL_HEADER_NAMES[name_clean]
+        if canonical_name in normalized:
+            raise ValueError(
+                f"Duplicate header '{name}' (case-insensitive collision for '{canonical_name}')"
             )
         if any(ord(c) < 32 or ord(c) == 127 for c in f"{name}:{value}"):
             raise ValueError(f"Header '{name}' contains control characters or line breaks")
@@ -277,7 +286,8 @@ def _validate_static_headers(headers: dict[str, str]) -> dict[str, str]:
             value.encode("ascii")
         except UnicodeEncodeError as exc:
             raise ValueError(f"Header '{name}' value must contain only ASCII characters") from exc
-    return headers
+        normalized[canonical_name] = value
+    return normalized
 
 
 class CatalogBaseModel(BaseModel):

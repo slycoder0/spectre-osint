@@ -2122,3 +2122,162 @@ sites:
     cat = SiteCatalog.from_yaml_file(valid_yaml)
     assert len(cat.sites) == 1
     assert cat.sites[0].rate_limit == 0.5
+
+
+def test_static_header_casing_normalization_and_duplicate_rejection() -> None:
+    """Verify that static header names are normalized to canonical casing and case-insensitive duplicates are rejected."""
+    # 1. Casing normalization
+    casing_inputs = {
+        "user-agent": "UA-1",
+        "ACCEPT-LANGUAGE": "en-US",
+        "x-requested-with": "XMLHttpRequest",
+        "Referer": "https://example.com/",
+        "ORIGIN": "https://example.com",
+        "content-type": "application/json",
+        "accept": "text/html",
+    }
+    raw_copy = dict(casing_inputs)
+    site = SiteDefinition.model_validate(_valid_site_dict(headers=casing_inputs))
+    # Input dict must not be mutated
+    assert casing_inputs == raw_copy
+
+    expected_canonical = {
+        "User-Agent": "UA-1",
+        "Accept-Language": "en-US",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://example.com/",
+        "Origin": "https://example.com",
+        "Content-Type": "application/json",
+        "Accept": "text/html",
+    }
+    assert site.request.headers == expected_canonical
+
+    # 2. Case-insensitive duplicate rejection
+    duplicate_cases = [
+        {"User-Agent": "A", "user-agent": "B"},
+        {"Accept": "text/html", "ACCEPT": "application/json"},
+        {"x-requested-with": "A", "X-Requested-With": "B"},
+        {"referer": "A", "Referer": "B"},
+    ]
+    for dup in duplicate_cases:
+        # Flat legacy
+        with pytest.raises(ValidationError) as exc_flat:
+            SiteDefinition.model_validate(_valid_site_dict(headers=dup))
+        assert "duplicate header" in str(exc_flat.value).lower()
+
+        # Nested RequestDefinition
+        with pytest.raises(ValidationError) as exc_nested:
+            SiteDefinition.model_validate({
+                "slug": "dup_site",
+                "name": "Dup Site",
+                "category": "Development",
+                "profile_url": "https://example.com/{username}",
+                "request": {
+                    "headers": dup,
+                },
+            })
+        assert "duplicate header" in str(exc_nested.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_user_agent_transport_override_and_headers(tmp_path: Any) -> None:
+    """Verify that a custom User-Agent replaces the generated default on the wire and custom headers are sent."""
+    recorded_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded_requests.append(request)
+        return httpx.Response(200, text="<html><head><title>Profile of alice</title></head><body>Profile of alice</body></html>")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+
+    try:
+        # Site with lowercase user-agent and accept-language
+        site_def = SiteDefinition.model_validate(_valid_site_dict(
+            name="Custom Header Site",
+            profile_url="https://example.com/{username}",
+            headers={
+                "user-agent": "SPECTRE-Custom-UA/1.0",
+                "accept-language": "pt-BR",
+            },
+            success_patterns=["Profile of"],
+        )).to_dict()
+
+        await _check_site(entity, site_def, http, sem)
+        assert len(recorded_requests) == 1
+        req = recorded_requests[0]
+
+        # Verify exactly one User-Agent header is sent with the custom value
+        ua_list = req.headers.get_list("user-agent")
+        assert len(ua_list) == 1
+        assert ua_list[0] == "SPECTRE-Custom-UA/1.0"
+        assert req.headers.get("user-agent") == "SPECTRE-Custom-UA/1.0"
+
+        # Verify Accept-Language is sent with canonical name and preserved value
+        assert req.headers.get("accept-language") == "pt-BR"
+    finally:
+        await http.close()
+
+
+def test_public_yaml_duplicate_header_casing_rejection(tmp_path: Any) -> None:
+    """Verify that public YAML loader rejects case-insensitive duplicate headers and normalizes single headers."""
+    # A. Duplicate header names with different casing rejected
+    dup_yaml = tmp_path / "dup_headers.yaml"
+    dup_yaml.write_text(
+        """
+sites:
+  - name: Dup Example
+    category: Social
+    profile_url: https://example.com/{username}
+    headers:
+      User-Agent: ValueA
+      user-agent: ValueB
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_yaml:
+        SiteCatalog.from_yaml_file(dup_yaml)
+    assert "duplicate header" in str(exc_yaml.value).lower()
+
+    # B. Lowercase header in YAML is loaded and normalized canonically
+    single_yaml = tmp_path / "single_header.yaml"
+    single_yaml.write_text(
+        """
+sites:
+  - name: Single Example
+    category: Social
+    profile_url: https://example.com/{username}
+    headers:
+      user-agent: Custom-UA
+      accept-language: fr-FR
+""",
+        encoding="utf-8",
+    )
+    cat = SiteCatalog.from_yaml_file(single_yaml)
+    assert len(cat.sites) == 1
+    site = cat.sites[0]
+    assert site.headers == {
+        "User-Agent": "Custom-UA",
+        "Accept-Language": "fr-FR",
+    }
+
+    # Round trip preserves canonical casing
+    d = site.to_dict()
+    assert d["headers"] == {
+        "User-Agent": "Custom-UA",
+        "Accept-Language": "fr-FR",
+    }
+    reloaded = SiteDefinition.model_validate(d)
+    assert reloaded.headers == {
+        "User-Agent": "Custom-UA",
+        "Accept-Language": "fr-FR",
+    }
