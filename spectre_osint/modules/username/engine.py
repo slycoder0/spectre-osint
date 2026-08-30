@@ -529,6 +529,7 @@ async def _check_site(
         min_interval_f = None
     http_method = str(site.get("http_method") or "GET").strip().upper()
     custom_headers = site.get("headers") or None
+    use_cache = (not refresh) and (not bool(custom_headers))
     async with semaphore:
         try:
             if http_method == "HEAD" and hasattr(http, "head"):
@@ -537,7 +538,7 @@ async def _check_site(
                     provider=name,
                     headers=custom_headers,
                     follow_redirects=True,
-                    use_cache=not refresh,
+                    use_cache=use_cache,
                     accept_statuses=set(range(200, 600)),
                     min_interval=min_interval_f,
                 )
@@ -547,7 +548,7 @@ async def _check_site(
                     provider=name,
                     headers=custom_headers,
                     follow_redirects=True,
-                    use_cache=not refresh,
+                    use_cache=use_cache,
                     accept_statuses=set(range(200, 600)),
                     min_interval=min_interval_f,
                 )
@@ -558,7 +559,7 @@ async def _check_site(
                     provider=name,
                     headers=custom_headers,
                     follow_redirects=True,
-                    use_cache=not refresh,
+                    use_cache=use_cache,
                     accept_statuses=set(range(200, 600)),
                     min_interval=min_interval_f,
                 )

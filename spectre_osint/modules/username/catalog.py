@@ -424,9 +424,13 @@ class SiteDefinition(CatalogBaseModel):
         if raw_cat is not None and not isinstance(raw_cat, str):
             raise ValueError(f"Site 'category' must be a string, got {type(raw_cat).__name__}")
 
-        raw_prof = d.get("profile_url") or d.get("url_template")
+        raw_prof = d.get("profile_url")
         if raw_prof is not None and not isinstance(raw_prof, str):
             raise ValueError(f"Site 'profile_url' must be a string, got {type(raw_prof).__name__}")
+
+        raw_tmpl = d.get("url_template")
+        if raw_tmpl is not None and not isinstance(raw_tmpl, str):
+            raise ValueError(f"Site 'url_template' must be a string, got {type(raw_tmpl).__name__}")
 
         raw_check = d.get("check_url")
         if raw_check is not None and not isinstance(raw_check, str):
@@ -503,7 +507,23 @@ class SiteDefinition(CatalogBaseModel):
                 "requires_auth": req_auth,
             }
 
-        profile_url = d.pop("profile_url", None) or d.pop("url_template", None) or ""
+        # Unconditionally consume both URL template aliases
+        raw_profile_url = d.pop("profile_url", None)
+        raw_url_template = d.pop("url_template", None)
+
+        if raw_profile_url is not None and raw_url_template is not None:
+            if raw_profile_url != raw_url_template:
+                site_id = name or slug or "unknown_site"
+                raise ValueError(
+                    f"Site '{site_id}' profile_url and url_template define conflicting URL templates"
+                )
+            profile_url = raw_profile_url
+        elif raw_profile_url is not None:
+            profile_url = raw_profile_url
+        elif raw_url_template is not None:
+            profile_url = raw_url_template
+        else:
+            profile_url = ""
 
         out: dict[str, Any] = {
             "slug": slug,
@@ -744,7 +764,7 @@ class SiteCatalog:
     """Process-local cached container for validated site definitions with introspection APIs."""
 
     def __init__(self, sites: list[SiteDefinition]) -> None:
-        self._sites = list(sites)
+        self._sites = [s.model_copy(deep=True) for s in sites]
         self._by_slug: dict[str, SiteDefinition] = {}
         self._by_name: dict[str, SiteDefinition] = {}
 

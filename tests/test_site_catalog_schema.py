@@ -1126,3 +1126,200 @@ def test_typed_model_accessors_mutation_isolation() -> None:
     assert gh_dict["name"] == "GitHub"
     assert 418 not in gh_dict["expected_status"]
     assert "mutated_display_field" not in gh_dict["display_name_fields"]
+
+
+def test_url_alias_reconciliation_and_round_trip() -> None:
+    """Verify profile_url and url_template alias reconciliation and to_dict() round-trip integrity."""
+    # 1. profile_url only validates
+    site_prof = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com/{username}"
+    ))
+    assert site_prof.profile_url == "https://example.com/{username}"
+
+    # 2. url_template only validates and normalizes to profile_url
+    d_tmpl = _valid_site_dict()
+    d_tmpl.pop("profile_url", None)
+    d_tmpl["url_template"] = "https://example.com/u/{username}"
+    site_tmpl = SiteDefinition.model_validate(d_tmpl)
+    assert site_tmpl.profile_url == "https://example.com/u/{username}"
+
+    # 3. Both aliases with identical values validate
+    d_both_match = _valid_site_dict(
+        profile_url="https://example.com/{username}",
+        url_template="https://example.com/{username}",
+    )
+    site_both_match = SiteDefinition.model_validate(d_both_match)
+    assert site_both_match.profile_url == "https://example.com/{username}"
+
+    # 4. Both aliases with conflicting values are rejected
+    d_conflict = _valid_site_dict(
+        profile_url="https://example.com/{username}",
+        url_template="https://other.example/{username}",
+    )
+    with pytest.raises(Exception) as exc_conflict:
+        SiteDefinition.model_validate(d_conflict)
+    err_str = str(exc_conflict.value)
+    assert "conflicting URL templates" in err_str
+    # 5. Error text is sanitized and does not echo either URL
+    assert "https://example.com" not in err_str
+    assert "https://other.example" not in err_str
+
+    # 6. Full round-trip validation across all 57 production sites:
+    catalog = load_catalog()
+    for site in catalog.sites:
+        exported_dict = site.to_dict()
+        reloaded_site = SiteDefinition.model_validate(exported_dict)
+        assert reloaded_site.slug == site.slug
+        assert reloaded_site.name == site.name
+        assert reloaded_site.category == site.category
+        assert reloaded_site.profile_url == site.profile_url
+        assert reloaded_site.check_url == site.check_url
+        assert reloaded_site.detection.strategy == site.detection.strategy
+        assert reloaded_site.detection.expected_status == site.detection.expected_status
+        assert reloaded_site.detection.not_found_status == site.detection.not_found_status
+        assert reloaded_site.http_method == site.http_method
+        assert reloaded_site.headers == site.headers
+        assert reloaded_site.requires_auth == site.requires_auth
+        assert reloaded_site.auth_platform == site.auth_platform
+
+
+def test_site_catalog_constructor_mutation_isolation() -> None:
+    """Verify that SiteCatalog takes ownership of canonical models and isolates caller inputs."""
+    original = SiteDefinition.model_validate(_valid_site_dict(
+        name="Original Platform",
+        category="Development",
+        profile_url="https://example.com/{username}",
+    ))
+    input_list = [original]
+    catalog = SiteCatalog(input_list)
+
+    # Mutate original caller-owned model and the input list
+    original.slug = "mutated_slug"
+    original.name = "Mutated Platform"
+    original.enabled = False
+    original.detection.expected_status.append(418)
+    original.request.headers["Accept"] = "mutated/value"
+    original.extraction.display_name_fields.append("mutated_field")
+    input_list.clear()
+
+    # Catalog must retain its own canonical copies and indexes
+    assert catalog.total_sites() == 1
+    canonical = catalog.get_by_slug("original_platform")
+    assert canonical is not None
+    assert canonical.slug == "original_platform"
+    assert canonical.name == "Original Platform"
+    assert canonical.enabled is True
+    assert 418 not in canonical.detection.expected_status
+    assert "Accept" not in canonical.request.headers
+    assert "mutated_field" not in canonical.extraction.display_name_fields
+
+    # Mutated slug must not exist in catalog
+    assert catalog.get_by_slug("mutated_slug") is None
+    assert catalog.get_by_name("Original Platform") is not None
+    assert catalog.get_by_name("Mutated Platform") is None
+
+    # Public accessors and exports must remain pristine
+    assert catalog.sites[0].slug == "original_platform"
+    assert catalog.filter(categories=["Development"])[0].slug == "original_platform"
+    assert catalog.to_dict_list()[0]["slug"] == "original_platform"
+
+
+@pytest.mark.asyncio
+async def test_custom_headers_disable_response_cache(tmp_path: Any) -> None:
+    """Verify that custom headers bypass response caching while headerless GETs preserve caching."""
+    recorded_calls: list[tuple[str, str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded_calls.append((request.method, str(request.url), dict(request.headers)))
+        accept = request.headers.get("accept", "")
+        if "application/json" in accept:
+            return httpx.Response(200, json={"id": "alice", "username": "alice"})
+        elif "text/html" in accept:
+            return httpx.Response(200, text="<html><body>Profile of alice</body></html>")
+        return httpx.Response(200, text="generic profile")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+
+    try:
+        # A. Accept header variations: JSON vs HTML representation
+        site_json = SiteDefinition.model_validate(_valid_site_dict(
+            name="API Site",
+            profile_url="https://example.com/api/{username}",
+            check_method="json_api",
+            json_id_field="id",
+            headers={"Accept": "application/json"},
+        )).to_dict()
+
+        site_html = SiteDefinition.model_validate(_valid_site_dict(
+            name="API Site",
+            profile_url="https://example.com/api/{username}",
+            check_method="generic_html",
+            success_patterns=["Profile of"],
+            headers={"Accept": "text/html"},
+        )).to_dict()
+
+        recorded_calls.clear()
+        await _check_site(entity, site_json, http, sem)
+        assert len(recorded_calls) == 1
+        assert "application/json" in recorded_calls[0][2]["accept"]
+
+        await _check_site(entity, site_html, http, sem)
+        assert len(recorded_calls) == 2
+        assert "text/html" in recorded_calls[1][2]["accept"]
+
+        # B. Accept-Language variations
+        site_en = SiteDefinition.model_validate(_valid_site_dict(
+            name="Lang Site",
+            profile_url="https://example.com/lang/{username}",
+            headers={"Accept-Language": "en-US"},
+        )).to_dict()
+
+        site_pt = SiteDefinition.model_validate(_valid_site_dict(
+            name="Lang Site",
+            profile_url="https://example.com/lang/{username}",
+            headers={"Accept-Language": "pt-BR"},
+        )).to_dict()
+
+        recorded_calls.clear()
+        await _check_site(entity, site_en, http, sem)
+        assert len(recorded_calls) == 1
+        await _check_site(entity, site_pt, http, sem)
+        assert len(recorded_calls) == 2
+
+        # C. X-Requested-With variations
+        site_xhr = SiteDefinition.model_validate(_valid_site_dict(
+            name="XHR Site",
+            profile_url="https://example.com/xhr/{username}",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )).to_dict()
+
+        recorded_calls.clear()
+        await _check_site(entity, site_xhr, http, sem)
+        assert len(recorded_calls) == 1
+        await _check_site(entity, site_xhr, http, sem)
+        assert len(recorded_calls) == 2  # Custom headers do not cache
+
+        # D. Headerless GET requests preserve existing response caching
+        site_plain = SiteDefinition.model_validate(_valid_site_dict(
+            name="Plain Site",
+            profile_url="https://example.com/plain/{username}",
+        )).to_dict()
+
+        recorded_calls.clear()
+        await _check_site(entity, site_plain, http, sem)
+        assert len(recorded_calls) == 1
+
+        await _check_site(entity, site_plain, http, sem)
+        assert len(recorded_calls) == 1  # Served from cache without second network call
+    finally:
+        await http.close()
