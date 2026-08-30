@@ -2620,3 +2620,164 @@ async def test_json_runtime_normalized_id_field(tmp_path: Any) -> None:
             ))
     finally:
         await http.close()
+
+
+@pytest.mark.asyncio
+async def test_json_api_expected_status_precedence_and_isolation(tmp_path: Any) -> None:
+    """Verify that JSON API checks honor expected_status, reject false confirmations on HTTP 400, and suppress metadata extraction."""
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    sem = asyncio.Semaphore(5)
+
+    async def run_check(site_dict: dict[str, Any], status_code: int, payload: Any, username: str = "alice") -> dict[str, Any]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if isinstance(payload, (dict, list)):
+                return httpx.Response(status_code, json=payload)
+            return httpx.Response(status_code, text=str(payload))
+
+        http = HttpClient(settings, transport=httpx.MockTransport(handler))
+        entity = Entity.create(EntityType.USERNAME, username, "test", Confidence.CONFIRMED)
+        try:
+            site = SiteDefinition.model_validate(site_dict).to_dict()
+            return await _check_site(entity, site, http, sem)
+        finally:
+            await http.close()
+
+    # Standard site: expected_status=[200]
+    site_std = _valid_site_dict(
+        name="JSON Platform Std",
+        profile_url="https://api.example.com/users/{username}",
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        expected_status=[200],
+        http_method="GET",
+    )
+
+    # 1. False confirmation on HTTP 400 with identity field must be INCONCLUSIVE / LOW
+    res_400 = await run_check(site_std, 400, {
+        "login": "alice_400",
+        "name": "Alice Wonderland",
+        "blog": "https://alice.test",
+        "bio": "Secret Bio",
+        "avatar_url": "https://alice.test/avatar.png",
+        "location": "Wonderland",
+    }, username="alice_400")
+    finding_400 = res_400["finding"].data
+    assert finding_400["check_status"] == UsernameCheckStatus.INCONCLUSIVE.value
+    assert finding_400["confidence"] == Confidence.LOW.value
+    # Ensure metadata is suppressed
+    assert finding_400.get("display_name") is None or finding_400.get("display_name") == ""
+    assert finding_400.get("bio") is None or finding_400.get("bio") == ""
+
+    # 2. HTTP 400 without identity field must also be INCONCLUSIVE / LOW (NOT not_found)
+    res_400_no_id = await run_check(site_std, 400, {"error": "bad request"}, username="alice_400_noid")
+    finding_400_no_id = res_400_no_id["finding"].data
+    assert finding_400_no_id["check_status"] == UsernameCheckStatus.INCONCLUSIVE.value
+    assert finding_400_no_id["confidence"] == Confidence.LOW.value
+
+    # 3. Standard HTTP 200 with identity -> CONFIRMED
+    res_200 = await run_check(site_std, 200, {"login": "alice_200", "name": "Alice Wonderland"}, username="alice_200")
+    finding_200 = res_200["finding"].data
+    assert finding_200["check_status"] == UsernameCheckStatus.CONFIRMED.value
+    assert finding_200["confidence"] == Confidence.CONFIRMED.value
+
+    # 4. Standard HTTP 200 without identity -> NOT_FOUND with dynamic reason
+    res_200_missing = await run_check(site_std, 200, {"other_key": "other_val"}, username="alice_200_missing")
+    finding_200_missing = res_200_missing["finding"].data
+    assert finding_200_missing["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    assert "JSON 200 without identity field" in finding_200_missing.get("reason", "")
+
+    # 5. Custom expected_status=[201]
+    site_201 = _valid_site_dict(
+        name="JSON Platform 201",
+        profile_url="https://api.example.com/users/{username}",
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        expected_status=[201],
+        http_method="GET",
+    )
+    # HTTP 201 matches expected_status
+    res_custom_201 = await run_check(site_201, 201, {"login": "alice_201"}, username="alice_201")
+    assert res_custom_201["finding"].data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+
+    # HTTP 200 is unexpected for site_201 -> INCONCLUSIVE
+    res_custom_200 = await run_check(site_201, 200, {"login": "alice_201_unexp"}, username="alice_201_unexp")
+    assert res_custom_200["finding"].data["check_status"] == UsernameCheckStatus.INCONCLUSIVE.value
+
+    # 6. Multiple expected statuses [200, 201]
+    site_multi = _valid_site_dict(
+        name="JSON Platform Multi",
+        profile_url="https://api.example.com/users/{username}",
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        expected_status=[200, 201],
+        http_method="GET",
+    )
+    assert (await run_check(site_multi, 200, {"login": "alice_m1"}, username="alice_m1"))["finding"].data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+    assert (await run_check(site_multi, 201, {"login": "alice_m2"}, username="alice_m2"))["finding"].data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+    assert (await run_check(site_multi, 202, {"login": "alice_m3"}, username="alice_m3"))["finding"].data["check_status"] == UsernameCheckStatus.INCONCLUSIVE.value
+
+    # 7. Invalid JSON on expected status -> PROVIDER_UNAVAILABLE
+    res_invalid_json = await run_check(site_std, 200, "not valid json {", username="alice_inv")
+    assert res_invalid_json["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+
+
+@pytest.mark.asyncio
+async def test_json_api_reserved_status_precedence(tmp_path: Any) -> None:
+    """Verify that reserved statuses (404/410, 429, 401/403, >=500) take precedence over JSON identity."""
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    sem = asyncio.Semaphore(5)
+
+    site_def = _valid_site_dict(
+        name="JSON Reserved Platform",
+        profile_url="https://api.example.com/users/{username}",
+        check_method="json_api",
+        confidence_strategy="explicit_api",
+        json_id_field="login",
+        expected_status=[200],
+        not_found_status=[404, 410],
+        http_method="GET",
+    )
+
+    async def run_reserved(status_code: int, username: str = "alice") -> dict[str, Any]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status_code, json={"login": username})
+
+        http = HttpClient(settings, transport=httpx.MockTransport(handler))
+        entity = Entity.create(EntityType.USERNAME, username, "test", Confidence.CONFIRMED)
+        try:
+            site = SiteDefinition.model_validate(site_def).to_dict()
+            return await _check_site(entity, site, http, sem)
+        finally:
+            await http.close()
+
+    # A. HTTP 404 with identity JSON -> NOT_FOUND
+    assert (await run_reserved(404, username="alice_404"))["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+
+    # B. HTTP 429 with identity JSON -> RATE_LIMITED
+    assert (await run_reserved(429, username="alice_429"))["finding"].data["check_status"] == UsernameCheckStatus.RATE_LIMITED.value
+
+    # C. HTTP 401 with identity JSON -> BLOCKED
+    assert (await run_reserved(401, username="alice_401"))["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
+
+    # D. HTTP 403 with identity JSON -> BLOCKED
+    assert (await run_reserved(403, username="alice_403"))["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
+
+    # E. HTTP 500 with identity JSON -> PROVIDER_UNAVAILABLE
+    assert (await run_reserved(500, username="alice_500"))["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value

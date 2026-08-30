@@ -620,13 +620,27 @@ async def _check_site(
 
     if method == "json_api":
         data = response.json_data
-        if response.status_code in set(site.get("not_found_status") or [404, 410]):
+        not_found_status = set(site.get("not_found_status") or [404, 410])
+        expected_status = set(site.get("expected_status") or [200])
+        if response.status_code in not_found_status:
             status, reason, conf = UsernameCheckStatus.NOT_FOUND, f"HTTP {response.status_code}", None
         elif response.status_code == 429:
             status, reason, conf = UsernameCheckStatus.RATE_LIMITED, "HTTP 429", None
         elif response.status_code in {401, 403}:
             status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
-        elif response.status_code >= 500 or data is None:
+        elif response.status_code >= 500:
+            status, reason, conf = (
+                UsernameCheckStatus.PROVIDER_UNAVAILABLE,
+                f"HTTP {response.status_code}",
+                None,
+            )
+        elif response.status_code not in expected_status:
+            status, reason, conf = (
+                UsernameCheckStatus.INCONCLUSIVE,
+                f"Unexpected HTTP {response.status_code} for JSON API",
+                Confidence.LOW,
+            )
+        elif data is None:
             status, reason, conf = (
                 UsernameCheckStatus.PROVIDER_UNAVAILABLE,
                 f"HTTP {response.status_code} or invalid JSON",
@@ -636,32 +650,31 @@ async def _check_site(
             id_field = site.get("json_id_field") or "login"
             ident = _dig(data, id_field) if isinstance(data, dict) else None
             json_ok = ident is not None
-            json_name = None
-            for field in site.get("display_name_fields") or ["name", "displayName"]:
-                val = _dig(data, field) if isinstance(data, dict) else None
-                if val:
-                    json_name = str(val)
-                    break
-            for field in site.get("website_fields") or ["blog", "url", "website"]:
-                val = _dig(data, field) if isinstance(data, dict) else None
-                if val:
-                    json_website = str(val)
-                    break
-            json_bio = _dig(data, site.get("bio_field") or "bio") if isinstance(data, dict) else None
-            json_avatar = (
-                _dig(data, site.get("avatar_field") or "avatar_url") if isinstance(data, dict) else None
-            )
-            json_location = (
-                _dig(data, site.get("location_field") or "location") if isinstance(data, dict) else None
-            )
             if json_ok:
+                for field in site.get("display_name_fields") or ["name", "displayName"]:
+                    val = _dig(data, field) if isinstance(data, dict) else None
+                    if val:
+                        json_name = str(val)
+                        break
+                for field in site.get("website_fields") or ["blog", "url", "website"]:
+                    val = _dig(data, field) if isinstance(data, dict) else None
+                    if val:
+                        json_website = str(val)
+                        break
+                json_bio = _dig(data, site.get("bio_field") or "bio") if isinstance(data, dict) else None
+                json_avatar = (
+                    _dig(data, site.get("avatar_field") or "avatar_url") if isinstance(data, dict) else None
+                )
+                json_location = (
+                    _dig(data, site.get("location_field") or "location") if isinstance(data, dict) else None
+                )
                 status = UsernameCheckStatus.CONFIRMED
                 reason = f"JSON identity field {id_field}={ident}"
                 conf = Confidence.CONFIRMED
             else:
                 status, reason, conf = (
                     UsernameCheckStatus.NOT_FOUND,
-                    "JSON 200 without identity field",
+                    f"JSON {response.status_code} without identity field",
                     None,
                 )
             logger.debug(
