@@ -6,13 +6,22 @@ from typing import Any
 
 import httpx
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from spectre_osint.core.config import Settings
 from spectre_osint.core.entities import Entity
 from spectre_osint.core.http_client import HttpClient
-from spectre_osint.core.types import AccessMode, Confidence, EntityType, UsernameCheckStatus
+from spectre_osint.core.result_cache import ResultCache
+from spectre_osint.core.types import (
+    AccessMode,
+    CacheState,
+    Confidence,
+    EntityType,
+    UsernameCheckStatus,
+)
 from spectre_osint.modules.username.catalog import (
+    CatalogSafeLoader,
     CatalogValidationError,
     CheckMethod,
     ConfidenceStrategy,
@@ -1321,5 +1330,168 @@ async def test_custom_headers_disable_response_cache(tmp_path: Any) -> None:
 
         await _check_site(entity, site_plain, http, sem)
         assert len(recorded_calls) == 1  # Served from cache without second network call
+    finally:
+        await http.close()
+
+
+def test_yaml_merge_keys_and_anchors() -> None:
+    """Verify that YAML anchors and << merge keys work while explicit duplicate keys remain rejected."""
+    # A. Basic mapping anchor + << merge loads successfully and survives catalog parsing
+    yaml_merge = """
+defaults: &defaults
+  category: Development
+  enabled: true
+  expected_status: [200]
+  not_found_status: [404]
+
+sites:
+  - <<: *defaults
+    name: Merged Example
+    profile_url: https://example.com/users/{username}
+    enabled: false  # B. Explicit override of merged default
+"""
+    raw_doc = yaml.load(yaml_merge, Loader=CatalogSafeLoader)
+    site_dict = raw_doc["sites"][0]
+    site = SiteDefinition.model_validate(site_dict)
+    # C. Inherited and overridden values
+    assert site.category == "Development"
+    assert site.enabled is False  # Explicit override
+    assert site.detection.expected_status == [200]
+    assert site.detection.not_found_status == [404]
+
+    # D. Multiple merge anchors in list syntax
+    yaml_multi_merge = """
+d1: &d1
+  category: Social
+d2: &d2
+  expected_status: [200, 201]
+
+site:
+  <<: [*d1, *d2]
+  name: Multi Merge Site
+  profile_url: https://example.com/{username}
+"""
+    raw_multi = yaml.load(yaml_multi_merge, Loader=CatalogSafeLoader)
+    site_multi = SiteDefinition.model_validate(raw_multi["site"])
+    assert site_multi.category == "Social"
+    assert site_multi.detection.expected_status == [200, 201]
+
+    # E. True duplicate explicit keys in same mapping are rejected
+    yaml_dup_explicit = """
+site:
+  name: First
+  name: Second
+"""
+    with pytest.raises(CatalogValidationError) as exc_dup:
+        yaml.load(yaml_dup_explicit, Loader=CatalogSafeLoader)
+    assert "duplicate" in str(exc_dup.value).lower()
+    assert "name" in str(exc_dup.value).lower()
+
+    # F. Duplicate keys inside an anchored defaults mapping are rejected
+    yaml_dup_in_anchor = """
+defaults: &defaults
+  category: Development
+  category: Social
+site:
+  <<: *defaults
+  name: Example
+"""
+    with pytest.raises(CatalogValidationError) as exc_anchor:
+        yaml.load(yaml_dup_in_anchor, Loader=CatalogSafeLoader)
+    assert "duplicate" in str(exc_anchor.value).lower()
+    assert "category" in str(exc_anchor.value).lower()
+
+    # G. Global yaml.SafeLoader is not mutated
+    res_global = yaml.safe_load("a: 1\na: 2")
+    assert res_global["a"] == 2
+
+    # H. Production catalog continues to load 57/57
+    cat = load_catalog()
+    assert cat.total_sites() == 57
+
+
+@pytest.mark.asyncio
+async def test_result_cache_request_config_isolation(tmp_path: Any) -> None:
+    """Verify that ResultCache is bypassed for custom headers and not poisoned against subsequent lookups."""
+    recorded_calls: list[tuple[str, str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded_calls.append((request.method, str(request.url), dict(request.headers)))
+        accept = request.headers.get("accept", "")
+        if "application/json" in accept:
+            return httpx.Response(200, json={"id": "alice", "username": "alice"})
+        elif "text/html" in accept:
+            return httpx.Response(200, text="<html><head><title>Profile of alice</title></head><body>Profile of alice</body></html>")
+        return httpx.Response(200, text="<html><head><title>Generic</title></head><body>Generic profile</body></html>")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    rc = ResultCache(settings)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+
+    try:
+        # Site A: Custom Accept: application/json -> json_api strategy
+        site_json = SiteDefinition.model_validate(_valid_site_dict(
+            name="DualSite",
+            profile_url="https://example.com/{username}",
+            check_method="json_api",
+            json_id_field="id",
+            headers={"Accept": "application/json"},
+        )).to_dict()
+
+        # Site B: Custom Accept: text/html -> generic_html strategy
+        site_html = SiteDefinition.model_validate(_valid_site_dict(
+            name="DualSite",
+            profile_url="https://example.com/{username}",
+            check_method="generic_html",
+            success_patterns=["Profile of"],
+            headers={"Accept": "text/html"},
+        )).to_dict()
+
+        # Site C: Headerless definition
+        site_plain = SiteDefinition.model_validate(_valid_site_dict(
+            name="DualSite",
+            profile_url="https://example.com/{username}",
+            check_method="generic_html",
+            success_patterns=["Generic"],
+        )).to_dict()
+
+        # 1. Run Site A with custom headers
+        recorded_calls.clear()
+        res_a = await _check_site(entity, site_json, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 1
+        assert res_a["finding"].data["check_status"] == UsernameCheckStatus.CONFIRMED.value
+        assert "json_id" in res_a["finding"].data["reason"] or "id=alice" in res_a["finding"].data["reason"]
+
+        # Verify Site A did NOT write to ResultCache
+        assert rc.get("username", "DualSite", "alice", AccessMode.ANONYMOUS_PUBLIC.value) is None
+
+        # 2. Run Site B with same ResultCache instance -> must invoke transport and not receive Site A cache
+        res_b = await _check_site(entity, site_html, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 2
+        assert res_b["finding"].data["check_status"] == UsernameCheckStatus.LIKELY.value
+
+        # Verify Site B did NOT write to ResultCache
+        assert rc.get("username", "DualSite", "alice", AccessMode.ANONYMOUS_PUBLIC.value) is None
+
+        # 3. Run headerless Site C -> must invoke transport (no poisoned cache hit) and write to ResultCache
+        await _check_site(entity, site_plain, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 3
+        # Headerless check populated ResultCache
+        cached_entry = rc.get("username", "DualSite", "alice", AccessMode.ANONYMOUS_PUBLIC.value)
+        assert cached_entry is not None
+
+        # 4. Run headerless Site C a second time -> served from ResultCache (no transport call)
+        res_c_2 = await _check_site(entity, site_plain, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 3  # No new network call
+        assert res_c_2["finding"].data["cache_state"] == CacheState.CACHED.value
     finally:
         await http.close()

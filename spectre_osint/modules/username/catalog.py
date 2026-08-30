@@ -44,13 +44,21 @@ class CatalogValidationError(CatalogError):
 
 
 class CatalogSafeLoader(yaml.SafeLoader):
-    """Local YAML SafeLoader that rejects duplicate mapping keys with line/col context."""
+    """Local YAML SafeLoader that preserves merge keys (<<) while rejecting duplicate explicit keys."""
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        mapping: dict[Any, Any] = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if key in mapping:
+        if not isinstance(node, yaml.MappingNode):
+            raise yaml.constructor.ConstructorError(
+                None, None, f"expected a mapping node, but found {node.id}", node.start_mark
+            )
+
+        seen_keys: set[Any] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                key = "<<"
+            else:
+                key = self.construct_object(key_node, deep=deep)
+            if key in seen_keys:
                 line = key_node.start_mark.line + 1 if key_node.start_mark else None
                 col = key_node.start_mark.column + 1 if key_node.start_mark else None
                 pos = f" at line {line}, column {col}" if line and col else ""
@@ -59,8 +67,9 @@ class CatalogSafeLoader(yaml.SafeLoader):
                     field_name=str(key),
                     reason=f"Duplicate mapping key '{key}' detected in catalog YAML",
                 )
-            mapping[key] = self.construct_object(value_node, deep=deep)
-        return mapping
+            seen_keys.add(key)
+
+        return super().construct_mapping(node, deep=deep)
 
 
 class CheckMethod(StrEnum):

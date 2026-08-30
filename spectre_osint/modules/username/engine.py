@@ -504,7 +504,9 @@ async def _check_site(
     method = str(site.get("check_method") or "generic_html")
     requires_auth = bool(site.get("requires_auth", False))
     auth_platform = str(site.get("auth_platform") or "").strip().lower() if requires_auth else ""
-    if not refresh and result_cache is not None:
+    custom_headers = site.get("headers") or None
+    request_config_is_cacheable = not bool(custom_headers)
+    if not refresh and request_config_is_cacheable and result_cache is not None:
         cached_auth = result_cache.get(
             "username", name, username, AccessMode.AUTHENTICATED_PUBLIC.value
         )
@@ -528,8 +530,7 @@ async def _check_site(
     except (TypeError, ValueError):
         min_interval_f = None
     http_method = str(site.get("http_method") or "GET").strip().upper()
-    custom_headers = site.get("headers") or None
-    use_cache = (not refresh) and (not bool(custom_headers))
+    use_cache = (not refresh) and request_config_is_cacheable
     async with semaphore:
         try:
             if http_method == "HEAD" and hasattr(http, "head"):
@@ -755,7 +756,7 @@ async def _check_site(
         "authenticated_status": authenticated_status,
         "session_status": session_status,
     }
-    if result_cache is not None and status not in {
+    if request_config_is_cacheable and result_cache is not None and status not in {
         UsernameCheckStatus.RATE_LIMITED,
         UsernameCheckStatus.PROVIDER_UNAVAILABLE,
     }:
