@@ -262,7 +262,7 @@ class DetectionDefinition(CatalogBaseModel):
     strategy: CheckMethod = CheckMethod.GENERIC_HTML
     confidence_strategy: ConfidenceStrategy = ConfidenceStrategy.MULTI_SIGNAL
     expected_status: list[int] = Field(default_factory=lambda: [200])
-    not_found_status: list[int] = Field(default_factory=lambda: [404])
+    not_found_status: list[int] = Field(default_factory=lambda: [404, 410])
     json_id_field: str | None = None
     success_patterns: list[str] = Field(default_factory=list)
     profile_markers: list[str] = Field(default_factory=list)
@@ -444,7 +444,7 @@ class SiteDefinition(CatalogBaseModel):
                 "strategy": d.pop("check_method", "generic_html"),
                 "confidence_strategy": d.pop("confidence_strategy", "multi_signal"),
                 "expected_status": d.pop("expected_status", [200]),
-                "not_found_status": d.pop("not_found_status", [404]),
+                "not_found_status": d.pop("not_found_status", [404, 410]),
                 "json_id_field": d.pop("json_id_field", None),
                 "success_patterns": d.pop("success_patterns", []),
                 "profile_markers": d.pop("profile_markers", []),
@@ -592,11 +592,11 @@ class SiteDefinition(CatalogBaseModel):
 
     @property
     def expected_status(self) -> list[int]:
-        return self.detection.expected_status
+        return list(self.detection.expected_status)
 
     @property
     def not_found_status(self) -> list[int]:
-        return self.detection.not_found_status
+        return list(self.detection.not_found_status)
 
     @property
     def json_id_field(self) -> str | None:
@@ -604,11 +604,11 @@ class SiteDefinition(CatalogBaseModel):
 
     @property
     def display_name_fields(self) -> list[str]:
-        return self.extraction.display_name_fields
+        return list(self.extraction.display_name_fields)
 
     @property
     def website_fields(self) -> list[str]:
-        return self.extraction.website_fields
+        return list(self.extraction.website_fields)
 
     @property
     def bio_field(self) -> str | None:
@@ -624,35 +624,35 @@ class SiteDefinition(CatalogBaseModel):
 
     @property
     def success_patterns(self) -> list[str]:
-        return self.detection.success_patterns
+        return list(self.detection.success_patterns)
 
     @property
     def profile_markers(self) -> list[str]:
-        return self.detection.profile_markers or self.detection.success_patterns
+        return list(self.detection.profile_markers or self.detection.success_patterns)
 
     @property
     def not_found_patterns(self) -> list[str]:
-        return self.detection.not_found_patterns
+        return list(self.detection.not_found_patterns)
 
     @property
     def soft_404_patterns(self) -> list[str]:
-        return self.detection.soft_404_patterns
+        return list(self.detection.soft_404_patterns)
 
     @property
     def login_patterns(self) -> list[str]:
-        return self.detection.login_patterns
+        return list(self.detection.login_patterns)
 
     @property
     def blocked_patterns(self) -> list[str]:
-        return self.detection.blocked_patterns
+        return list(self.detection.blocked_patterns)
 
     @property
     def challenge_patterns(self) -> list[str]:
-        return self.detection.challenge_patterns
+        return list(self.detection.challenge_patterns)
 
     @property
     def captcha_patterns(self) -> list[str]:
-        return self.detection.captcha_patterns
+        return list(self.detection.captcha_patterns)
 
     @property
     def redirect_home(self) -> str | None:
@@ -705,22 +705,22 @@ class SiteDefinition(CatalogBaseModel):
             "notes": self.notes,
             "auth_platform": self.access.auth_platform,
             "requires_auth": self.access.requires_auth,
-            "expected_status": self.detection.expected_status,
-            "not_found_status": self.detection.not_found_status,
+            "expected_status": list(self.detection.expected_status),
+            "not_found_status": list(self.detection.not_found_status),
             "json_id_field": self.detection.json_id_field,
-            "display_name_fields": self.extraction.display_name_fields,
-            "website_fields": self.extraction.website_fields,
+            "display_name_fields": list(self.extraction.display_name_fields),
+            "website_fields": list(self.extraction.website_fields),
             "bio_field": self.extraction.bio_field,
             "avatar_field": self.extraction.avatar_field,
             "location_field": self.extraction.location_field,
-            "success_patterns": self.detection.success_patterns,
-            "profile_markers": self.detection.profile_markers or self.detection.success_patterns,
-            "not_found_patterns": self.detection.not_found_patterns,
-            "soft_404_patterns": self.detection.soft_404_patterns,
-            "login_patterns": self.detection.login_patterns,
-            "blocked_patterns": self.detection.blocked_patterns,
-            "challenge_patterns": self.detection.challenge_patterns,
-            "captcha_patterns": self.detection.captcha_patterns,
+            "success_patterns": list(self.detection.success_patterns),
+            "profile_markers": list(self.detection.profile_markers or self.detection.success_patterns),
+            "not_found_patterns": list(self.detection.not_found_patterns),
+            "soft_404_patterns": list(self.detection.soft_404_patterns),
+            "login_patterns": list(self.detection.login_patterns),
+            "blocked_patterns": list(self.detection.blocked_patterns),
+            "challenge_patterns": list(self.detection.challenge_patterns),
+            "captcha_patterns": list(self.detection.captcha_patterns),
             "redirect_home": self.detection.redirect_home,
             "redirect_search": self.detection.redirect_search,
         }

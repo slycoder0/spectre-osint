@@ -869,3 +869,98 @@ async def test_runtime_requires_auth_isolated_behavior(tmp_path: Any) -> None:
         }
     finally:
         await http.close()
+
+
+def test_default_not_found_status_preserves_410() -> None:
+    """Verify that omitting not_found_status preserves [404, 410] without corrupting explicit overrides."""
+    # A. Minimal definition omitting not_found_status receives [404, 410]
+    minimal = SiteDefinition.model_validate({
+        "name": "Minimal Site",
+        "category": "Development",
+        "profile_url": "https://example.com/{username}",
+    })
+    assert minimal.detection.not_found_status == [404, 410]
+    assert minimal.not_found_status == [404, 410]
+    assert minimal.to_dict()["not_found_status"] == [404, 410]
+
+    # B. Explicit override of not_found_status: [404] is preserved exactly
+    explicit_404 = SiteDefinition.model_validate({
+        "name": "Explicit 404 Site",
+        "category": "Development",
+        "profile_url": "https://example.com/{username}",
+        "not_found_status": [404],
+    })
+    assert explicit_404.detection.not_found_status == [404]
+    assert explicit_404.not_found_status == [404]
+    assert explicit_404.to_dict()["not_found_status"] == [404]
+    assert 410 not in explicit_404.to_dict()["not_found_status"]
+
+    # C. Explicit multi-status override is preserved
+    explicit_multi = SiteDefinition.model_validate({
+        "name": "Explicit Multi",
+        "category": "Development",
+        "profile_url": "https://example.com/{username}",
+        "not_found_status": [400, 404],
+    })
+    assert explicit_multi.to_dict()["not_found_status"] == [400, 404]
+
+
+@pytest.mark.asyncio
+async def test_runtime_http_410_classified_as_not_found(tmp_path: Any) -> None:
+    """Verify that default not_found_status [404, 410] classifies HTTP 410 responses as NOT_FOUND."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(410, text="Gone")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice-sec", "test", Confidence.CONFIRMED)
+
+    try:
+        site = SiteDefinition.model_validate({
+            "name": "Generic Site",
+            "category": "Development",
+            "profile_url": "https://example.com/{username}",
+        }).to_dict()
+
+        res = await _check_site(entity, site, http, sem)
+        finding = res["finding"]
+        assert finding.data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http.close()
+
+
+def test_catalog_cached_export_mutation_isolation() -> None:
+    """Verify that mutating exported dictionaries from load_sites() does not corrupt cached models."""
+    clear_catalog_cache()
+    sites_a = load_sites()
+    first_site = sites_a[0]
+
+    # Mutate several exported mutable collections
+    first_site["expected_status"].append(418)
+    first_site["success_patterns"].append("synthetic-mutation-test")
+    first_site["headers"]["X-Injected-Header"] = "corrupted-value"
+
+    # Second export must be completely untouched
+    sites_b = load_sites()
+    assert 418 not in sites_b[0]["expected_status"]
+    assert "synthetic-mutation-test" not in sites_b[0]["success_patterns"]
+    assert "X-Injected-Header" not in sites_b[0]["headers"]
+
+    # Verify cached SiteDefinition in SiteCatalog is also untouched
+    cached_catalog = load_catalog()
+    assert 418 not in cached_catalog.sites[0].detection.expected_status
+    assert 418 not in cached_catalog.sites[0].expected_status
+    assert "synthetic-mutation-test" not in cached_catalog.sites[0].detection.success_patterns
+    assert "X-Injected-Header" not in cached_catalog.sites[0].request.headers
+
+    # Verify object identity isolation
+    assert sites_a[0]["expected_status"] is not sites_b[0]["expected_status"]
+    assert sites_a[0]["headers"] is not sites_b[0]["headers"]
