@@ -161,7 +161,7 @@ _KNOWN_LEGACY_FLAT_KEYS: frozenset[str] = frozenset(
 )
 
 # Allowed top-level document keys in catalog YAML
-_ALLOWED_ROOT_KEYS: frozenset[str] = frozenset({"sites"})
+_ALLOWED_ROOT_KEYS: frozenset[str] = frozenset({"sites", "defaults"})
 
 
 def slugify_name(name: str) -> str:
@@ -232,7 +232,14 @@ def _validate_url_template(v: str, field_name: str) -> str:
 
     # Structured URL parse with a placeholder value
     dummy_url = v.replace("{username}", "placeholder_user")
-    parsed = urlparse(dummy_url)
+    try:
+        parsed = urlparse(dummy_url)
+        port = parsed.port
+        if port is not None and (port < 1 or port > 65535):
+            raise ValueError(f"{field_name} contains an invalid port")
+    except ValueError:
+        raise ValueError(f"{field_name} contains an invalid port") from None
+
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"{field_name} must use http:// or https:// scheme")
     if not parsed.netloc or not parsed.hostname:
@@ -904,11 +911,21 @@ class SiteCatalog:
         extra_root = set(data.keys()) - _ALLOWED_ROOT_KEYS
         if extra_root:
             bad_key = sorted(extra_root)[0]
+            allowed_fmt = " or ".join(sorted(f"'{k}'" for k in _ALLOWED_ROOT_KEYS))
             raise CatalogValidationError(
                 site_identifier=source_label,
                 field_name=bad_key,
-                reason=f"Unknown root catalog key '{bad_key}'. Only 'sites' is permitted",
+                reason=f"Unknown root catalog key '{bad_key}'. Only {allowed_fmt} permitted",
             )
+
+        if "defaults" in data:
+            raw_defaults = data["defaults"]
+            if not isinstance(raw_defaults, dict):
+                raise CatalogValidationError(
+                    site_identifier=source_label,
+                    field_name="defaults",
+                    reason=f"Top-level 'defaults' must be a mapping, got {type(raw_defaults).__name__}",
+                )
 
         raw_sites = data.get("sites")
         if raw_sites is None or not isinstance(raw_sites, list):

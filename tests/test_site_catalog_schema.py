@@ -1495,3 +1495,176 @@ async def test_result_cache_request_config_isolation(tmp_path: Any) -> None:
         assert res_c_2["finding"].data["cache_state"] == CacheState.CACHED.value
     finally:
         await http.close()
+
+
+def test_public_yaml_defaults_and_merges(tmp_path: Any) -> None:
+    """Verify that SiteCatalog.from_yaml_file supports top-level defaults and << merge anchors."""
+    # A. Public from_yaml_file accepts top-level defaults and merges
+    catalog_yaml = tmp_path / "catalog_with_defaults.yaml"
+    catalog_yaml.write_text(
+        """
+defaults: &defaults
+  category: Development
+  enabled: true
+  expected_status: [200]
+  not_found_status: [404, 410]
+
+sites:
+  - <<: *defaults
+    name: Example Service
+    profile_url: https://example.com/users/{username}
+    enabled: false  # D. Explicit override
+""",
+        encoding="utf-8",
+    )
+
+    catalog = SiteCatalog.from_yaml_file(catalog_yaml)
+
+    # B. Exactly ONE site in catalog
+    assert len(catalog.sites) == 1
+    assert catalog.total_sites(enabled_only=False) == 1
+    assert catalog.total_sites(enabled_only=True) == 0  # enabled: false override
+
+    # C. Inherited and overridden fields
+    site = catalog.sites[0]
+    assert site.name == "Example Service"
+    assert site.category == "Development"
+    assert site.enabled is False
+    assert site.detection.expected_status == [200]
+    assert site.detection.not_found_status == [404, 410]
+
+    # E. defaults itself does not appear in sites or to_dict_list
+    assert len(catalog.to_dict_list(enabled_only=False)) == 1
+    assert catalog.to_dict_list(enabled_only=False)[0]["name"] == "Example Service"
+
+    # F. Non-mapping defaults block is rejected
+    bad_defaults_scalar = tmp_path / "bad_defaults_scalar.yaml"
+    bad_defaults_scalar.write_text(
+        """
+defaults: "invalid_string"
+sites:
+  - name: Example
+    profile_url: https://example.com/{username}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_scalar:
+        SiteCatalog.from_yaml_file(bad_defaults_scalar)
+    assert "defaults" in str(exc_scalar.value)
+    assert "mapping" in str(exc_scalar.value)
+
+    bad_defaults_list = tmp_path / "bad_defaults_list.yaml"
+    bad_defaults_list.write_text(
+        """
+defaults:
+  - item1
+  - item2
+sites:
+  - name: Example
+    profile_url: https://example.com/{username}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_list:
+        SiteCatalog.from_yaml_file(bad_defaults_list)
+    assert "defaults" in str(exc_list.value)
+    assert "mapping" in str(exc_list.value)
+
+    # G. Unknown root keys other than sites and defaults remain rejected
+    bad_root = tmp_path / "bad_root.yaml"
+    bad_root.write_text(
+        """
+unexpected_root: true
+sites:
+  - name: Example
+    profile_url: https://example.com/{username}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError) as exc_root:
+        SiteCatalog.from_yaml_file(bad_root)
+    assert "unexpected_root" in str(exc_root.value)
+
+
+def test_url_template_port_validation() -> None:
+    """Verify that URL template ports are strictly validated during schema validation."""
+    # A. No explicit port accepted
+    site_no_port = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com/{username}",
+    ))
+    assert site_no_port.profile_url == "https://example.com/{username}"
+
+    # B. Standard HTTPS port 443 accepted
+    site_443 = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com:443/{username}",
+    ))
+    assert site_443.profile_url == "https://example.com:443/{username}"
+
+    # C. Custom port 8443 accepted
+    site_8443 = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com:8443/{username}",
+        check_url="https://example.com:8443/api/{username}",
+    ))
+    assert site_8443.profile_url == "https://example.com:8443/{username}"
+    assert site_8443.check_url == "https://example.com:8443/api/{username}"
+
+    # D. Username placeholder as port rejected
+    with pytest.raises(ValidationError) as exc_user_port:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com:{username}/profile",
+        ))
+    err_str = str(exc_user_port.value)
+    assert "invalid port" in err_str.lower()
+    assert "https://example.com" not in err_str  # Sanitized
+
+    # E. Alphabetic static port rejected
+    with pytest.raises(ValidationError) as exc_abc_port:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com:abc/{username}",
+        ))
+    assert "invalid port" in str(exc_abc_port.value).lower()
+
+    # F. Out-of-range ports rejected (99999 and 65536)
+    with pytest.raises(ValidationError) as exc_99999:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com:99999/{username}",
+        ))
+    assert "invalid port" in str(exc_99999.value).lower()
+
+    with pytest.raises(ValidationError) as exc_65536:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com:65536/{username}",
+        ))
+    assert "invalid port" in str(exc_65536.value).lower()
+
+    # G. Negative and zero port rejected
+    with pytest.raises(ValidationError) as exc_neg:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com:-1/{username}",
+        ))
+    assert "invalid port" in str(exc_neg.value).lower()
+
+    with pytest.raises(ValidationError) as exc_zero:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com:0/{username}",
+        ))
+    assert "invalid port" in str(exc_zero.value).lower()
+
+    # H. Same port validation applies to check_url
+    with pytest.raises(ValidationError) as exc_check_url_port:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com/{username}",
+            check_url="https://example.com:{username}/api",
+        ))
+    assert "invalid port" in str(exc_check_url_port.value).lower()
+
+    # I. Valid username in hostname and query continues to work
+    site_host_user = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://{username}.github.io",
+    ))
+    assert site_host_user.profile_url == "https://{username}.github.io"
+
+    site_query_user = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com/profile?user={username}",
+    ))
+    assert site_query_user.profile_url == "https://example.com/profile?user={username}"
