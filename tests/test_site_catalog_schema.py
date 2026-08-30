@@ -31,7 +31,7 @@ from spectre_osint.modules.username.catalog import (
     load_catalog,
     slugify_name,
 )
-from spectre_osint.modules.username.engine import _check_site, load_sites
+from spectre_osint.modules.username.engine import _check_site, classify_html, load_sites
 
 
 def _valid_site_dict(**overrides: Any) -> dict[str, Any]:
@@ -248,8 +248,8 @@ def test_accepted_fields_survive_legacy_round_trip() -> None:
         "blocked_patterns": ["rate limit exceeded"],
         "challenge_patterns": ["security challenge"],
         "captcha_patterns": ["solve captcha"],
-        "redirect_home": "https://example.com/",
-        "redirect_search": "https://example.com/search",
+        "redirect_home": "not_found",
+        "redirect_search": "not_found",
         "enabled": True,
     }
 
@@ -1668,3 +1668,178 @@ def test_url_template_port_validation() -> None:
         profile_url="https://example.com/profile?user={username}",
     ))
     assert site_query_user.profile_url == "https://example.com/profile?user={username}"
+
+
+@pytest.mark.asyncio
+async def test_head_and_get_result_cache_isolation(tmp_path: Any) -> None:
+    """Verify that HEAD definitions bypass ResultCache and do not collide with or poison GET cached results."""
+    recorded_calls: list[tuple[str, str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded_calls.append((request.method, str(request.url), dict(request.headers)))
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Content-Type": "text/html"})
+        return httpx.Response(200, text="<html><head><title>Profile of alice</title></head><body>Profile of alice</body></html>")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    rc = ResultCache(settings)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "test", Confidence.CONFIRMED)
+
+    try:
+        site_get = SiteDefinition.model_validate(_valid_site_dict(
+            name="MethodSite",
+            profile_url="https://example.com/{username}",
+            http_method="GET",
+            check_method="generic_html",
+            success_patterns=["Profile of"],
+        )).to_dict()
+
+        site_head = SiteDefinition.model_validate(_valid_site_dict(
+            name="MethodSite",
+            profile_url="https://example.com/{username}",
+            http_method="HEAD",
+            expected_status=[200],
+        )).to_dict()
+
+        # Part 1: GET -> HEAD isolation
+        recorded_calls.clear()
+        res_get = await _check_site(entity, site_get, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 1
+        assert recorded_calls[0][0] == "GET"
+        assert res_get["finding"].data["check_status"] == UsernameCheckStatus.LIKELY.value
+        # GET writes to ResultCache
+        assert rc.get("username", "MethodSite", "alice", AccessMode.ANONYMOUS_PUBLIC.value) is not None
+
+        # HEAD with same ResultCache MUST reach transport (not consume cached GET classification)
+        res_head = await _check_site(entity, site_head, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 2
+        assert recorded_calls[1][0] == "HEAD"
+        assert res_head["finding"].data["check_status"] == UsernameCheckStatus.INCONCLUSIVE.value
+
+        # Second GET is served from ResultCache
+        res_get_cached = await _check_site(entity, site_get, http, sem, result_cache=rc)
+        assert len(recorded_calls) == 2
+        assert res_get_cached["finding"].data["cache_state"] == CacheState.CACHED.value
+
+        # Part 2: HEAD -> GET isolation on a fresh isolated ResultCache
+        settings2 = Settings(
+            data_dir=tmp_path / "data2",
+            reports_dir=tmp_path / "reports2",
+            logs_dir=tmp_path / "logs2",
+            database_url=f"sqlite:///{tmp_path / 't2.db'}",
+            ssrf_enabled=False,
+        )
+        settings2.ensure_dirs()
+        http2 = HttpClient(settings2, transport=httpx.MockTransport(handler))
+        rc2 = ResultCache(settings2)
+        recorded_calls.clear()
+
+        try:
+            # HEAD runs first -> reaches transport, does NOT write to ResultCache
+            await _check_site(entity, site_head, http2, sem, result_cache=rc2)
+            assert len(recorded_calls) == 1
+            assert recorded_calls[0][0] == "HEAD"
+            assert rc2.get("username", "MethodSite", "alice", AccessMode.ANONYMOUS_PUBLIC.value) is None
+
+            # GET runs next -> reaches transport, populates ResultCache
+            await _check_site(entity, site_get, http2, sem, result_cache=rc2)
+            assert len(recorded_calls) == 2
+            assert recorded_calls[1][0] == "GET"
+            assert rc2.get("username", "MethodSite", "alice", AccessMode.ANONYMOUS_PUBLIC.value) is not None
+
+            # Refresh=True bypasses ResultCache for GET
+            await _check_site(entity, site_get, http2, sem, result_cache=rc2, refresh=True)
+            assert len(recorded_calls) == 3
+            assert recorded_calls[2][0] == "GET"
+        finally:
+            await http2.close()
+    finally:
+        await http.close()
+
+
+def test_redirect_policy_schema_validation() -> None:
+    """Verify that redirect_home and redirect_search accept only None or 'not_found'."""
+    # A. Omitted / None accepted
+    site_none = SiteDefinition.model_validate(_valid_site_dict())
+    assert site_none.detection.redirect_home is None
+    assert site_none.detection.redirect_search is None
+
+    # B. 'not_found' accepted and normalized
+    site_valid = SiteDefinition.model_validate(_valid_site_dict(
+        redirect_home="not_found",
+        redirect_search=" NOT_FOUND ",
+    ))
+    assert site_valid.detection.redirect_home == "not_found"
+    assert site_valid.detection.redirect_search == "not_found"
+
+    # Exported dict contains canonical 'not_found'
+    exported = site_valid.to_dict()
+    assert exported["redirect_home"] == "not_found"
+    assert exported["redirect_search"] == "not_found"
+
+    # C. Invalid strings rejected
+    for bad_policy in ["not_foud", "found", "ignore", "", "https://example.com/", "login_required"]:
+        with pytest.raises(ValidationError) as exc_bad_home:
+            SiteDefinition.model_validate(_valid_site_dict(redirect_home=bad_policy))
+        assert "invalid policy" in str(exc_bad_home.value).lower()
+
+        with pytest.raises(ValidationError) as exc_bad_search:
+            SiteDefinition.model_validate(_valid_site_dict(redirect_search=bad_policy))
+        assert "invalid policy" in str(exc_bad_search.value).lower()
+
+    # D. Non-string types rejected
+    for bad_type in [123, True, ["not_found"], {"policy": "not_found"}]:
+        with pytest.raises(ValidationError) as exc_type_home:
+            SiteDefinition.model_validate(_valid_site_dict(redirect_home=bad_type))
+        assert "string" in str(exc_type_home.value).lower()
+
+        with pytest.raises(ValidationError) as exc_type_search:
+            SiteDefinition.model_validate(_valid_site_dict(redirect_search=bad_type))
+        assert "string" in str(exc_type_search.value).lower()
+
+
+def test_redirect_policy_runtime_classification() -> None:
+    """Verify that valid redirect policies correctly classify home and search redirects at runtime."""
+    site = SiteDefinition.model_validate(_valid_site_dict(
+        redirect_home="not_found",
+        redirect_search="not_found",
+    )).to_dict()
+
+    # Home redirect -> NOT_FOUND with reason 'redirect_home'
+    status_home, reason_home, _ = classify_html(
+        status_code=200,
+        body="<html><head><title>Home Page</title></head><body>Welcome home</body></html>",
+        title="Home Page",
+        final_url="https://example.com/",
+        site=site,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+        canonical_url="",
+        og_title="",
+    )
+    assert status_home == UsernameCheckStatus.NOT_FOUND
+    assert reason_home == "redirect_home"
+
+    # Search redirect -> NOT_FOUND with reason 'redirect_search'
+    status_search, reason_search, _ = classify_html(
+        status_code=200,
+        body="<html><head><title>Search</title></head><body>Search results</body></html>",
+        title="Search",
+        final_url="https://example.com/search?q=alice",
+        site=site,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+        canonical_url="",
+        og_title="",
+    )
+    assert status_search == UsernameCheckStatus.NOT_FOUND
+    assert reason_search == "redirect_search"

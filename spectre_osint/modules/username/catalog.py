@@ -322,6 +322,22 @@ class DetectionDefinition(CatalogBaseModel):
         _validate_regex_patterns(v, field_name)
         return v
 
+    @field_validator("redirect_home", "redirect_search")
+    @classmethod
+    def validate_redirect_policies(cls, v: Any, info: Any) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            field_name = info.field_name or "redirect_policy"
+            raise ValueError(f"{field_name} must be a string, got {type(v).__name__}")
+        norm = v.strip().lower()
+        if norm != "not_found":
+            field_name = info.field_name or "redirect_policy"
+            raise ValueError(
+                f"{field_name} has invalid policy '{v}'. Only 'not_found' is supported"
+            )
+        return "not_found"
+
 
 class ExtractionDefinition(CatalogBaseModel):
     """Profile metadata extraction field mapping."""
