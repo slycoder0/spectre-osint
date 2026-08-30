@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -531,3 +532,277 @@ async def test_legacy_blocked_cache_reclassification_and_auth_fallback(tmp_path:
         assert f_david.data["cache_state"] == "CACHED"
     finally:
         await http_david.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_json_fallback_discards_anonymous_json_error_metadata(tmp_path: Any) -> None:
+    """Verify that anonymous JSON error responses are discarded when authenticated fallback succeeds."""
+    settings = _settings(tmp_path)
+    result_cache = ResultCache(settings)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+
+    site_def = SiteDefinition.model_validate({
+        "name": "JSON Auth Site",
+        "category": "Development",
+        "profile_url": "https://example.com/api/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "auth_platform": "twitch",
+        "requires_auth": True,
+        "json_id_field": "id",
+        "display_name_fields": ["name"],
+        "bio_field": "bio",
+        "avatar_field": "avatar",
+        "website_fields": ["website"],
+    }).to_dict()
+
+    # Anonymous response: HTTP 401 with error JSON containing hostile/deceptive field names
+    anonymous_json = {
+        "error": "login required",
+        "name": "Authentication Service",
+        "bio": "Please log in to continue",
+        "website": "https://support.example.com",
+        "avatar": "https://example.com/login-logo.png",
+    }
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(401, json=anonymous_json)))
+
+    class MockAuthService:
+        def has_active(self, platform: str) -> bool:
+            return platform == "twitch"
+
+        async def fetch_public_profile(self, platform: str, username: str, url: str) -> FetchOutcome:
+            return FetchOutcome(
+                status="OK",
+                status_code=200,
+                url="https://example.com/alice",
+                title="Alice in Tech",
+                canonical_url="https://example.com/alice",
+                body=(
+                    '<html><head><title>Alice in Tech</title>'
+                    '<meta property="og:title" content="Alice Tech">'
+                    '<link rel="canonical" href="https://example.com/alice">'
+                    '</head><body><h1>Alice in Tech</h1>'
+                    '<p>Real developer bio</p>'
+                    '<a rel="me" href="https://alicetech.org">Personal Web</a>'
+                    '</body></html>'
+                ),
+            )
+
+    try:
+        res = await _check_site(
+            entity,
+            site_def,
+            http,
+            sem,
+            result_cache=result_cache,
+            auth_service=MockAuthService(),
+        )
+        finding = res["finding"]
+        data = finding.data
+        assert data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert data["check_status"] in {UsernameCheckStatus.CONFIRMED.value, UsernameCheckStatus.LIKELY.value}
+        assert data["anonymous_status"] == UsernameCheckStatus.LOGIN_REQUIRED.value
+
+        # Assert anonymous JSON values are strictly discarded
+        assert data["display_name"] != "Authentication Service"
+        assert data["bio"] != "Please log in to continue"
+        assert data["website"] != "https://support.example.com"
+        assert data["avatar_url"] != "https://example.com/login-logo.png"
+
+        # Assert authenticated response values are authoritative
+        assert data["final_url"] == "https://example.com/alice"
+        assert data["http_status"] == 200
+        assert data["page_title"] == "Alice in Tech"
+        assert data["canonical"] == "https://example.com/alice"
+        assert data["website"] == "https://alicetech.org/"
+
+        # Assert observed provenance contains no anonymous JSON API fields
+        observed = data["observed"]
+        for v in observed.values():
+            assert "json_auth_site_api" not in v.get("source", "")
+
+        # Assert Evidence uses authenticated response
+        evidence = res["evidence"][0]
+        assert evidence.url == "https://example.com/alice"
+        raw_data = json.loads(evidence.raw_reference or "{}")
+        assert raw_data["title"] == "Alice in Tech"
+        assert raw_data["http_status"] == 200
+        assert raw_data["public_name"] != "Authentication Service"
+
+        # Assert no entity created for support.example.com
+        entity_values = [e.value for e in res["entities"]]
+        assert "https://support.example.com" not in entity_values
+
+        # Assert ResultCache payload does not persist raw HTML body
+        cached = result_cache.get("username", "JSON Auth Site", "alice", access_mode=AccessMode.AUTHENTICATED_PUBLIC.value)
+        assert cached is not None
+        assert "body" not in cached.payload
+        assert "<html>" not in str(cached.payload)
+    finally:
+        await http.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_html_fallback_discards_anonymous_login_metadata(tmp_path: Any) -> None:
+    """Verify that anonymous login HTML metadata does not leak into authenticated positive finding."""
+    settings = _settings(tmp_path)
+    result_cache = ResultCache(settings)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+
+    site_def = SiteDefinition.model_validate({
+        "name": "HTML Auth Site",
+        "category": "Social",
+        "profile_url": "https://example.com/{username}",
+        "check_method": "login_wall",
+        "auth_platform": "instagram",
+        "login_patterns": ["Please sign in to view this profile"],
+    }).to_dict()
+
+    # Anonymous response: login page with deceptive metadata
+    anonymous_html = (
+        '<html><head><title>Sign in to Example</title>'
+        '<meta property="og:title" content="Example Login Portal">'
+        '<meta property="og:image" content="https://example.com/login-logo.png">'
+        '<meta name="description" content="Sign in to continue to Example">'
+        '<link rel="canonical" href="https://example.com/login">'
+        '</head><body><h1>Please sign in to view this profile</h1>'
+        '<a href="https://support.example.com">Support</a>'
+        '</body></html>'
+    )
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, text=anonymous_html)))
+
+    class MockAuthService:
+        def has_active(self, platform: str) -> bool:
+            return platform == "instagram"
+
+        async def fetch_public_profile(self, platform: str, username: str, url: str) -> FetchOutcome:
+            return FetchOutcome(
+                status="OK",
+                status_code=200,
+                url="https://example.com/alice",
+                title="Alice (@alice) • Example",
+                canonical_url="https://example.com/alice",
+                og_title="Alice Example",
+                body=(
+                    '<html><head><title>Alice (@alice) • Example</title>'
+                    '<meta property="og:title" content="Alice Example">'
+                    '<link rel="canonical" href="https://example.com/alice">'
+                    '</head><body><h1>Alice Example</h1>'
+                    '<p>Authentic profile bio</p>'
+                    '<a rel="me" href="https://alice-personal.org">Personal Blog</a>'
+                    '</body></html>'
+                ),
+            )
+
+    try:
+        res = await _check_site(
+            entity,
+            site_def,
+            http,
+            sem,
+            result_cache=result_cache,
+            auth_service=MockAuthService(),
+        )
+        finding = res["finding"]
+        data = finding.data
+        assert data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert data["check_status"] in {UsernameCheckStatus.CONFIRMED.value, UsernameCheckStatus.LIKELY.value}
+
+        # Anonymous login metadata must not leak
+        assert data["display_name"] == "Alice Example"
+        assert data["bio"] != "Sign in to continue to Example"
+        assert data["avatar_url"] != "https://example.com/login-logo.png"
+        assert data["website"] == "https://alice-personal.org/"
+        assert data["final_url"] == "https://example.com/alice"
+        assert data["http_status"] == 200
+        assert data["page_title"] == "Alice (@alice) • Example"
+        assert data["canonical"] == "https://example.com/alice"
+
+        evidence = res["evidence"][0]
+        assert evidence.url == "https://example.com/alice"
+        raw_data = json.loads(evidence.raw_reference or "{}")
+        assert raw_data["title"] == "Alice (@alice) • Example"
+        assert raw_data["public_name"] == "Alice Example"
+
+        # SOCIAL_PROFILE Entity metadata
+        profile_entity = next(e for e in res["entities"] if e.type == EntityType.SOCIAL_PROFILE)
+        assert profile_entity.metadata["public_name"] == "Alice Example"
+
+        # No support website entity
+        entity_values = [e.value for e in res["entities"]]
+        assert "https://support.example.com" not in entity_values
+    finally:
+        await http.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_fallback_with_no_profile_metadata_yields_none(tmp_path: Any) -> None:
+    """Verify that when authenticated page has no extractable profile metadata, values are None and do not fall back to login page."""
+    settings = _settings(tmp_path)
+    result_cache = ResultCache(settings)
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+
+    site_def = SiteDefinition.model_validate({
+        "name": "Bare Auth Site",
+        "category": "Social",
+        "profile_url": "https://example.com/{username}",
+        "check_method": "login_wall",
+        "auth_platform": "instagram",
+        "login_patterns": ["Please sign in"],
+    }).to_dict()
+
+    anonymous_html = (
+        '<html><head><title>Sign in to Example</title>'
+        '<meta property="og:title" content="Login Title">'
+        '<meta property="og:image" content="https://example.com/login.jpg">'
+        '<meta name="description" content="Login description">'
+        '</head><body><h1>Please sign in</h1>'
+        '<a href="https://support.example.com">Support</a>'
+        '</body></html>'
+    )
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, text=anonymous_html)))
+
+    class MockAuthService:
+        def has_active(self, platform: str) -> bool:
+            return platform == "instagram"
+
+        async def fetch_public_profile(self, platform: str, username: str, url: str) -> FetchOutcome:
+            return FetchOutcome(
+                status="OK",
+                status_code=200,
+                url="https://example.com/alice",
+                title=f"{username} Profile",
+                body="<html><body><h1>Profile found</h1></body></html>",
+            )
+
+    try:
+        res = await _check_site(
+            entity,
+            site_def,
+            http,
+            sem,
+            result_cache=result_cache,
+            auth_service=MockAuthService(),
+        )
+        finding = res["finding"]
+        data = finding.data
+        assert data["access_mode"] == AccessMode.AUTHENTICATED_PUBLIC.value
+        assert data["check_status"] in {UsernameCheckStatus.CONFIRMED.value, UsernameCheckStatus.LIKELY.value}
+
+        # All unprovided fields must be None/empty — zero fallback to anonymous login metadata
+        assert data["display_name"] is None
+        assert data["bio"] is None
+        assert data["avatar_url"] is None
+        assert data["website"] is None
+        assert data["public_links"] == []
+        assert data["final_url"] == "https://example.com/alice"
+        assert data["http_status"] == 200
+
+        # No linked website entities created
+        linked_website_entities = [e for e in res["entities"] if e.type != EntityType.SOCIAL_PROFILE]
+        assert len(linked_website_entities) == 0
+    finally:
+        await http.close()

@@ -716,17 +716,24 @@ async def _check_site(
     anonymous_status = status.value
     authenticated_status = None
     session_status = None
-    auth_meta: dict[str, str] = {}
+    auth_meta: dict[str, Any] = {}
     if status == UsernameCheckStatus.LOGIN_REQUIRED and requires_auth and auth_platform and auth_service is not None:
         auth_hit = await _authenticated_public(auth_service, site, username, profile_url)
         if auth_hit is not None:
             status, reason, conf, access_mode, session_status, auth_meta = auth_hit
             authenticated_status = status.value
 
+    is_authenticated = (access_mode == AccessMode.AUTHENTICATED_PUBLIC)
+    effective_url = str(auth_meta.get("url") or response.url) if is_authenticated else response.url
+    effective_status_code = int(auth_meta.get("status_code", 0) or response.status_code) if is_authenticated else response.status_code
+    effective_title = str(auth_meta.get("title") or "") if is_authenticated else (title or "")
+    effective_canonical = str(auth_meta.get("canonical_url") or "") if is_authenticated else (canonical or "")
+
     finding_status = STATUS_TO_FINDING[status]
     confidence = conf if conf is not None else STATUS_TO_CONFIDENCE[status]
     if (
         status == UsernameCheckStatus.LIKELY
+        and not is_authenticated
         and (json_name or public_name)
         and username.lower() in str(json_name or public_name).lower()
     ):
@@ -734,26 +741,43 @@ async def _check_site(
 
     observed: dict[str, Any] = {}
     if status in {UsernameCheckStatus.CONFIRMED, UsernameCheckStatus.LIKELY}:
-        json_blob = data if method == "json_api" and isinstance(data, (dict, list)) else None
-        html_blob = "" if access_mode == AccessMode.AUTHENTICATED_PUBLIC else (body or "")
-        observed = enrich_profile(
-            platform=name,
-            username=username,
-            profile_url=profile_url,
-            site=site,
-            json_data=json_blob,
-            html=html_blob,
-            meta={
-                "og_title": str(auth_meta.get("og_title") or public_name or ""),
-                "og_url": str(auth_meta.get("og_url") or ""),
-                "canonical": str(auth_meta.get("canonical_url") or canonical or ""),
-                "title": str(auth_meta.get("title") or title or ""),
-                "og_image": str(avatar or ""),
-            },
-        )
+        if is_authenticated:
+            auth_html = str(auth_meta.get("body") or "")
+            observed = enrich_profile(
+                platform=name,
+                username=username,
+                profile_url=profile_url,
+                site=site,
+                json_data=None,
+                html=auth_html,
+                meta={
+                    "og_title": str(auth_meta.get("og_title") or ""),
+                    "og_url": str(auth_meta.get("og_url") or ""),
+                    "canonical": str(auth_meta.get("canonical_url") or ""),
+                    "title": str(auth_meta.get("title") or ""),
+                    "og_image": "",
+                },
+            )
+        else:
+            json_blob = data if method == "json_api" and isinstance(data, (dict, list)) else None
+            observed = enrich_profile(
+                platform=name,
+                username=username,
+                profile_url=profile_url,
+                site=site,
+                json_data=json_blob,
+                html=body or "",
+                meta={
+                    "og_title": str(public_name or ""),
+                    "og_url": "",
+                    "canonical": str(canonical or ""),
+                    "title": str(title or ""),
+                    "og_image": str(avatar or ""),
+                },
+            )
     flat = flatten_observed(observed)
 
-    if method == "json_api":
+    if is_authenticated or method == "json_api":
         display_name = flat.get("display_name")
         bio = flat.get("bio")
         avatar_url = flat.get("avatar_url")
@@ -773,7 +797,7 @@ async def _check_site(
         "site": name,
         "username": username,
         "profile_url": profile_url,
-        "final_url": response.url,
+        "final_url": effective_url,
         "display_name": display_name,
         "bio": bio,
         "avatar_url": avatar_url,
@@ -788,11 +812,11 @@ async def _check_site(
         "check_status": status.value,
         "checked_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
         "confidence": confidence.value if confidence else None,
-        "http_status": response.status_code,
+        "http_status": effective_status_code,
         "category": site.get("category"),
         "reason": reason,
-        "page_title": title,
-        "canonical": canonical,
+        "page_title": effective_title,
+        "canonical": effective_canonical,
         "status": status.value,
         "access_mode": access_mode.value,
         "cache_state": CacheState.REFRESHED.value if refresh else CacheState.LIVE.value,
@@ -826,15 +850,17 @@ async def _check_site(
     if status not in {UsernameCheckStatus.CONFIRMED, UsernameCheckStatus.LIKELY}:
         return {"finding": finding, "evidence": [], "entities": [], "relationships": []}
 
+    effective_display_name = display_name if is_authenticated else (json_name or public_name)
+
     evidence = make_evidence(
         source=name,
         provider="username",
         confidence=confidence or Confidence.MEDIUM,
-        url=response.url,
+        url=effective_url,
         raw={
-            "title": title,
-            "http_status": response.status_code,
-            "public_name": json_name or public_name,
+            "title": effective_title,
+            "http_status": effective_status_code,
+            "public_name": effective_display_name,
             "check_status": status.value,
             "reason": reason,
         },
@@ -847,7 +873,7 @@ async def _check_site(
         source=name,
         confidence=confidence or Confidence.MEDIUM,
         tags=[str(site.get("category") or "unknown").lower(), "username"],
-        metadata={"site": name, "username": username, "public_name": json_name or public_name},
+        metadata={"site": name, "username": username, "public_name": effective_display_name},
     )
     rel = Relationship(
         from_entity_id=entity.id,
@@ -872,7 +898,7 @@ async def _check_site(
     }
 
 
-def _auth_meta(outcome: Any) -> dict[str, str]:
+def _auth_meta(outcome: Any) -> dict[str, Any]:
     if outcome is None:
         return {}
     return {
@@ -881,6 +907,8 @@ def _auth_meta(outcome: Any) -> dict[str, str]:
         "canonical_url": str(getattr(outcome, "canonical_url", "") or ""),
         "og_url": str(getattr(outcome, "og_url", "") or ""),
         "og_title": str(getattr(outcome, "og_title", "") or ""),
+        "status_code": int(getattr(outcome, "status_code", 0) or 0),
+        "body": str(getattr(outcome, "body", "") or ""),
     }
 
 
@@ -889,7 +917,7 @@ async def _authenticated_public(
     site: dict[str, Any],
     username: str,
     profile_url: str,
-) -> tuple[UsernameCheckStatus, str, Confidence | None, AccessMode, str, dict[str, str]] | None:
+) -> tuple[UsernameCheckStatus, str, Confidence | None, AccessMode, str, dict[str, Any]] | None:
     from spectre_osint.core.types import SessionStatus
 
     auth_platform = str(
