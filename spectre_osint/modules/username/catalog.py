@@ -216,6 +216,11 @@ def _validate_url_template(v: str, field_name: str) -> str:
         if conversion:
             raise ValueError(f"{field_name} must not contain conversion flags in placeholder")
 
+    # URL fragments are not transmitted in HTTP requests; {username} must exist in a transmitted component
+    base_template, _, _ = v.partition("#")
+    if "{username}" not in base_template:
+        raise ValueError(f"{field_name} must contain '{{username}}' outside the URL fragment")
+
     # Structured URL parse with a placeholder value
     dummy_url = v.replace("{username}", "placeholder_user")
     parsed = urlparse(dummy_url)
@@ -764,7 +769,8 @@ class SiteCatalog:
 
     @property
     def sites(self) -> list[SiteDefinition]:
-        return list(self._sites)
+        """Return detached snapshot copies of all site definitions."""
+        return [s.model_copy(deep=True) for s in self._sites]
 
     def total_sites(self, enabled_only: bool = True) -> int:
         """Total number of sites in the catalog."""
@@ -807,12 +813,14 @@ class SiteCatalog:
         return dict(sorted(counts.items()))
 
     def get_by_slug(self, slug: str) -> SiteDefinition | None:
-        """Find a site definition by its stable slug."""
-        return self._by_slug.get(slug.strip().lower())
+        """Find a site definition by its stable slug, returning a detached snapshot copy."""
+        s = self._by_slug.get(slug.strip().lower())
+        return s.model_copy(deep=True) if s is not None else None
 
     def get_by_name(self, name: str) -> SiteDefinition | None:
-        """Find a site definition by its display name (case-insensitive)."""
-        return self._by_name.get(name.strip().lower())
+        """Find a site definition by its display name (case-insensitive), returning a detached snapshot copy."""
+        s = self._by_name.get(name.strip().lower())
+        return s.model_copy(deep=True) if s is not None else None
 
     def filter(
         self,
@@ -823,7 +831,7 @@ class SiteCatalog:
         strategies: list[str] | None = None,
         enabled_only: bool = True,
     ) -> list[SiteDefinition]:
-        """Filter site definitions based on criteria."""
+        """Filter site definitions based on criteria, returning detached snapshot copies."""
         cats_allowed = {c.strip().lower() for c in categories} if categories else None
         cats_excluded = {c.strip().lower() for c in exclude_categories} if exclude_categories else set()
         strats_allowed = {s.strip().lower() for s in strategies} if strategies else None
@@ -842,7 +850,7 @@ class SiteCatalog:
             strat_lower = s.detection.strategy.value.lower()
             if strats_allowed is not None and strat_lower not in strats_allowed:
                 continue
-            result.append(s)
+            result.append(s.model_copy(deep=True))
         return result
 
     def to_dict_list(self, enabled_only: bool = True) -> list[dict[str, Any]]:

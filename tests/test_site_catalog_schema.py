@@ -964,3 +964,165 @@ def test_catalog_cached_export_mutation_isolation() -> None:
     # Verify object identity isolation
     assert sites_a[0]["expected_status"] is not sites_b[0]["expected_status"]
     assert sites_a[0]["headers"] is not sites_b[0]["headers"]
+
+
+def test_url_fragment_placeholder_rules() -> None:
+    """Verify that {username} must appear outside URL fragments in profile_url and check_url."""
+    # A. Username in path is accepted
+    site_path = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com/users/{username}"
+    ))
+    assert site_path.profile_url == "https://example.com/users/{username}"
+
+    # B. Username in query is accepted
+    site_query = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com/profile?user={username}"
+    ))
+    assert site_query.profile_url == "https://example.com/profile?user={username}"
+
+    # C. Username in path with a fixed fragment is accepted
+    site_fixed_frag = SiteDefinition.model_validate(_valid_site_dict(
+        profile_url="https://example.com/users/{username}#about"
+    ))
+    assert site_fixed_frag.profile_url == "https://example.com/users/{username}#about"
+
+    # D. Username only in fragment is rejected
+    with pytest.raises(Exception) as exc_d:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com/profile#{username}"
+        ))
+    assert "fragment" in str(exc_d.value).lower()
+    assert "outside" in str(exc_d.value).lower()
+
+    # E. Username only in a fragment path is rejected
+    with pytest.raises(Exception) as exc_e:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://example.com/#/users/{username}"
+        ))
+    assert "fragment" in str(exc_e.value).lower()
+
+    # F. The same rule applies to check_url
+    with pytest.raises(Exception) as exc_f:
+        SiteDefinition.model_validate(_valid_site_dict(
+            check_url="https://api.example/users#{username}"
+        ))
+    assert "fragment" in str(exc_f.value).lower()
+
+    # G. A json_api definition with fragment-only username is rejected
+    with pytest.raises(Exception) as exc_g:
+        SiteDefinition.model_validate(_valid_site_dict(
+            check_method="json_api",
+            json_id_field="id",
+            profile_url="https://api.example/lookup#{username}",
+        ))
+    assert "fragment" in str(exc_g.value).lower()
+
+    # H. Validation error remains sanitized and does not echo sensitive info or full secret URLs
+    with pytest.raises(Exception) as exc_h:
+        SiteDefinition.model_validate(_valid_site_dict(
+            profile_url="https://secret-token-key:password@api.example/path#{username}"
+        ))
+    err_msg = str(exc_h.value)
+    assert "secret-token-key" not in err_msg
+    assert "password" not in err_msg
+
+
+@pytest.mark.asyncio
+async def test_wire_url_omits_fragment_sanity(tmp_path: Any) -> None:
+    """Demonstrate that HTTP wire requests transmit path/query and isolate URL fragments."""
+    captured_paths: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # On the HTTP wire, only raw_path (path + query) is transmitted in the request line
+        captured_paths.append(request.url.raw_path)
+        return httpx.Response(200, text="ok")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+
+    try:
+        # A URL containing a fragment sends only the base path/query across the wire
+        await http.get("https://example.com/users/alice#profile-section", provider="Test")
+        assert len(captured_paths) == 1
+        assert captured_paths[0] == b"/users/alice"
+        assert b"#" not in captured_paths[0]
+        assert b"profile-section" not in captured_paths[0]
+    finally:
+        await http.close()
+
+
+def test_typed_model_accessors_mutation_isolation() -> None:
+    """Verify that public typed-model accessors return detached snapshots and preserve index consistency."""
+    clear_catalog_cache()
+    catalog = load_catalog()
+
+    # A. SiteCatalog.sites property isolation
+    sites_1 = catalog.sites
+    sites_2 = catalog.sites
+    assert sites_1[0] is not sites_2[0]
+    assert sites_1[0].detection is not sites_2[0].detection
+    assert sites_1[0].request is not sites_2[0].request
+    assert sites_1[0].access is not sites_2[0].access
+
+    # Mutate snapshot 1
+    sites_1[0].enabled = False
+    sites_1[0].slug = "mutated_slug_in_sites"
+    sites_1[0].detection.expected_status.append(418)
+    sites_1[0].request.headers["X-Mutated"] = "corrupted"
+
+    # Verify snapshot 2 and internal catalog are untouched
+    assert sites_2[0].enabled is True
+    assert sites_2[0].slug != "mutated_slug_in_sites"
+    assert 418 not in sites_2[0].detection.expected_status
+    assert "X-Mutated" not in sites_2[0].request.headers
+
+    # B. get_by_slug() index consistency and deep isolation
+    original_gh = catalog.get_by_slug("github")
+    assert original_gh is not None
+    original_gh.slug = "mutated_github_slug"
+    original_gh.name = "Mutated GitHub Name"
+    original_gh.enabled = False
+    original_gh.detection.expected_status.append(418)
+    original_gh.extraction.display_name_fields.append("mutated_display_field")
+
+    # Re-querying canonical slug must return uncorrupted model
+    fresh_gh = catalog.get_by_slug("github")
+    assert fresh_gh is not None
+    assert fresh_gh.slug == "github"
+    assert fresh_gh.name == "GitHub"
+    assert fresh_gh.enabled is True
+    assert 418 not in fresh_gh.detection.expected_status
+    assert "mutated_display_field" not in fresh_gh.extraction.display_name_fields
+
+    # Mutated slug must not exist in catalog index
+    assert catalog.get_by_slug("mutated_github_slug") is None
+
+    # C. get_by_name() deep isolation
+    gh_by_name = catalog.get_by_name("GitHub")
+    assert gh_by_name is not None
+    assert gh_by_name.slug == "github"
+    gh_by_name.name = "Corrupted Name"
+    assert catalog.get_by_name("GitHub") is not None
+    assert catalog.get_by_name("Corrupted Name") is None
+
+    # D. filter() deep isolation
+    dev_sites_1 = catalog.filter(categories=["Development"])
+    dev_sites_2 = catalog.filter(categories=["Development"])
+    assert dev_sites_1[0] is not dev_sites_2[0]
+    assert dev_sites_1[0].detection is not dev_sites_2[0].detection
+    dev_sites_1[0].detection.expected_status.append(418)
+    assert 418 not in dev_sites_2[0].detection.expected_status
+
+    # E. Cross-boundary check: typed mutation does not affect load_sites() output
+    legacy_sites = load_sites()
+    gh_dict = next(s for s in legacy_sites if s["slug"] == "github")
+    assert gh_dict["name"] == "GitHub"
+    assert 418 not in gh_dict["expected_status"]
+    assert "mutated_display_field" not in gh_dict["display_name_fields"]
