@@ -2784,25 +2784,72 @@ async def test_json_api_reserved_status_precedence(tmp_path: Any) -> None:
 
 
 def test_not_found_status_schema_rejects_reserved_and_5xx(tmp_path: Any) -> None:
-    """Verify that not_found_status rejects 5xx server errors and 401/403/429 reserved statuses."""
-    # 1. 500 in not_found_status fails validation
-    for bad_code in [500, 502, 503, 504, 401, 403, 429]:
+    """Verify that not_found_status rejects 5xx server errors and 401/403/408/429 reserved statuses."""
+    # 1. 500/408 in not_found_status fails validation
+    for bad_code in [500, 502, 503, 504, 401, 403, 408, 429]:
         with pytest.raises(ValidationError):
             SiteDefinition.model_validate(_valid_site_dict(
                 name=f"Bad Site {bad_code}",
                 not_found_status=[bad_code],
             ))
 
-    # Mixed with valid codes
+    # Flat legacy format with 408
     with pytest.raises(ValidationError):
-        SiteDefinition.model_validate(_valid_site_dict(
-            name="Bad Mixed Site",
-            not_found_status=[404, 500],
-        ))
+        SiteDefinition.model_validate({
+            "name": "Flat Legacy Bad 408",
+            "category": "Development",
+            "profile_url": "https://example.com/users/{username}",
+            "check_method": "generic_html",
+            "confidence_strategy": "multi_signal",
+            "expected_status": [200],
+            "not_found_status": [408],
+            "success_patterns": ["profile"],
+        })
 
-    # 2. Public YAML loading fails with CatalogValidationError
-    bad_yaml = tmp_path / "bad_sites.yaml"
-    bad_yaml.write_text(
+    # Nested detection format with 408
+    with pytest.raises(ValidationError):
+        SiteDefinition.model_validate({
+            "name": "Nested Bad 408",
+            "category": "Development",
+            "profile_url": "https://example.com/users/{username}",
+            "detection": {
+                "strategy": "generic_html",
+                "confidence_strategy": "multi_signal",
+                "expected_status": [200],
+                "not_found_status": [408],
+                "success_patterns": ["profile"],
+            },
+        })
+
+    # Mixed with valid codes
+    for bad_code in [408, 500]:
+        with pytest.raises(ValidationError):
+            SiteDefinition.model_validate(_valid_site_dict(
+                name=f"Bad Mixed Site {bad_code}",
+                not_found_status=[404, bad_code],
+            ))
+
+    # 2. Public YAML loading fails with CatalogValidationError for 408 and 500
+    bad_yaml_408 = tmp_path / "bad_sites_408.yaml"
+    bad_yaml_408.write_text(
+        """
+sites:
+  - name: "Bad 408 Site"
+    category: "Development"
+    profile_url: "https://example.com/users/{username}"
+    check_method: "generic_html"
+    confidence_strategy: "multi_signal"
+    expected_status: [200]
+    not_found_status: [408]
+    success_patterns: ["profile"]
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError):
+        SiteCatalog.from_yaml_file(bad_yaml_408)
+
+    bad_yaml_500 = tmp_path / "bad_sites_500.yaml"
+    bad_yaml_500.write_text(
         """
 sites:
   - name: "Bad 500 Site"
@@ -2817,7 +2864,7 @@ sites:
         encoding="utf-8",
     )
     with pytest.raises(CatalogValidationError):
-        SiteCatalog.from_yaml_file(bad_yaml)
+        SiteCatalog.from_yaml_file(bad_yaml_500)
 
     # 3. Valid not_found_status loads cleanly
     valid_yaml = tmp_path / "valid_sites.yaml"
@@ -3018,7 +3065,25 @@ def test_runtime_defense_in_depth_5xx_and_reserved_html() -> None:
     )
     assert st_503 == UsernameCheckStatus.PROVIDER_UNAVAILABLE
 
-    # B. 429 in not_found_status -> must remain RATE_LIMITED
+    # B. 408 in not_found_status -> must remain PROVIDER_UNAVAILABLE even with positive profile HTML
+    unvalidated_408 = {
+        "name": "Unvalidated 408",
+        "check_method": "generic_html",
+        "expected_status": [200],
+        "not_found_status": [408],
+        "success_patterns": ["user-profile"],
+    }
+    st_408, _, _ = classify_html(
+        status_code=408,
+        body="<html><title>alice on Example</title><div class='user-profile'>alice</div></html>",
+        title="alice on Example",
+        final_url="https://example.com/users/alice",
+        site=unvalidated_408,
+        username="alice",
+    )
+    assert st_408 == UsernameCheckStatus.PROVIDER_UNAVAILABLE
+
+    # C. 429 in not_found_status -> must remain RATE_LIMITED
     unvalidated_429 = {
         "name": "Unvalidated 429",
         "check_method": "generic_html",
@@ -3035,7 +3100,7 @@ def test_runtime_defense_in_depth_5xx_and_reserved_html() -> None:
     )
     assert st_429 == UsernameCheckStatus.RATE_LIMITED
 
-    # C. 403 in not_found_status -> must remain BLOCKED
+    # D. 403 in not_found_status -> must remain BLOCKED
     unvalidated_403 = {
         "name": "Unvalidated 403",
         "check_method": "generic_html",
@@ -3099,6 +3164,21 @@ async def test_runtime_defense_in_depth_5xx_and_reserved_json(tmp_path: Any) -> 
     if cached is not None:
         assert cached.data.get("check_status") != UsernameCheckStatus.NOT_FOUND.value
 
+    # Unvalidated site dict with 408 in not_found_status and positive identity payload
+    site_bad_408 = {
+        "name": "Unvalidated JSON 408",
+        "category": "Development",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "login",
+        "expected_status": [200],
+        "not_found_status": [408],
+        "http_method": "GET",
+    }
+    res_408 = await run_unvalidated(site_bad_408, 408, {"login": "alice_408_leak", "name": "Alice"}, "alice_408_leak")
+    assert res_408["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+
     # Unvalidated site dict with 429 in not_found_status and identity payload
     site_bad_429 = {
         "name": "Unvalidated JSON 429",
@@ -3128,3 +3208,38 @@ async def test_runtime_defense_in_depth_5xx_and_reserved_json(tmp_path: Any) -> 
     }
     res_401 = await run_unvalidated(site_bad_401, 401, {"login": "alice_401_leak"}, "alice_401_leak")
     assert res_401["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
+
+
+@pytest.mark.asyncio
+async def test_real_http_client_408_provider_unavailable(tmp_path: Any) -> None:
+    """Verify that real HttpClient converts HTTP 408 to ProviderUnavailable and yields PROVIDER_UNAVAILABLE in username engine."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(408, text="Request Timeout")
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+    sem = asyncio.Semaphore(5)
+    entity = Entity.create(EntityType.USERNAME, "alice_408_real", "test", Confidence.CONFIRMED)
+
+    try:
+        site_def = _valid_site_dict(
+            name="Real HTTP 408 Site",
+            profile_url="https://api.example.com/users/{username}",
+            check_method="generic_html",
+            expected_status=[200],
+            not_found_status=[404],
+        )
+        site = SiteDefinition.model_validate(site_def).to_dict()
+        res = await _check_site(entity, site, http, sem)
+        finding = res["finding"]
+        assert finding.data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+        assert finding.status.value == "PROVIDER_UNAVAILABLE"
+    finally:
+        await http.close()

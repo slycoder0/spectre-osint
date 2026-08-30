@@ -136,7 +136,7 @@ def classify_html(
         if _pattern_hit(haystack, site.get("login_patterns")) or method == "login_wall":
             return UsernameCheckStatus.LOGIN_REQUIRED, f"HTTP {status_code} login/wall", None
         return UsernameCheckStatus.BLOCKED, f"HTTP {status_code} blocked", None
-    if status_code >= 500:
+    if status_code in {408} or status_code >= 500:
         return UsernameCheckStatus.PROVIDER_UNAVAILABLE, f"HTTP {status_code}", None
     if status_code in not_found_status:
         return UsernameCheckStatus.NOT_FOUND, f"HTTP {status_code}", None
@@ -630,7 +630,7 @@ async def _check_site(
             status, reason, conf = UsernameCheckStatus.RATE_LIMITED, "HTTP 429", None
         elif response.status_code in {401, 403}:
             status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
-        elif response.status_code >= 500:
+        elif response.status_code in {408} or response.status_code >= 500:
             status, reason, conf = (
                 UsernameCheckStatus.PROVIDER_UNAVAILABLE,
                 f"HTTP {response.status_code}",
