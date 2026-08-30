@@ -136,10 +136,10 @@ def classify_html(
         if _pattern_hit(haystack, site.get("login_patterns")) or method == "login_wall":
             return UsernameCheckStatus.LOGIN_REQUIRED, f"HTTP {status_code} login/wall", None
         return UsernameCheckStatus.BLOCKED, f"HTTP {status_code} blocked", None
-    if status_code in not_found_status:
-        return UsernameCheckStatus.NOT_FOUND, f"HTTP {status_code}", None
     if status_code >= 500:
         return UsernameCheckStatus.PROVIDER_UNAVAILABLE, f"HTTP {status_code}", None
+    if status_code in not_found_status:
+        return UsernameCheckStatus.NOT_FOUND, f"HTTP {status_code}", None
 
     if method == "login_wall":
         if _pattern_hit(haystack, site.get("not_found_patterns")):
@@ -151,8 +151,12 @@ def classify_html(
     if _pattern_hit(haystack, site.get("not_found_patterns")):
         return UsernameCheckStatus.NOT_FOUND, "soft-404 / not_found_pattern", None
 
-    if status_code not in expected and not (200 <= status_code < 400):
-        return UsernameCheckStatus.INCONCLUSIVE, f"HTTP {status_code}", Confidence.LOW
+    if status_code not in expected:
+        return (
+            UsernameCheckStatus.INCONCLUSIVE,
+            f"Unexpected HTTP {status_code} for HTML check",
+            Confidence.LOW,
+        )
 
     signals = collect_page_signals(
         status_code=status_code,
@@ -622,9 +626,7 @@ async def _check_site(
         data = response.json_data
         not_found_status = set(site.get("not_found_status") or [404, 410])
         expected_status = set(site.get("expected_status") or [200])
-        if response.status_code in not_found_status:
-            status, reason, conf = UsernameCheckStatus.NOT_FOUND, f"HTTP {response.status_code}", None
-        elif response.status_code == 429:
+        if response.status_code == 429:
             status, reason, conf = UsernameCheckStatus.RATE_LIMITED, "HTTP 429", None
         elif response.status_code in {401, 403}:
             status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
@@ -634,6 +636,8 @@ async def _check_site(
                 f"HTTP {response.status_code}",
                 None,
             )
+        elif response.status_code in not_found_status:
+            status, reason, conf = UsernameCheckStatus.NOT_FOUND, f"HTTP {response.status_code}", None
         elif response.status_code not in expected_status:
             status, reason, conf = (
                 UsernameCheckStatus.INCONCLUSIVE,

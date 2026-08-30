@@ -331,12 +331,18 @@ class DetectionDefinition(CatalogBaseModel):
 
     @field_validator("expected_status", "not_found_status")
     @classmethod
-    def validate_statuses(cls, v: list[int]) -> list[int]:
+    def validate_statuses(cls, v: list[int], info: Any) -> list[int]:
         if not v:
             raise ValueError("Status code list cannot be empty")
         for code in v:
             if not isinstance(code, int) or code < 100 or code > 599:
                 raise ValueError(f"Invalid HTTP status code: {code}")
+        if info.field_name == "not_found_status":
+            for code in v:
+                if 500 <= code <= 599 or code in {401, 403, 429}:
+                    raise ValueError(
+                        f"not_found_status cannot contain reserved HTTP status code {code} (must not be 401, 403, 429, or 500-599)"
+                    )
         return v
 
     @field_validator(

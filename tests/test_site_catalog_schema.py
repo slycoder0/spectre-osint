@@ -2781,3 +2781,350 @@ async def test_json_api_reserved_status_precedence(tmp_path: Any) -> None:
 
     # E. HTTP 500 with identity JSON -> PROVIDER_UNAVAILABLE
     assert (await run_reserved(500, username="alice_500"))["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+
+
+def test_not_found_status_schema_rejects_reserved_and_5xx(tmp_path: Any) -> None:
+    """Verify that not_found_status rejects 5xx server errors and 401/403/429 reserved statuses."""
+    # 1. 500 in not_found_status fails validation
+    for bad_code in [500, 502, 503, 504, 401, 403, 429]:
+        with pytest.raises(ValidationError):
+            SiteDefinition.model_validate(_valid_site_dict(
+                name=f"Bad Site {bad_code}",
+                not_found_status=[bad_code],
+            ))
+
+    # Mixed with valid codes
+    with pytest.raises(ValidationError):
+        SiteDefinition.model_validate(_valid_site_dict(
+            name="Bad Mixed Site",
+            not_found_status=[404, 500],
+        ))
+
+    # 2. Public YAML loading fails with CatalogValidationError
+    bad_yaml = tmp_path / "bad_sites.yaml"
+    bad_yaml.write_text(
+        """
+sites:
+  - name: "Bad 500 Site"
+    category: "Development"
+    profile_url: "https://example.com/users/{username}"
+    check_method: "generic_html"
+    confidence_strategy: "multi_signal"
+    expected_status: [200]
+    not_found_status: [500]
+    success_patterns: ["profile"]
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError):
+        SiteCatalog.from_yaml_file(bad_yaml)
+
+    # 3. Valid not_found_status loads cleanly
+    valid_yaml = tmp_path / "valid_sites.yaml"
+    valid_yaml.write_text(
+        """
+sites:
+  - name: "Valid Site"
+    category: "Development"
+    profile_url: "https://example.com/users/{username}"
+    check_method: "generic_html"
+    confidence_strategy: "multi_signal"
+    expected_status: [200]
+    not_found_status: [404, 410]
+    success_patterns: ["profile"]
+""",
+        encoding="utf-8",
+    )
+    cat = SiteCatalog.from_yaml_file(valid_yaml)
+    assert len(cat.sites) == 1
+    assert cat.sites[0].detection.not_found_status == [404, 410]
+
+
+def test_html_expected_status_gating_and_isolation() -> None:
+    """Verify that classify_html gates positive evidence by expected_status."""
+    strong_body = """
+    <html>
+        <head>
+            <title>alice on Example Platform</title>
+            <link rel="canonical" href="https://example.com/users/alice" />
+            <meta property="og:url" content="https://example.com/users/alice" />
+            <meta property="og:title" content="alice on Example Platform" />
+        </head>
+        <body>
+            <div class="user-profile">
+                <h1>alice</h1>
+                <p>Welcome to my profile</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    # 1. Custom expected_status=[201]: HTTP 200 with strong signals must be INCONCLUSIVE / LOW
+    site_201 = {
+        "name": "Platform 201",
+        "check_method": "generic_html",
+        "confidence_strategy": "multi_signal",
+        "expected_status": [201],
+        "not_found_status": [404],
+        "profile_markers": ["user-profile"],
+        "success_patterns": ["user-profile"],
+    }
+    status, reason, conf = classify_html(
+        status_code=200,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_201,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+        canonical_url="https://example.com/users/alice",
+        og_url="https://example.com/users/alice",
+        og_title="alice on Example Platform",
+    )
+    assert status == UsernameCheckStatus.INCONCLUSIVE
+    assert conf == Confidence.LOW
+    assert "Unexpected HTTP 200 for HTML check" in reason
+
+    # 2. Custom expected_status=[201]: HTTP 201 with strong signals evaluates positively -> LIKELY
+    status_201, _, conf_201 = classify_html(
+        status_code=201,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_201,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+        canonical_url="https://example.com/users/alice",
+        og_url="https://example.com/users/alice",
+        og_title="alice on Example Platform",
+    )
+    assert status_201 == UsernameCheckStatus.LIKELY
+    assert conf_201 in {Confidence.MEDIUM, Confidence.HIGH, Confidence.CONFIRMED}
+
+    # 3. Multiple expected_status=[200, 201]
+    site_multi = {
+        "name": "Platform Multi",
+        "check_method": "generic_html",
+        "confidence_strategy": "multi_signal",
+        "expected_status": [200, 201],
+        "not_found_status": [404],
+        "profile_markers": ["user-profile"],
+        "success_patterns": ["user-profile"],
+    }
+    st_200, _, _ = classify_html(
+        status_code=200,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_multi,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+    )
+    assert st_200 == UsernameCheckStatus.LIKELY
+
+    st_201, _, _ = classify_html(
+        status_code=201,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_multi,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+    )
+    assert st_201 == UsernameCheckStatus.LIKELY
+
+    st_202, reason_202, conf_202 = classify_html(
+        status_code=202,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_multi,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+    )
+    assert st_202 == UsernameCheckStatus.INCONCLUSIVE
+    assert conf_202 == Confidence.LOW
+    assert "Unexpected HTTP 202 for HTML check" in reason_202
+
+    # 4. 3xx direct classifier check
+    site_std = {
+        "name": "Platform Std",
+        "check_method": "generic_html",
+        "confidence_strategy": "multi_signal",
+        "expected_status": [200],
+        "not_found_status": [404],
+    }
+    st_302, reason_302, conf_302 = classify_html(
+        status_code=302,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_std,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+    )
+    assert st_302 == UsernameCheckStatus.INCONCLUSIVE
+    assert conf_302 == Confidence.LOW
+    assert "Unexpected HTTP 302 for HTML check" in reason_302
+
+    # If 302 is explicitly expected:
+    site_302 = {
+        "name": "Platform 302",
+        "check_method": "generic_html",
+        "confidence_strategy": "multi_signal",
+        "expected_status": [302],
+        "not_found_status": [404],
+        "profile_markers": ["user-profile"],
+        "success_patterns": ["user-profile"],
+    }
+    st_302_exp, _, _ = classify_html(
+        status_code=302,
+        body=strong_body,
+        title="alice on Example Platform",
+        final_url="https://example.com/users/alice",
+        site=site_302,
+        username="alice",
+        requested_url="https://example.com/users/alice",
+    )
+    assert st_302_exp == UsernameCheckStatus.LIKELY
+
+
+def test_runtime_defense_in_depth_5xx_and_reserved_html() -> None:
+    """Verify runtime safety on classify_html with unvalidated site dictionaries containing reserved status codes in not_found_status."""
+    # A. 500 in not_found_status -> must remain PROVIDER_UNAVAILABLE
+    unvalidated_500 = {
+        "name": "Unvalidated 500",
+        "check_method": "generic_html",
+        "expected_status": [200],
+        "not_found_status": [500, 503],
+    }
+    st_500, _, _ = classify_html(
+        status_code=500,
+        body="<html>Internal Server Error</html>",
+        title="500 Error",
+        final_url="https://example.com/users/alice",
+        site=unvalidated_500,
+        username="alice",
+    )
+    assert st_500 == UsernameCheckStatus.PROVIDER_UNAVAILABLE
+
+    st_503, _, _ = classify_html(
+        status_code=503,
+        body="<html>Service Unavailable</html>",
+        title="503 Error",
+        final_url="https://example.com/users/alice",
+        site=unvalidated_500,
+        username="alice",
+    )
+    assert st_503 == UsernameCheckStatus.PROVIDER_UNAVAILABLE
+
+    # B. 429 in not_found_status -> must remain RATE_LIMITED
+    unvalidated_429 = {
+        "name": "Unvalidated 429",
+        "check_method": "generic_html",
+        "expected_status": [200],
+        "not_found_status": [429],
+    }
+    st_429, _, _ = classify_html(
+        status_code=429,
+        body="Too Many Requests",
+        title="",
+        final_url="https://example.com/users/alice",
+        site=unvalidated_429,
+        username="alice",
+    )
+    assert st_429 == UsernameCheckStatus.RATE_LIMITED
+
+    # C. 403 in not_found_status -> must remain BLOCKED
+    unvalidated_403 = {
+        "name": "Unvalidated 403",
+        "check_method": "generic_html",
+        "expected_status": [200],
+        "not_found_status": [403],
+    }
+    st_403, _, _ = classify_html(
+        status_code=403,
+        body="Forbidden",
+        title="",
+        final_url="https://example.com/users/alice",
+        site=unvalidated_403,
+        username="alice",
+    )
+    assert st_403 == UsernameCheckStatus.BLOCKED
+
+
+@pytest.mark.asyncio
+async def test_runtime_defense_in_depth_5xx_and_reserved_json(tmp_path: Any) -> None:
+    """Verify runtime safety and cache isolation on _check_site for JSON API with unvalidated site dictionaries."""
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        reports_dir=tmp_path / "reports",
+        logs_dir=tmp_path / "logs",
+        database_url=f"sqlite:///{tmp_path / 't.db'}",
+        ssrf_enabled=False,
+    )
+    settings.ensure_dirs()
+    sem = asyncio.Semaphore(5)
+
+    async def run_unvalidated(site_raw: dict[str, Any], status_code: int, payload: Any, username: str) -> dict[str, Any]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status_code, json=payload)
+
+        http = HttpClient(settings, transport=httpx.MockTransport(handler))
+        entity = Entity.create(EntityType.USERNAME, username, "test", Confidence.CONFIRMED)
+        try:
+            return await _check_site(entity, site_raw, http, sem)
+        finally:
+            await http.close()
+
+    # Unvalidated site dict with 500 in not_found_status and identity payload
+    site_bad_500 = {
+        "name": "Unvalidated JSON 500",
+        "category": "Development",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "login",
+        "expected_status": [200],
+        "not_found_status": [500],
+        "http_method": "GET",
+    }
+    res_500 = await run_unvalidated(site_bad_500, 500, {"login": "alice_500_leak"}, "alice_500_leak")
+    assert res_500["finding"].data["check_status"] == UsernameCheckStatus.PROVIDER_UNAVAILABLE.value
+
+    # Verify ResultCache didn't cache it as NOT_FOUND
+    cache = ResultCache(settings)
+    cached = cache.get("username", "Unvalidated JSON 500", "alice_500_leak")
+    # ResultCache stores findings; verify check_status is not NOT_FOUND
+    if cached is not None:
+        assert cached.data.get("check_status") != UsernameCheckStatus.NOT_FOUND.value
+
+    # Unvalidated site dict with 429 in not_found_status and identity payload
+    site_bad_429 = {
+        "name": "Unvalidated JSON 429",
+        "category": "Development",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "login",
+        "expected_status": [200],
+        "not_found_status": [429],
+        "http_method": "GET",
+    }
+    res_429 = await run_unvalidated(site_bad_429, 429, {"login": "alice_429_leak"}, "alice_429_leak")
+    assert res_429["finding"].data["check_status"] == UsernameCheckStatus.RATE_LIMITED.value
+
+    # Unvalidated site dict with 401 in not_found_status and identity payload
+    site_bad_401 = {
+        "name": "Unvalidated JSON 401",
+        "category": "Development",
+        "profile_url": "https://api.example.com/users/{username}",
+        "check_method": "json_api",
+        "confidence_strategy": "explicit_api",
+        "json_id_field": "login",
+        "expected_status": [200],
+        "not_found_status": [401],
+        "http_method": "GET",
+    }
+    res_401 = await run_unvalidated(site_bad_401, 401, {"login": "alice_401_leak"}, "alice_401_leak")
+    assert res_401["finding"].data["check_status"] == UsernameCheckStatus.BLOCKED.value
