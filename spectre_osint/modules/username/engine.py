@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import yaml
 from bs4 import BeautifulSoup
 
-from spectre_osint.core.config import BUNDLED_DATA_DIR, get_settings
+from spectre_osint.core.config import get_settings
 from spectre_osint.core.entities import Entity, Finding, Relationship
 from spectre_osint.core.evidence import make_evidence
 from spectre_osint.core.exceptions import (
@@ -33,6 +32,7 @@ from spectre_osint.core.types import (
     RelationType,
     UsernameCheckStatus,
 )
+from spectre_osint.modules.username.catalog import load_catalog
 from spectre_osint.modules.username.correlate import link_public_website
 from spectre_osint.modules.username.enrichment import enrich_profile, flatten_observed
 from spectre_osint.modules.username.evidence import (
@@ -78,20 +78,8 @@ STATUS_TO_CONFIDENCE = {
 
 
 def load_sites(path: Path | None = None) -> list[dict[str, Any]]:
-    sites_path = path or (BUNDLED_DATA_DIR / "sites.yaml")
-    data = yaml.safe_load(sites_path.read_text(encoding="utf-8")) or {}
-    sites = data.get("sites") or []
-    out: list[dict[str, Any]] = []
-    for site in sites:
-        if not site.get("enabled", True):
-            continue
-        row = dict(site)
-        if "url_template" not in row and row.get("profile_url"):
-            row["url_template"] = row["profile_url"]
-        if "profile_url" not in row and row.get("url_template"):
-            row["profile_url"] = row["url_template"]
-        out.append(row)
-    return out
+    catalog = load_catalog(path)
+    return catalog.to_dict_list(enabled_only=True)
 
 
 def _pattern_hit(haystack: str, patterns: list[str] | None) -> str | None:
@@ -145,13 +133,17 @@ def classify_html(
     if _pattern_hit(haystack, site.get("challenge_patterns")):
         return UsernameCheckStatus.CHALLENGE_REQUIRED, "challenge presented — not bypassed", None
     if status_code in {401, 403} or _pattern_hit(haystack, site.get("blocked_patterns")):
-        if _pattern_hit(haystack, site.get("login_patterns")) or method == "login_wall":
+        if (
+            _pattern_hit(haystack, site.get("login_patterns"))
+            or method == "login_wall"
+            or (bool(site.get("requires_auth")) and bool(site.get("auth_platform")))
+        ):
             return UsernameCheckStatus.LOGIN_REQUIRED, f"HTTP {status_code} login/wall", None
         return UsernameCheckStatus.BLOCKED, f"HTTP {status_code} blocked", None
+    if status_code in {408} or status_code >= 500:
+        return UsernameCheckStatus.PROVIDER_UNAVAILABLE, f"HTTP {status_code}", None
     if status_code in not_found_status:
         return UsernameCheckStatus.NOT_FOUND, f"HTTP {status_code}", None
-    if status_code >= 500:
-        return UsernameCheckStatus.PROVIDER_UNAVAILABLE, f"HTTP {status_code}", None
 
     if method == "login_wall":
         if _pattern_hit(haystack, site.get("not_found_patterns")):
@@ -163,8 +155,12 @@ def classify_html(
     if _pattern_hit(haystack, site.get("not_found_patterns")):
         return UsernameCheckStatus.NOT_FOUND, "soft-404 / not_found_pattern", None
 
-    if status_code not in expected and not (200 <= status_code < 400):
-        return UsernameCheckStatus.INCONCLUSIVE, f"HTTP {status_code}", Confidence.LOW
+    if status_code not in expected:
+        return (
+            UsernameCheckStatus.INCONCLUSIVE,
+            f"Unexpected HTTP {status_code} for HTML check",
+            Confidence.LOW,
+        )
 
     signals = collect_page_signals(
         status_code=status_code,
@@ -514,39 +510,85 @@ async def _check_site(
     check_url = str(site.get("check_url") or profile_url).format(username=username)
     name = site["name"]
     method = str(site.get("check_method") or "generic_html")
-    auth_platform = str(site.get("auth_platform") or "").strip().lower()
-    if not refresh and result_cache is not None:
+    requires_auth = bool(site.get("requires_auth", False))
+    auth_platform = str(site.get("auth_platform") or "").strip().lower() if requires_auth else ""
+    custom_headers = site.get("headers") or None
+    http_method = str(site.get("http_method") or "GET").strip().upper()
+    result_cacheable = (not bool(custom_headers)) and (http_method == "GET")
+    http_cacheable = not bool(custom_headers)
+    if not refresh and result_cacheable and result_cache is not None:
         cached_auth = result_cache.get(
             "username", name, username, AccessMode.AUTHENTICATED_PUBLIC.value
         )
         if (
             cached_auth
+            and requires_auth
             and auth_platform
             and auth_service is not None
             and auth_service.has_active(auth_platform)
         ):
             return _bundle_from_cached(entity, cached_auth.payload, cached_auth)
         cached = result_cache.get("username", name, username, AccessMode.ANONYMOUS_PUBLIC.value)
-        if cached and cached.payload.get("check_status") != UsernameCheckStatus.LOGIN_REQUIRED.value:
-            return _bundle_from_cached(entity, cached.payload, cached)
-        if cached and cached.payload.get("check_status") == UsernameCheckStatus.LOGIN_REQUIRED.value:
-            if not auth_platform or auth_service is None or not auth_service.has_active(auth_platform):
-                return _bundle_from_cached(entity, cached.payload, cached)
+        if cached:
+            payload = dict(cached.payload)
+            check_st = payload.get("check_status")
+            http_st = payload.get("http_status")
+            access_m = payload.get("access_mode")
+            if (
+                requires_auth
+                and auth_platform
+                and access_m == AccessMode.ANONYMOUS_PUBLIC.value
+                and check_st == UsernameCheckStatus.BLOCKED.value
+                and http_st in {401, 403}
+            ):
+                check_st = UsernameCheckStatus.LOGIN_REQUIRED.value
+                payload["check_status"] = check_st
+                payload["status"] = check_st
+                payload["verification_status"] = check_st
+
+            if check_st != UsernameCheckStatus.LOGIN_REQUIRED.value:
+                return _bundle_from_cached(entity, payload, cached)
+            elif not requires_auth or not auth_platform or auth_service is None or not auth_service.has_active(auth_platform):
+                return _bundle_from_cached(entity, payload, cached)
     min_interval = site.get("rate_limit")
     try:
         min_interval_f = float(min_interval) if min_interval is not None else None
     except (TypeError, ValueError):
         min_interval_f = None
+    use_cache = (not refresh) and http_cacheable
     async with semaphore:
         try:
-            response = await http.get(
-                check_url,
-                provider=name,
-                follow_redirects=True,
-                use_cache=not refresh,
-                accept_statuses=set(range(200, 600)),
-                min_interval=min_interval_f,
-            )
+            if http_method == "HEAD" and hasattr(http, "head"):
+                response = await http.head(
+                    check_url,
+                    provider=name,
+                    headers=custom_headers,
+                    follow_redirects=True,
+                    use_cache=use_cache,
+                    accept_statuses=set(range(200, 600)),
+                    min_interval=min_interval_f,
+                )
+            elif http_method == "GET" and hasattr(http, "get"):
+                response = await http.get(
+                    check_url,
+                    provider=name,
+                    headers=custom_headers,
+                    follow_redirects=True,
+                    use_cache=use_cache,
+                    accept_statuses=set(range(200, 600)),
+                    min_interval=min_interval_f,
+                )
+            else:
+                response = await http.request(
+                    http_method,
+                    check_url,
+                    provider=name,
+                    headers=custom_headers,
+                    follow_redirects=True,
+                    use_cache=use_cache,
+                    accept_statuses=set(range(200, 600)),
+                    min_interval=min_interval_f,
+                )
         except asyncio.CancelledError:
             raise
         except RateLimitExceeded as exc:
@@ -592,23 +634,40 @@ async def _check_site(
 
     body = response.text[:50_000]
     title, description, public_name, avatar, website, canonical = _extract_profile_fields(body)
-    json_website = None
     json_name = None
-    json_bio = None
-    json_avatar = None
-    json_location = None
     json_ok = False
     data: Any = None
 
     if method == "json_api":
         data = response.json_data
-        if response.status_code in set(site.get("not_found_status") or [404, 410]):
-            status, reason, conf = UsernameCheckStatus.NOT_FOUND, f"HTTP {response.status_code}", None
-        elif response.status_code == 429:
+        not_found_status = set(site.get("not_found_status") or [404, 410])
+        expected_status = set(site.get("expected_status") or [200])
+        if response.status_code == 429:
             status, reason, conf = UsernameCheckStatus.RATE_LIMITED, "HTTP 429", None
         elif response.status_code in {401, 403}:
-            status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
-        elif response.status_code >= 500 or data is None:
+            if requires_auth and auth_platform:
+                status, reason, conf = (
+                    UsernameCheckStatus.LOGIN_REQUIRED,
+                    f"HTTP {response.status_code} login required",
+                    None,
+                )
+            else:
+                status, reason, conf = UsernameCheckStatus.BLOCKED, f"HTTP {response.status_code}", None
+        elif response.status_code in {408} or response.status_code >= 500:
+            status, reason, conf = (
+                UsernameCheckStatus.PROVIDER_UNAVAILABLE,
+                f"HTTP {response.status_code}",
+                None,
+            )
+        elif response.status_code in not_found_status:
+            status, reason, conf = UsernameCheckStatus.NOT_FOUND, f"HTTP {response.status_code}", None
+        elif response.status_code not in expected_status:
+            status, reason, conf = (
+                UsernameCheckStatus.INCONCLUSIVE,
+                f"Unexpected HTTP {response.status_code} for JSON API",
+                Confidence.LOW,
+            )
+        elif data is None:
             status, reason, conf = (
                 UsernameCheckStatus.PROVIDER_UNAVAILABLE,
                 f"HTTP {response.status_code} or invalid JSON",
@@ -616,34 +675,21 @@ async def _check_site(
             )
         else:
             id_field = site.get("json_id_field") or "login"
-            ident = _dig(data, id_field) if isinstance(data, dict) else None
+            ident = _dig(data, id_field)
             json_ok = ident is not None
-            json_name = None
-            for field in site.get("display_name_fields") or ["name", "displayName"]:
-                val = _dig(data, field) if isinstance(data, dict) else None
-                if val:
-                    json_name = str(val)
-                    break
-            for field in site.get("website_fields") or ["blog", "url", "website"]:
-                val = _dig(data, field) if isinstance(data, dict) else None
-                if val:
-                    json_website = str(val)
-                    break
-            json_bio = _dig(data, site.get("bio_field") or "bio") if isinstance(data, dict) else None
-            json_avatar = (
-                _dig(data, site.get("avatar_field") or "avatar_url") if isinstance(data, dict) else None
-            )
-            json_location = (
-                _dig(data, site.get("location_field") or "location") if isinstance(data, dict) else None
-            )
             if json_ok:
+                for field in site.get("display_name_fields") or ["name", "displayName"]:
+                    val = _dig(data, field)
+                    if val:
+                        json_name = str(val)
+                        break
                 status = UsernameCheckStatus.CONFIRMED
                 reason = f"JSON identity field {id_field}={ident}"
                 conf = Confidence.CONFIRMED
             else:
                 status, reason, conf = (
                     UsernameCheckStatus.NOT_FOUND,
-                    "JSON 200 without identity field",
+                    f"JSON {response.status_code} without identity field",
                     None,
                 )
             logger.debug(
@@ -670,17 +716,24 @@ async def _check_site(
     anonymous_status = status.value
     authenticated_status = None
     session_status = None
-    auth_meta: dict[str, str] = {}
-    if status == UsernameCheckStatus.LOGIN_REQUIRED and auth_platform and auth_service is not None:
+    auth_meta: dict[str, Any] = {}
+    if status == UsernameCheckStatus.LOGIN_REQUIRED and requires_auth and auth_platform and auth_service is not None:
         auth_hit = await _authenticated_public(auth_service, site, username, profile_url)
         if auth_hit is not None:
             status, reason, conf, access_mode, session_status, auth_meta = auth_hit
             authenticated_status = status.value
 
+    is_authenticated = (access_mode == AccessMode.AUTHENTICATED_PUBLIC)
+    effective_url = str(auth_meta.get("url") or response.url) if is_authenticated else response.url
+    effective_status_code = int(auth_meta.get("status_code", 0) or response.status_code) if is_authenticated else response.status_code
+    effective_title = str(auth_meta.get("title") or "") if is_authenticated else (title or "")
+    effective_canonical = str(auth_meta.get("canonical_url") or "") if is_authenticated else (canonical or "")
+
     finding_status = STATUS_TO_FINDING[status]
     confidence = conf if conf is not None else STATUS_TO_CONFIDENCE[status]
     if (
         status == UsernameCheckStatus.LIKELY
+        and not is_authenticated
         and (json_name or public_name)
         and username.lower() in str(json_name or public_name).lower()
     ):
@@ -688,50 +741,82 @@ async def _check_site(
 
     observed: dict[str, Any] = {}
     if status in {UsernameCheckStatus.CONFIRMED, UsernameCheckStatus.LIKELY}:
-        json_blob = data if method == "json_api" and isinstance(data, dict) else None
-        html_blob = "" if access_mode == AccessMode.AUTHENTICATED_PUBLIC else (body or "")
-        observed = enrich_profile(
-            platform=name,
-            username=username,
-            profile_url=profile_url,
-            site=site,
-            json_data=json_blob,
-            html=html_blob,
-            meta={
-                "og_title": str(auth_meta.get("og_title") or public_name or ""),
-                "og_url": str(auth_meta.get("og_url") or ""),
-                "canonical": str(auth_meta.get("canonical_url") or canonical or ""),
-                "title": str(auth_meta.get("title") or title or ""),
-                "og_image": str(avatar or ""),
-            },
-        )
+        if is_authenticated:
+            auth_html = str(auth_meta.get("body") or "")
+            observed = enrich_profile(
+                platform=name,
+                username=username,
+                profile_url=profile_url,
+                site=site,
+                json_data=None,
+                html=auth_html,
+                meta={
+                    "og_title": str(auth_meta.get("og_title") or ""),
+                    "og_url": str(auth_meta.get("og_url") or ""),
+                    "canonical": str(auth_meta.get("canonical_url") or ""),
+                    "title": str(auth_meta.get("title") or ""),
+                    "og_image": "",
+                },
+            )
+        else:
+            json_blob = data if method == "json_api" and isinstance(data, (dict, list)) else None
+            observed = enrich_profile(
+                platform=name,
+                username=username,
+                profile_url=profile_url,
+                site=site,
+                json_data=json_blob,
+                html=body or "",
+                meta={
+                    "og_title": str(public_name or ""),
+                    "og_url": "",
+                    "canonical": str(canonical or ""),
+                    "title": str(title or ""),
+                    "og_image": str(avatar or ""),
+                },
+            )
     flat = flatten_observed(observed)
+
+    if is_authenticated or method == "json_api":
+        display_name = flat.get("display_name")
+        bio = flat.get("bio")
+        avatar_url = flat.get("avatar_url")
+        website_val = flat.get("website")
+        public_location = flat.get("public_location")
+        public_links = flat.get("public_links") or []
+    else:
+        display_name = flat.get("display_name") or public_name
+        bio = flat.get("bio") or description
+        avatar_url = flat.get("avatar_url") or avatar
+        website_val = flat.get("website") or website
+        public_location = flat.get("public_location")
+        public_links = flat.get("public_links") or ([website] if website else [])
 
     payload = {
         "platform": name,
         "site": name,
         "username": username,
         "profile_url": profile_url,
-        "final_url": response.url,
-        "display_name": flat.get("display_name") if observed else (json_name or public_name),
-        "bio": flat.get("bio") if observed else (str(json_bio)[:300] if json_bio else description),
-        "avatar_url": flat.get("avatar_url") if observed else (json_avatar or avatar),
-        "website": flat.get("website") if observed else (json_website or website),
-        "public_location": flat.get("public_location") if observed else json_location,
+        "final_url": effective_url,
+        "display_name": display_name,
+        "bio": bio,
+        "avatar_url": avatar_url,
+        "website": website_val,
+        "public_location": public_location,
         "organization": flat.get("organization"),
         "public_email": flat.get("public_email"),
         "public_id": flat.get("public_id"),
-        "public_links": flat.get("public_links") or ([json_website or website] if (json_website or website) else []),
+        "public_links": public_links,
         "observed": observed,
         "verification_status": status.value,
         "check_status": status.value,
         "checked_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
         "confidence": confidence.value if confidence else None,
-        "http_status": response.status_code,
+        "http_status": effective_status_code,
         "category": site.get("category"),
         "reason": reason,
-        "page_title": title,
-        "canonical": canonical,
+        "page_title": effective_title,
+        "canonical": effective_canonical,
         "status": status.value,
         "access_mode": access_mode.value,
         "cache_state": CacheState.REFRESHED.value if refresh else CacheState.LIVE.value,
@@ -739,7 +824,7 @@ async def _check_site(
         "authenticated_status": authenticated_status,
         "session_status": session_status,
     }
-    if result_cache is not None and status not in {
+    if result_cacheable and result_cache is not None and status not in {
         UsernameCheckStatus.RATE_LIMITED,
         UsernameCheckStatus.PROVIDER_UNAVAILABLE,
     }:
@@ -765,15 +850,17 @@ async def _check_site(
     if status not in {UsernameCheckStatus.CONFIRMED, UsernameCheckStatus.LIKELY}:
         return {"finding": finding, "evidence": [], "entities": [], "relationships": []}
 
+    effective_display_name = display_name if is_authenticated else (json_name or public_name)
+
     evidence = make_evidence(
         source=name,
         provider="username",
         confidence=confidence or Confidence.MEDIUM,
-        url=response.url,
+        url=effective_url,
         raw={
-            "title": title,
-            "http_status": response.status_code,
-            "public_name": json_name or public_name,
+            "title": effective_title,
+            "http_status": effective_status_code,
+            "public_name": effective_display_name,
             "check_status": status.value,
             "reason": reason,
         },
@@ -786,7 +873,7 @@ async def _check_site(
         source=name,
         confidence=confidence or Confidence.MEDIUM,
         tags=[str(site.get("category") or "unknown").lower(), "username"],
-        metadata={"site": name, "username": username, "public_name": json_name or public_name},
+        metadata={"site": name, "username": username, "public_name": effective_display_name},
     )
     rel = Relationship(
         from_entity_id=entity.id,
@@ -798,7 +885,7 @@ async def _check_site(
     )
     linked = link_public_website(
         entity,
-        json_website or website,
+        website_val,
         source=name,
         evidence_id=evidence.id,
         confidence=confidence or Confidence.MEDIUM,
@@ -811,7 +898,7 @@ async def _check_site(
     }
 
 
-def _auth_meta(outcome: Any) -> dict[str, str]:
+def _auth_meta(outcome: Any) -> dict[str, Any]:
     if outcome is None:
         return {}
     return {
@@ -820,6 +907,8 @@ def _auth_meta(outcome: Any) -> dict[str, str]:
         "canonical_url": str(getattr(outcome, "canonical_url", "") or ""),
         "og_url": str(getattr(outcome, "og_url", "") or ""),
         "og_title": str(getattr(outcome, "og_title", "") or ""),
+        "status_code": int(getattr(outcome, "status_code", 0) or 0),
+        "body": str(getattr(outcome, "body", "") or ""),
     }
 
 
@@ -828,13 +917,19 @@ async def _authenticated_public(
     site: dict[str, Any],
     username: str,
     profile_url: str,
-) -> tuple[UsernameCheckStatus, str, Confidence | None, AccessMode, str, dict[str, str]] | None:
+) -> tuple[UsernameCheckStatus, str, Confidence | None, AccessMode, str, dict[str, Any]] | None:
     from spectre_osint.core.types import SessionStatus
 
-    if not auth_service.has_active(str(site.get("auth_platform") or site.get("name") or "")):
+    auth_platform = str(
+        site.get("auth_platform")
+        or site.get("name")
+        or ""
+    ).strip().lower()
+
+    if not auth_platform or not auth_service.has_active(auth_platform):
         return None
     try:
-        outcome = await auth_service.fetch_public_profile(site["name"], username, profile_url)
+        outcome = await auth_service.fetch_public_profile(auth_platform, username, profile_url)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Authenticated public fetch failed: %s", type(exc).__name__)
         return None

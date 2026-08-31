@@ -209,7 +209,10 @@ class HttpClient:
                 nxt = self.ssrf.next_url(logical, last.headers["location"])
                 history.append(nxt)
                 logical = nxt
-                method = "GET" if last.status_code in {301, 302, 303} else method
+                if method.upper() == "HEAD":
+                    method = "HEAD"
+                elif last.status_code in {301, 302, 303}:
+                    method = "GET"
                 params = None
                 json_body = None
                 data = None
@@ -517,6 +520,10 @@ class HttpClient:
 
     async def get(self, url: str, **kwargs: Any) -> HttpResponse:
         return await self.request("GET", url, **kwargs)
+
+    async def head(self, url: str, **kwargs: Any) -> HttpResponse:
+        kwargs.setdefault("use_cache", False)
+        return await self.request("HEAD", url, **kwargs)
 
     async def post(self, url: str, **kwargs: Any) -> HttpResponse:
         kwargs.setdefault("use_cache", False)

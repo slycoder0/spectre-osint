@@ -472,6 +472,85 @@ async def test_duckduckgo_host_outage_fails_fast_on_subsequent_providers_same_ru
         await http.close()
 
 
+@pytest.mark.asyncio
+async def test_head_method_preserved_across_redirects(tmp_path: Path) -> None:
+    """Verify that HEAD requests remain HEAD across 301, 302, 303, 307, 308 redirects and multi-hop chains."""
+    recorded_requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded_requests.append((request.method, str(request.url)))
+        path = request.url.path
+        if path == "/start301":
+            return httpx.Response(301, headers={"Location": "/final"})
+        if path == "/start302":
+            return httpx.Response(302, headers={"Location": "/final"})
+        if path == "/start303":
+            return httpx.Response(303, headers={"Location": "/final"})
+        if path == "/start307":
+            return httpx.Response(307, headers={"Location": "/final"})
+        if path == "/start308":
+            return httpx.Response(308, headers={"Location": "/final"})
+        if path == "/hop1":
+            return httpx.Response(301, headers={"Location": "/hop2"})
+        if path == "/hop2":
+            return httpx.Response(302, headers={"Location": "/hop3"})
+        if path == "/hop3":
+            return httpx.Response(303, headers={"Location": "/final"})
+        if path == "/loop":
+            return httpx.Response(301, headers={"Location": "/loop"})
+        if path == "/final":
+            return httpx.Response(200, text="final-content")
+        return httpx.Response(404)
+
+    settings = _settings(tmp_path)
+    http = HttpClient(settings, transport=httpx.MockTransport(handler))
+
+    try:
+        # 1. Test individual redirect status codes (301, 302, 303, 307, 308) with HEAD
+        for status in [301, 302, 303, 307, 308]:
+            recorded_requests.clear()
+            res = await http.head(f"https://example.com/start{status}", provider="Test")
+            assert res.status_code == 200
+            assert len(recorded_requests) == 2
+            assert recorded_requests[0][0] == "HEAD"
+            assert recorded_requests[1][0] == "HEAD"
+
+        # 2. Multi-hop redirect chain (HEAD -> 301 -> 302 -> 303 -> 200)
+        recorded_requests.clear()
+        res_chain = await http.head("https://example.com/hop1", provider="Test")
+        assert res_chain.status_code == 200
+        assert len(recorded_requests) == 4
+        assert all(method == "HEAD" for method, _ in recorded_requests)
+
+        # 3. GET redirect remains GET
+        recorded_requests.clear()
+        res_get = await http.get("https://example.com/start301", provider="Test")
+        assert res_get.status_code == 200
+        assert len(recorded_requests) == 2
+        assert all(method == "GET" for method, _ in recorded_requests)
+
+        # 4. POST converts to GET on 301 but stays POST on 307
+        recorded_requests.clear()
+        res_post_301 = await http.post("https://example.com/start301", provider="Test")
+        assert res_post_301.status_code == 200
+        assert len(recorded_requests) == 2
+        assert recorded_requests[0][0] == "POST"
+        assert recorded_requests[1][0] == "GET"
+
+        recorded_requests.clear()
+        res_post_307 = await http.post("https://example.com/start307", provider="Test")
+        assert res_post_307.status_code == 200
+        assert len(recorded_requests) == 2
+        assert recorded_requests[0][0] == "POST"
+        assert recorded_requests[1][0] == "POST"
+
+        # 5. Redirect loop exceeds limit and raises ProviderUnavailable
+        with pytest.raises(ProviderUnavailable, match="too many redirects"):
+            await http.head("https://example.com/loop", provider="Test")
+    finally:
+        await http.close()
+
+
 class _CountingHttp:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
