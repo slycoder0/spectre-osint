@@ -616,7 +616,7 @@ def test_technical_table_does_not_break_urls(settings) -> None:
         body = client.get(f"/investigations/{case_id}").text
         assert "tech-table" in body
         assert "table-scroll" in body
-        css = client.get("/static/style.css").text
+        css = client.get("/static/style.css").text.replace("\r\n", "\n")
         assert ".tech-table" in css
         assert "min-width: 1100px" in css
         assert "text-overflow: ellipsis" in css
