@@ -103,10 +103,16 @@ spectre company "Example Corp"
 ```
 
 ### `spectre person`
-Pesquisa menções públicas estruturadas associadas a um nome de pessoa física.
+Estabelece o contexto investigativo para uma pessoa física. Na implementação atual, o comando não realiza busca ampla de menções na web apenas pelo nome; ele utiliza o nome como delimitador de contexto e executa investigações estruturadas quando acompanhado de `--username` (varredura de catálogo) e/ou `--email` (análise de e-mail e MX). Sem `--username`, o fallback consulta o GitHub tratando o nome fornecido como login exato.
 
 ```bash
-spectre person "Alice Example"
+# Investigação de pessoa associando username conhecido
+spectre person "Alice Example" --username alice_osint
+
+# Investigação completa com username e e-mail
+spectre person "Alice Example" \
+  --username alice_osint \
+  --email alice@example.com
 ```
 
 ---

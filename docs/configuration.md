@@ -61,13 +61,13 @@ cp .env.example .env
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
 | `SPECTRE_CACHE_DEFAULT_TTL` | `1800` (30 min) | TTL padrão para respostas HTTP em cache. |
-| `SPECTRE_CACHE_DNS_TTL` | `600` (10 min) | TTL para registros de resolução DNS. |
+| `SPECTRE_CACHE_DNS_TTL` | `600` (10 min) | Configuração existente no `ResultCache`, mas o resolver DNS atual consulta `dnspython` diretamente e não utiliza esse cache; alterar esta variável ainda não modifica o TTL efetivo das resoluções DNS nesta versão. |
 | `SPECTRE_CACHE_RDAP_TTL` | `86400` (24 h) | TTL para dados de registro Whois/RDAP. |
 | `SPECTRE_CACHE_VT_TTL` | `3600` (1 h) | TTL para consultas VirusTotal. |
 | `SPECTRE_CACHE_CRTSH_TTL` | `21600` (6 h) | TTL para logs de Certificate Transparency. |
 | `SPECTRE_CACHE_USERNAME_TTL` | `21600` (6 h) | TTL para varreduras de username no catálogo. |
 | `SPECTRE_CACHE_WAYBACK_TTL` | `21600` (6 h) | Configuração existente, mas o `WaybackProvider` atual utiliza `SPECTRE_CACHE_DEFAULT_TTL`; alterar esta variável ainda não modifica o TTL efetivo do Wayback nesta versão. |
-| `SPECTRE_CACHE_HEALTH_TTL` | `900` (15 min) | TTL para verificações de integridade de provedores. |
+| `SPECTRE_CACHE_HEALTH_TTL` | `900` (15 min) | Configuração existente no `ResultCache`, mas as verificações de integridade de provedores atuais não utilizam entradas de cache com o tipo `health`; alterar esta variável ainda não modifica o TTL efetivo dos health checks nesta versão. |
 
 ### 5. Navegador & Sessões Autenticadas
 
