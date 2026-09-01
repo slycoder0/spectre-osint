@@ -110,7 +110,7 @@
 
   <!-- Invariant Accent Line -->
   <text x="325" y="222" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" font-weight="500" letter-spacing="1.5" fill="#38bdf8" opacity="0.9">
-    PASSIVE-FIRST &bull; PROVENIÊNCIA ESTRITA &bull; IDENTIDADE NUNCA PRESUMIDA
+    PASSIVE-FIRST &#8226; PROVENIÊNCIA ESTRITA &#8226; IDENTIDADE NUNCA PRESUMIDA
   </text>
 
   <!-- Bottom Accent Bar -->
