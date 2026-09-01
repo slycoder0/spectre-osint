@@ -78,7 +78,7 @@ spectre domain example.com --auto-pivot --depth 2
 Coleta inteligência de endereço IPv4 ou IPv6 (ASN, alocação de rede, geolocalização e histórico de reputação).
 
 ```bash
-spectre ip 198.51.100.1
+spectre ip 1.1.1.1
 ```
 
 ### `spectre url`

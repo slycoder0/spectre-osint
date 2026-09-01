@@ -66,7 +66,7 @@ cp .env.example .env
 | `SPECTRE_CACHE_VT_TTL` | `3600` (1 h) | TTL para consultas VirusTotal. |
 | `SPECTRE_CACHE_CRTSH_TTL` | `21600` (6 h) | TTL para logs de Certificate Transparency. |
 | `SPECTRE_CACHE_USERNAME_TTL` | `21600` (6 h) | TTL para varreduras de username no catálogo. |
-| `SPECTRE_CACHE_WAYBACK_TTL` | `21600` (6 h) | TTL para histórico de URLs do Wayback Machine. |
+| `SPECTRE_CACHE_WAYBACK_TTL` | `21600` (6 h) | Configuração existente, mas o `WaybackProvider` atual utiliza `SPECTRE_CACHE_DEFAULT_TTL`; alterar esta variável ainda não modifica o TTL efetivo do Wayback nesta versão. |
 | `SPECTRE_CACHE_HEALTH_TTL` | `900` (15 min) | TTL para verificações de integridade de provedores. |
 
 ### 5. Navegador & Sessões Autenticadas
