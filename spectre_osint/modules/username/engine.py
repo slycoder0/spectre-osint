@@ -108,6 +108,17 @@ def _dig(data: Any, path: str) -> Any:
     return cur
 
 
+def _is_meaningful_json_identity(value: Any) -> bool:
+    """True when value is a non-empty, non-whitespace string or integer scalar."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, int):
+        return True
+    return False
+
+
 def classify_html(
     *,
     status_code: int,
@@ -676,7 +687,7 @@ async def _check_site(
         else:
             id_field = site.get("json_id_field") or "login"
             ident = _dig(data, id_field)
-            json_ok = ident is not None
+            json_ok = _is_meaningful_json_identity(ident)
             if json_ok:
                 for field in site.get("display_name_fields") or ["name", "displayName"]:
                     val = _dig(data, field)
