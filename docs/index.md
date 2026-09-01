@@ -28,7 +28,7 @@ Bem-vindo à documentação oficial do **SPECTRE OSINT**, uma workstation de lin
   <a href="commands/" class="spectre-card">
     <div>
       <h3>📖 Manual de Comandos</h3>
-      <p>Referência prática e organizada de todos os comandos e parâmetros disponíveis na CLI.</p>
+      <p>Referência prática e organizada dos comandos disponíveis na CLI, com exemplos e notas operacionais.</p>
     </div>
   </a>
 

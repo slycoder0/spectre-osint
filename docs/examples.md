@@ -74,7 +74,7 @@ A plataforma Instagram exige autenticação para visualizar biografias e posts p
 ```bash
 spectre auth login instagram
 ```
-Uma janela do Google Chrome/Chromium será aberta na página oficial de login do Instagram. Faça login normalmente (inclusive com 2FA se solicitado). Após o login, volte ao terminal e pressione **Enter**.
+Uma janela do Google Chrome/Chromium será aberta na página oficial de login do Instagram. Faça login normalmente (inclusive com 2FA se solicitado). O SPECTRE monitora automaticamente o estado da sessão e conclui o fluxo quando a autenticação é detectada ou quando o tempo limite é atingido; não é necessário pressionar Enter no terminal.
 
 #### Passo 2: Verificar o status da sessão
 ```bash

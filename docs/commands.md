@@ -35,6 +35,13 @@ spectre doctor
 spectre doctor --json
 ```
 
+### `spectre version`
+Exibe a versão instalada do SPECTRE OSINT (equivalente à opção global `--version`).
+
+```bash
+spectre version
+```
+
 ---
 
 ## 2. Investigação de Indicadores
@@ -95,8 +102,30 @@ Consulta reputação pública de hashes de arquivos (MD5, SHA-1, SHA-256). **O S
 spectre hash 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f
 ```
 
+### `spectre threat`
+Detecta automaticamente o tipo do indicador (IP, domínio, URL ou hash) e executa o pipeline de investigação correspondente. Os provedores de threat intelligence aplicáveis são consultados quando configurados; o comando não utiliza um pipeline separado exclusivamente de threat intel.
+
+```bash
+spectre threat 1.1.1.1
+spectre threat example.com
+```
+
+### `spectre wayback`
+Apesar do nome, nesta versão o comando normaliza o alvo como domínio e executa o pipeline de investigação de domínio, que inclui a consulta Wayback/CDX entre as demais coletas aplicáveis. URLs fornecidas como alvo são reduzidas ao host durante a normalização; o comando não realiza uma consulta Wayback exclusiva de um caminho URL específico.
+
+```bash
+spectre wayback example.com
+```
+
+### `spectre metadata`
+Extrai metadados locais de arquivos fornecidos pelo operador (PDF, imagens, documentos). A análise é estritamente local; nenhuma macro ou código ativo é executado.
+
+```bash
+spectre metadata documento.pdf
+```
+
 ### `spectre company`
-Consulta inteligência pública e registros de organizações/empresas.
+Registra uma empresa/organização como alvo e consulta o perfil público correspondente no GitHub Organizations (convertendo espaços em hífen para o slug da organização, como `Example-Corp`). O comando não realiza pesquisa corporativa ampla nem infere domínio nesta versão.
 
 ```bash
 spectre company "Example Corp"
@@ -124,6 +153,13 @@ Executa o pipeline unificado completo: detecção automática do tipo de alvo, v
 
 ```bash
 spectre investigate alice_osint --name "Alice Example" --auto-pivot
+```
+
+### `spectre search`
+Executa o helper de busca pública via Google Custom Search Engine (Google CSE). Requer `GOOGLE_API_KEY` e `GOOGLE_CSE_ID`; sem ambos o comando retorna `NOT_CONFIGURED`. Os resultados são links públicos de busca e não constituem confirmação de identidade.
+
+```bash
+spectre search "alice_osint github"
 ```
 
 ### `spectre case`
@@ -215,4 +251,41 @@ spectre cache clear
 
 # Limpar cache de um provedor específico
 spectre cache clear --provider github
+```
+
+---
+
+## 6. Reconhecimento de Rede Ativo
+
+### `spectre network`
+Executa varredura de portas via connect scan contra um host ou domínio. **Desativada por padrão**, esta funcionalidade exige autorização explícita via flag `--authorized` e confirmação interativa no terminal. O SPECTRE não realiza exploração de vulnerabilidades nem evasão de segurança.
+
+```bash
+# Reconhecimento ativo em ambiente de teste local autorizado
+spectre network 127.0.0.1 --authorized
+```
+
+---
+
+## 7. Interface Web Legada (Depreciação)
+
+### `spectre web`
+Inicia o dashboard local FastAPI em loopback. **Comando depreciado e agendado para remoção na versão 0.1.0b2** em favor da arquitetura CLI-first e relatórios estáticos standalone.
+
+- **Endereço de Bind:** O comando CLI utiliza `--host 127.0.0.1` como padrão (mascarando `SPECTRE_WEB_HOST` se a flag for omitida). Vincular a interfaces de rede externas via `--host` exige opt-in explícito do operador com `SPECTRE_ALLOW_PUBLIC_BIND=true`.
+- **Porta:** Padrão `8000` (configurável via `--port`).
+
+```bash
+# Iniciar servidor local na porta padrão 8000
+spectre web
+
+# Especificar porta alternativa
+spectre web --port 8080
+```
+
+### `spectre dashboard`
+Alias legado para o comando `spectre web`. Também depreciado e agendado para remoção na versão 0.1.0b2.
+
+```bash
+spectre dashboard
 ```
