@@ -60,7 +60,7 @@ def _make_expected_url_client(
             return httpx.Response(status_code, text=text, headers=headers or {})
         return httpx.Response(status_code, json=json_data, headers=headers or {})
 
-    settings = Settings(ssrf_enabled=False)
+    settings = Settings(ssrf_enabled=False, http_max_retries=1)
     transport = httpx.MockTransport(handler)
     return HttpClient(settings, transport=transport)
 
