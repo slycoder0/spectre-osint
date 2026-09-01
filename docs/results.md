@@ -27,7 +27,7 @@ Esta tabela resume os status mais frequentes observados em investigações de us
 
 O enum `Confidence` (`spectre_osint/core/types.py`) expressa o grau de certeza técnica da evidência:
 
-- **`CONFIRMED`:** Evidência direta e estruturalmente validada via API oficial.
+- **`CONFIRMED`:** Valor ou resultado cuja validade técnica foi estabelecida por observação direta, validação ou derivação determinística, sem depender de heurística. A proveniência é registrada separadamente e pode vir de API, DNS, parsing local ou input validado; `CONFIRMED` não implica confirmação de identidade civil nem transforma input do operador em evidência externa.
 - **`HIGH`:** Evidência de alta confiabilidade com marcadores claros e consistentes (ex: metadados observados em sessão autenticada com contrato estrito).
 - **`MEDIUM`:** Evidência provável que depende de contexto semântico ou heurística de marcação HTML.
 - **`LOW`:** Pista inicial, menção em texto livre ou similaridade de strings.

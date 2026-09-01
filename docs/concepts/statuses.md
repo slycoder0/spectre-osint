@@ -55,7 +55,7 @@ O enum `FindingStatus` possui exatamente 18 valores, aplicados a todas as classe
 
 O enum `Confidence` possui exatamente 4 valores:
 
-- **`CONFIRMED`:** Evidência direta e estruturalmente verificada via API oficial.
+- **`CONFIRMED`:** Valor ou resultado cuja validade técnica foi estabelecida por observação direta, validação ou derivação determinística, sem depender de heurística. A proveniência é registrada separadamente e pode vir de API, DNS, parsing local ou input validado; `CONFIRMED` não implica confirmação de identidade civil nem transforma input do operador em evidência externa.
 - **`HIGH`:** Alta confiabilidade com marcadores claros e consistentes (ex: extração autenticada com contrato estrito no Instagram).
 - **`MEDIUM`:** Evidência provável baseada em heurísticas ou contexto semântico convergente.
 - **`LOW`:** Pista inicial ou menção em texto livre.

@@ -94,7 +94,7 @@ cp .env.example .env
 | `SHODAN_API_KEY` | Shodan | Requer chave | Consulta de serviços históricos indexados (não realiza varredura ativa). |
 | `CENSYS_API_ID` | Censys | Requer chave | ID da API Censys Search. |
 | `CENSYS_API_SECRET` | Censys | Requer chave | Segredo da API Censys Search. |
-| `URLSCAN_API_KEY` | URLScan | Chave opcional | Consulta e submissão pública de URLs. |
+| `URLSCAN_API_KEY` | URLScan | Chave opcional | Consulta de resultados públicos no URLScan; a chave opcional é enviada nas consultas ao endpoint de busca. |
 | `ABUSEIPDB_API_KEY` | AbuseIPDB | Requer chave | Relatórios de reputação e abuso de IPs. |
 | `HIBP_API_KEY` | HaveIBeenPwned | Requer chave | Histórico de vazamentos de e-mails. |
 | `IPINFO_TOKEN` | IPinfo | Chave opcional | Geolocalização e ASN com limite ampliado. |
