@@ -169,10 +169,10 @@ spectre auth login instagram
 # Verificar se a sessão salva ainda é válida
 spectre auth verify instagram
 
-# Encerrar e remover a sessão local de uma plataforma
+# Encerrar e remover a sessão local e o perfil dedicado do SPECTRE para a plataforma (não afeta contas remotas nem o navegador pessoal)
 spectre auth logout instagram
 
-# Alias para logout — remove os arquivos de sessão local para a plataforma informada
+# Alias para logout — remove a sessão salva e limpa o perfil de navegador dedicado do SPECTRE para a plataforma informada
 spectre auth clear instagram
 
 # Listar plataformas e status de sessão

@@ -43,7 +43,7 @@ spectre_osint/
   web/                    Dashboard local FastAPI + Jinja2 (DEPRECATED: agendado para remoção na 0.1.0b2)
   data/                   sites.yaml (Site Catalog 2.0), providers.yaml, user_agents.txt
   migrations/             Alembic (esquema inicial 0001_initial)
-  llm/                    Opcional, desativado, fora do pipeline padrão
+  llm/                    Módulo experimental de sumarização (atualmente não conectado ao pipeline principal)
 ```
 
 ---
@@ -59,7 +59,7 @@ spectre_osint/
 | **UI / Relatórios** | Não reclassifica achados nem altera pontuações calculadas pelo core. |
 | **Pivot Engine** | Não transforma um candidato de descoberta em identidade confirmada. |
 | **Doctor** | Nunca inicia investigações, nunca realiza logins e nunca inicializa o Chrome. |
-| **LLM Helper** | Não muta fatos observados e não roda no pipeline padrão por default. |
+| **LLM Helper** | Não está conectado ao pipeline principal nesta versão; saídas experimentais nunca mutam fatos observados. |
 
 ---
 
@@ -142,7 +142,7 @@ spectre_osint/
 - **Responsabilidade:** Dashboard local para operador único (dossiê, grafo, sessões, provedores).
 - **Entradas:** Mesmo `CaseManager` e pipeline da CLI.
 - **Efeitos Colaterais:** Jobs assíncronos em memória (`web/jobs.py`), relatórios.
-- **Fronteira:** Não altera semântica de evidências; vincula a `127.0.0.1:8000` por padrão (bind público exige opt-in com `SPECTRE_ALLOW_PUBLIC_BIND=true`).
+- **Fronteira:** Não altera semântica de evidências; o comando CLI vincula a `127.0.0.1:8000` por padrão (bind em interfaces externas via `--host` exige opt-in com `SPECTRE_ALLOW_PUBLIC_BIND=true`).
 
 ### Relatórios — `spectre_osint/reporting/`
 - **Responsabilidade:** Geração de artefatos standalone a partir do `InvestigationResult` (HTML, Markdown, JSON, CSV, GraphML).

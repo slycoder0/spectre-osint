@@ -6,9 +6,9 @@ O SPECTRE OSINT foi desenvolvido para conduzir investigações eficientes e tran
 
 ## 1. Execução Local & Armazenamento Local
 
-- **Processamento no Host:** Toda a lógica de análise, correlação, pontuação e geração de relatórios roda exclusivamente no seu computador.
-- **Persistência Local:** Banco SQLite (`data/spectre.db`), logs (`logs/`) e relatórios (`reports/`) residem no seu disco. Nenhuma telemetria de uso ou dados de casos são enviados a servidores externos.
-- **Coleta Externa Passiva:** Para obter os dados públicos, o SPECTRE realiza requisições HTTP de saída diretamente para os provedores públicos de internet configurados.
+- **Processamento & Armazenamento Local:** Toda a análise, correlação, pontuação, banco SQLite (`data/spectre.db`), logs (`logs/`) e relatórios (`reports/`) residem e são executados exclusivamente no seu computador.
+- **Requisições Externas da Investigação:** Para consultar dados públicos, o SPECTRE envia requisições HTTP de saída diretamente aos provedores configurados. Termos e identificadores derivados das pistas informadas pelo operador (como handles, nomes, e-mails ou domínios) podem ser incorporados às consultas enviadas aos motores de busca e APIs públicas correspondentes.
+- **Sem Telemetria:** O SPECTRE não coleta nem transmite telemetria de uso, métricas analíticas ou rastreamento de comportamento do operador para servidores externos.
 
 ---
 

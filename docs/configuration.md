@@ -42,7 +42,7 @@ cp .env.example .env
 | `SPECTRE_SSRF_ENABLED` | `true` | Bloqueia requisições a redes privadas, loopback e metadados de nuvem (`169.254.169.254`). |
 | `SPECTRE_ALLOW_PRIVATE_TARGETS`| `false` | Permite explicitamente alvos em redes privadas se ativado pelo operador. |
 | `SPECTRE_ALLOW_PUBLIC_BIND` | `false` | Permite vincular o servidor web legado em interfaces externas (não recomendado). |
-| `SPECTRE_WEB_HOST` | `127.0.0.1` | Endereço de bind da interface web legada (sempre loopback por padrão). |
+| `SPECTRE_WEB_HOST` | `127.0.0.1` | Campo de configuração em `Settings`. O comando CLI `spectre web` possui `--host 127.0.0.1` como padrão; para alterar o endereço de escuta, informe explicitamente `--host <endereço>` na linha de comando (endereços externos exigem `SPECTRE_ALLOW_PUBLIC_BIND=true`). |
 | `SPECTRE_PIVOT_BUDGET` | `8` | Limite de pivôs automáticos por execução padrão. |
 
 ### 3. Inteligência de Busca & Discovery
@@ -85,7 +85,7 @@ cp .env.example .env
 ### 6. Provedores de Threat Intelligence
 
 - **Keyless (sempre consultados sem chave):** `crt.sh`, `RDAP`, `Wayback Machine`.
-- **Optional Key (funcionam sem chave; chave eleva quota):** `GitHub`, `URLScan`, `IPinfo`, `GreyNoise`, `AlienVault OTX`.
+- **Optional Key:** `GitHub`, `URLScan`, `IPinfo`, `GreyNoise` e `AlienVault OTX` não são bloqueados pela ausência da credencial na configuração; quando disponível, cada provedor utiliza sua credencial opcional conforme a implementação.
 - **Required Key (ignorados se a chave não estiver configurada):** `VirusTotal`, `Shodan`, `Censys`, `AbuseIPDB`, `HIBP`.
 
 | Variável | Provedor | Categoria | Descrição |
@@ -104,18 +104,18 @@ cp .env.example .env
 
 ---
 
-## Configurações Avançadas de LLM (Opcionais)
+## Configurações do Módulo LLM (Experimental / Não Conectado)
 
-O SPECTRE opera por padrão com análise determinística sem necessidade de modelos de linguagem. O módulo LLM é desativado por padrão:
+O SPECTRE opera por padrão com análise determinística sem modelos de linguagem. O helper de sumarização (`summarize_optional` em `spectre_osint/llm/`) existe no código, mas atualmente não está conectado ao pipeline principal de investigação. O helper existente implementa atualmente apenas um endpoint compatível com a API da OpenAI (configurado pelas variáveis `OPENAI_*`) e um fallback local para o Ollama (`OLLAMA_*`). Portanto, definir `LLM_ENABLED=true` nesta versão não executa sumarização nem produz achados `AI_ANALYSIS`:
 
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
-| `LLM_ENABLED` | `false` | Ativa o módulo opcional de sumarização por LLM (saídas sempre etiquetadas como `AI_ANALYSIS`). |
-| `OPENAI_API_KEY` | `None` | Chave de API da OpenAI. |
+| `LLM_ENABLED` | `false` | Flag de configuração experimental do módulo LLM. O helper de sumarização não está conectado ao pipeline principal nesta versão; definir como `true` isoladamente não executa sumarização durante investigações. |
+| `OPENAI_API_KEY` | `None` | Chave de API da OpenAI (módulo experimental). |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | URL base da API compatível com OpenAI. |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Modelo utilizado para sumarização. |
-| `ANTHROPIC_API_KEY` | `None` | Chave de API da Anthropic (Claude). |
-| `OPENROUTER_API_KEY`| `None` | Chave de API do OpenRouter. |
-| `GEMINI_API_KEY` | `None` | Chave de API do Google Gemini. |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Modelo para o helper experimental de sumarização. |
+| `ANTHROPIC_API_KEY` | `None` | Setting reservada e inspecionada pelo `doctor`; não é consumida pelo helper LLM atual. |
+| `OPENROUTER_API_KEY`| `None` | Setting reservada e inspecionada pelo `doctor`; não é consumida diretamente pelo helper LLM atual. |
+| `GEMINI_API_KEY` | `None` | Setting reservada e inspecionada pelo `doctor`; não é consumida pelo helper LLM atual. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | URL do servidor local Ollama para modelos locais abertos. |
 | `OLLAMA_MODEL` | `llama3.1` | Modelo padrão do Ollama. |
