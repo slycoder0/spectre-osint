@@ -1,0 +1,8 @@
+{
+  "login": "synthetic_user",
+  "name": "Synthetic Developer",
+  "blog": "https://synthetic-blog.example.com",
+  "bio": "Synthetic open source maintainer and security researcher",
+  "avatar_url": "https://avatars.example.com/u/1001",
+  "location": "San Francisco, CA"
+}

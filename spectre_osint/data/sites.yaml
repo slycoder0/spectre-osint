@@ -320,7 +320,7 @@ sites:
     check_url: "https://lichess.org/api/user/{username}"
     check_method: json_api
     json_id_field: id
-    display_name_fields: [username, title]
+    display_name_fields: [profile.realName, username]
     expected_status: [200]
     not_found_status: [404]
     enabled: true

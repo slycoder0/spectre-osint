@@ -241,6 +241,16 @@ async def test_keybase_nested_list_and_dict_traversal() -> None:
     finally:
         await http4.close()
 
+    # 5. Empty string id at index 0 -> NOT_FOUND
+    http5 = _make_expected_url_client(
+        expected_url, 200, json_data={"them": [{"id": ""}]}
+    )
+    try:
+        res5 = await _check_site(entity, site, http5, sem, refresh=True)
+        assert res5["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http5.close()
+
 
 @pytest.mark.asyncio
 async def test_reddit_nested_dict_traversal() -> None:
@@ -286,6 +296,26 @@ async def test_reddit_nested_dict_traversal() -> None:
     finally:
         await http4.close()
 
+    # 5. Empty string for data.name -> NOT_FOUND
+    http5 = _make_expected_url_client(
+        expected_url, 200, json_data={"data": {"name": ""}}
+    )
+    try:
+        res5 = await _check_site(entity, site, http5, sem, refresh=True)
+        assert res5["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http5.close()
+
+    # 6. Whitespace string for data.name -> NOT_FOUND
+    http6 = _make_expected_url_client(
+        expected_url, 200, json_data={"data": {"name": "   "}}
+    )
+    try:
+        res6 = await _check_site(entity, site, http6, sem, refresh=True)
+        assert res6["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http6.close()
+
 
 @pytest.mark.asyncio
 async def test_crates_io_nested_dict_traversal() -> None:
@@ -330,6 +360,49 @@ async def test_crates_io_nested_dict_traversal() -> None:
         assert "user.login=alice_crates" in res4["finding"].data["reason"]
     finally:
         await http4.close()
+
+    # 5. Empty string for user.login -> NOT_FOUND
+    http5 = _make_expected_url_client(
+        expected_url, 200, json_data={"user": {"login": ""}}
+    )
+    try:
+        res5 = await _check_site(entity, site, http5, sem, refresh=True)
+        assert res5["finding"].data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+    finally:
+        await http5.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("slug", "payload"),
+    [
+        ("keybase", {"them": [{"id": ""}]}),
+        ("reddit", {"data": {"name": ""}}),
+        ("reddit", {"data": {"name": "   "}}),
+        ("crates_io", {"user": {"login": ""}}),
+    ],
+)
+async def test_nested_json_empty_and_whitespace_identities_rejected(
+    slug: str, payload: dict[str, Any]
+) -> None:
+    """Verify that empty and whitespace nested identities evaluate to NOT_FOUND."""
+    site = _get_provider_site(slug)
+    username = "nested_empty_user"
+    expected_url = site["check_url"].format(username=username)
+    http = _make_expected_url_client(expected_url, 200, json_data=payload)
+    sem = asyncio.Semaphore(1)
+    entity = Entity.create(EntityType.USERNAME, username, "test", Confidence.CONFIRMED)
+
+    try:
+        res = await _check_site(entity, site, http, sem, refresh=True)
+        finding = res["finding"]
+        assert finding.status == FindingStatus.NOT_FOUND
+        assert finding.data["check_status"] == UsernameCheckStatus.NOT_FOUND.value
+        assert res["evidence"] == []
+        assert res["entities"] == []
+        assert res["relationships"] == []
+    finally:
+        await http.close()
 
 
 # ==============================================================================
