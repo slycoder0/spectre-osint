@@ -1,60 +1,61 @@
-# Troubleshooting & Diagnostic Guide
+# Resolução de Problemas (Troubleshooting)
 
-[English](troubleshooting.md) | [Português 🇧🇷](troubleshooting.pt-BR.md)
-
-This guide covers common operational questions, platform rate-limiting behaviors, and troubleshooting steps for SPECTRE OSINT.
+Problemas frequentes encontrados durante instalação, execução e testes do **SPECTRE OSINT**, com suas soluções.
 
 ---
 
-## 1. `spectre doctor` Statuses
+## 1. Problemas no Windows (PowerShell)
 
-### `READY WITH OPTIONAL FEATURES MISSING`
-- **Is it an error?** No. SPECTRE is designed to function out-of-the-box with zero third-party API keys.
-- **Why are providers `NOT CONFIGURED`?** Features like VirusTotal, Shodan, or loopback SearXNG are optional enhancements. When missing, those specific probes are gracefully skipped without halting investigations.
+### Política de Execução de Scripts Bloqueada
+**Sintoma:** Ao ativar o ambiente virtual com `.\.venv\Scripts\Activate.ps1`, o PowerShell exibe:
+> `File ...\Activate.ps1 cannot be loaded because running scripts is disabled on this system.`
 
-### `ACTION REQUIRED`
-- **Reports or Data directory not writable:** Check user permissions on `./data` and `./reports`. Ensure the operating system user running SPECTRE has write permissions.
-- **Bind address not on loopback:** By default, the web workstation binds strictly to `127.0.0.1`. If `SPECTRE_WEB_HOST` is configured to `0.0.0.0`, you must set `SPECTRE_ALLOW_PUBLIC_BIND=true` as an explicit acknowledgement of risk.
-
----
-
-## 2. Platform Behaviors & Edge Filtering
-
-### `LOGIN_REQUIRED`
-- **Cause:** Platforms like Instagram, Facebook, or X actively wall public profiles behind login prompts.
-- **Solution:** Use the [Authenticated Public](authenticated-public.md) collection mode:
-  ```bash
-  spectre auth login instagram
-  ```
-
-### `RATE_LIMITED` / `BLOCKED`
-- **Cause:** The target platform returned HTTP `429 Too Many Requests` or a Cloudflare/WAF block page.
-- **Behavior:** SPECTRE does not rotate residential proxies or attempt TLS spoofing. It records the factual status and moves on to the next source. Wait a few minutes before querying the same platform again.
-
-### `PROVIDER_UNAVAILABLE` (Circuit Breaker)
-- **Cause:** Repeated network timeouts or DNS resolution failures on a specific remote provider (e.g. `html.duckduckgo.com`).
-- **Behavior:** SPECTRE trips a host-level circuit breaker to fail-fast on subsequent queries to that host during the same investigation run, preventing wasted timeouts.
-
----
-
-## 3. Platform Specifics: Windows & WSL2
-
-- **Windows Native vs. WSL2:** SPECTRE is verified on native Windows 11 and Ubuntu/WSL2.
-- **Chrome CDP Interop:** On WSL2, SPECTRE can automatically bridge to Google Chrome installed on the Windows host using PowerShell `Start-Process`. On native Windows, it launches the installed `chrome.exe` directly.
-
----
-
-## 4. Cache Management
-
-If you suspect stale responses from previous queries:
-
-```bash
-# View cache metrics
-spectre cache stats
-
-# Purge cache
-spectre cache clear
-
-# Or force fresh queries on a specific investigation
-spectre username alice_osint --refresh
+**Solução:**
+Execute no PowerShell atual:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
 ```
+
+### Erro de Permissão no Diretório Temporário do Pytest
+**Sintoma:** Ao executar `pytest`, ocorre `PermissionError` em pasta temporária do Windows.
+
+**Solução:**
+Execute o pytest desativando o cache provider ou especificando pasta temporária:
+```powershell
+python -m pytest -q -p no:cacheprovider
+```
+
+---
+
+## 2. Problemas com o Navegador (Playwright / Chromium)
+
+### Chromium Não Encontrado para Sessões Autenticadas
+**Sintoma:** `spectre auth login <plataforma>` falha informando ausência do executável do navegador.
+
+**Solução:**
+Instale o Chromium via Playwright:
+```bash
+playwright install chromium
+```
+
+### Erro `PathSafetyError`
+**Sintoma:** O SPECTRE recusa iniciar a sessão informando `PathSafetyError`.
+
+**Solução:**
+O SPECTRE **recusa explicitamente** utilizar perfis pessoais do seu navegador padrão para proteger seus dados pessoais. Todas as sessões são criadas no diretório isolado do SPECTRE (`~/.local/share/spectre/browser-profiles`).
+
+---
+
+## 3. Limites de Taxa e Bloqueios
+
+### Resposta `RATE_LIMITED` (HTTP 429)
+**Causa:** Plataformas como Reddit ou GitHub limitam consultas anônimas por IP por minuto.
+
+**Soluções:**
+1. O SPECTRE aplica backoff exponencial automaticamente.
+2. Para o GitHub, configure um `GITHUB_TOKEN` no arquivo `.env` para elevar o limite de 60 requisições/hora para 5.000 requisições/hora.
+3. Consulte o status do cache local com `spectre cache status`.
+
+### Resposta `BLOCKED`
+**Causa:** A plataforma retornou código 401/403 ou desafio de borda WAF. O SPECTRE não realiza evasão ativa. Para plataformas com login-wall (ex: Instagram), utilize o fluxo oficial `spectre auth login`.
