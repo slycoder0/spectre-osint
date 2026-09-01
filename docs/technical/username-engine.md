@@ -10,10 +10,10 @@ O motor de varredura de usernames (`spectre_osint/modules/username/`) executa a 
 flowchart TD
     Start[Username Investigado] --> Load[Carregar Site Catalog]
     Load --> AsyncPool[Pool Concorrente de Provedores]
-    
+
     AsyncPool --> Probe[Executar _check_site]
     Probe --> Client[HttpClient com SSRF & Retry Policy]
-    
+
     Client --> Classify[Classificador de Resposta]
     Classify --> Enrich[Enriquecimento de Metadados]
     Enrich --> Result[Finding + Evidence + Entities + Relationships]
