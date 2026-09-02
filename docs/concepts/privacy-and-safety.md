@@ -34,6 +34,7 @@ No modo `AUTHENTICATED_PUBLIC`:
 
 ## 4. Limites Éticos e Operacionais
 
-- **Coleta Passiva:** Coleta apenas informações tornadas públicas pelas plataformas.
+- **Coleta Passiva por Padrão:** Por padrão, o SPECTRE coleta apenas informações tornadas públicas pelas plataformas, sem sondar diretamente a infraestrutura do alvo.
+- **Exceção — Reconhecimento Ativo Autorizado:** O comando `spectre network` é a única exceção e executa reconhecimento **ativo**. Nunca ocorre automaticamente: exige a flag `--authorized` e, adicionalmente, confirmação interativa do operador no terminal. Restringe-se a sondagens TCP connect em uma lista limitada de portas, com leitura opcional de banner; não realiza exploração, força bruta, ataques a credenciais, varredura em massa nem evasão.
 - **Sem Evasão Hostil:** Não resolve CAPTCHAs, não quebra autenticações, não manipula impressões digitais TLS e não realiza rotação de proxies.
 - **Sem Acesso a Conteúdos Privados:** Não acessa mensagens diretas (DMs), feeds restritos a amigos ou áreas protegidas por controles de privacidade.

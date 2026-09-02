@@ -34,7 +34,7 @@ cp .env.example .env
 | :--- | :--- | :--- |
 | `SPECTRE_HTTP_TIMEOUT` | `20.0` | Timeout padrão em segundos para requisições HTTP. |
 | `SPECTRE_MAX_CONCURRENCY` | `8` | Concorrência máxima para varreduras paralelas do catálogo. |
-| `SPECTRE_HTTP_MAX_RETRIES` | `3` | Número máximo de retentativas para códigos transitórios (429, 500, 502, 503, 504). |
+| `SPECTRE_HTTP_MAX_RETRIES` | `3` | Número máximo de tentativas **totais** para requisições HTTP idempotentes (`GET`/`HEAD`) diante de códigos transitórios (429, 500, 502, 503, 504); o padrão permite a tentativa inicial mais até 2 retentativas, sujeito ao orçamento de retry. |
 | `SPECTRE_HTTP_RETRY_BUDGET` | `20.0` | Orçamento total em segundos para tentativas de retry por requisição. |
 | `SPECTRE_HTTP_MAX_BACKOFF` | `30.0` | Tempo máximo de espera exponencial de backoff. |
 | `SPECTRE_HTTP_CIRCUIT_FAILURES`| `3` | Limiar de falhas consecutivas antes de desativar temporariamente um provedor. |

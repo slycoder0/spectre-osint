@@ -226,7 +226,7 @@ spectre auth list
 ## 5. Provedores e Cache
 
 ### `spectre providers`
-Exibe a lista de provedores e o status de configuração das integrações no `providers.yaml`.
+Exibe os provedores registrados no registro de provedores em tempo de execução (`core/registry.py`), com o respectivo estado de configuração e de saúde. Alterar `providers.yaml` isoladamente não altera o registro de provedores usado pela CLI.
 
 ```bash
 # Listar provedores
