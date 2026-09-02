@@ -36,16 +36,34 @@ O enum `Confidence` (`spectre_osint/core/types.py`) expressa o grau de certeza t
 
 ---
 
-## Proveniência de Campo (`ObservedField`)
+## Proveniência
 
-Todos os dados extraídos recebem uma etiqueta imutável de proveniência (`source`):
+A proveniência no SPECTRE existe em dois níveis distintos. **Eles não têm o mesmo alcance.**
+
+### Nível de registro (aplica-se de forma ampla)
+
+`Entity`, `Evidence`, `Relationship`, `TimelineEvent` e `PivotSuggestion` (`spectre_osint/core/entities.py`) possuem um campo `source` — uma **string livre**, não um enum fechado. `Finding` não possui campo `source`: sua origem é dada por `module`, `title` e pela lista `evidence` associada (que pode estar vazia em achados derivados de parsing local, como o DNS do domínio de e-mail).
+
+### Nível de campo (convenção de enriquecimento de perfis)
+
+Proveniência **por campo** não é um contrato universal de `Finding.data` e **não existe um modelo `ObservedField`** no código. Hoje ela é uma convenção do enriquecimento de perfis de username (`spectre_osint/modules/username/enrichment.py`), exposta exclusivamente sob a chave `data["observed"]` dos achados do módulo `username`:
 
 ```json
 {
-  "display_name": {
-    "value": "Alice Developer",
-    "source": "github_api.name",
-    "observed_at": "2026-09-01T12:00:00Z"
+  "observed": {
+    "display_name": {
+      "value": "Alice Developer",
+      "original": "Alice Developer (@alice_osint) - GitHub",
+      "source": "github_api.name",
+      "observed_at": "2026-09-01T12:00:00.000000+00:00"
+    }
   }
 }
 ```
+
+Limites que o consumidor precisa respeitar:
+
+- **Não presuma essa estrutura em qualquer campo de `Finding.data`.** No mesmo achado de username, chaves de nível superior como `display_name`, `bio` ou `website` são valores simples e sem etiqueta de proveniência — achatados a partir de `observed` (`flatten_observed`) ou, em consultas não autenticadas fora de `json_api`, preenchidos por fallback do parsing da página.
+- **Outros analisadores gravam valores diretos.** O módulo `email`, por exemplo, coloca `mx`, `txt`, `spf`, `dmarc` e `mail_providers` diretamente em `Finding.data`, sem invólucro de `value`/`source`.
+- **Campos ausentes de `observed` não recebem proveniência sintética.** A correlação de identidades trata proveniência como melhor-esforço e cai para `source: ""` quando o campo não foi observado com etiqueta.
+- O valor de `source` é uma string concreta do ponto de extração (ex.: `github_api.name`, `html_og.title`, `html_jsonld.sameAs`), não um identificador genérico. Consulte [Modelo de Evidências](concepts/evidence.md) para a semântica desses identificadores.

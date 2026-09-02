@@ -130,7 +130,7 @@ spectre_osint/
 - **Responsabilidade:** Sessões públicas do operador (Playwright ou Chrome CDP em loopback).
 - **Entradas:** Identificador da plataforma; metadados do perfil.
 - **Saídas:** `FetchOutcome`, `SessionStatus`.
-- **Efeitos Colaterais:** Perfis dedicados `.spectre-owned`; arquivos de sessão em `storage_state.json` ou chaveiro do SO.
+- **Efeitos Colaterais:** Perfis dedicados `.spectre-owned` (árvores separadas para Chromium/Playwright e para Chrome CDP); registro de sessão do `SessionStore` no chaveiro do SO ou em `storage_state.json`. No backend Playwright o registro contém cookies e possivelmente estado por origem; no Chrome CDP contém apenas um sentinela sem segredos, e o estado autenticado real fica no perfil dedicado do Chrome. Veja [Authenticated Public](authenticated-public.md).
 - **Fronteira:** Não armazena senhas, recusa diretórios pessoais do Chrome/Edge (`PathSafetyError`) e vincula CDP estritamente a loopback.
 
 ### Persistência — `spectre_osint/core/database.py`, `models.py`, `case_manager.py`

@@ -26,9 +26,10 @@ O cliente HTTP central (`core/http_client.py`) aplica política de proteção SS
 
 No modo `AUTHENTICATED_PUBLIC`:
 
-- O SPECTRE gerencia seus próprios perfis dedicados do Chromium sob a pasta `~/.local/share/spectre/browser-profiles/` com marcador `.spectre-owned`.
+- O SPECTRE gerencia seus próprios perfis dedicados com marcador `.spectre-owned`, em **duas árvores separadas**: uma para perfis do Chromium/Playwright (`SPECTRE_BROWSER_PROFILES_DIR`, por padrão `~/.local/share/spectre/browser-profiles/`) e outra para perfis do Google Chrome usados via CDP (`SPECTRE_CHROME_PROFILES_DIR`, por padrão `%USERPROFILE%\.spectre\chrome` no Windows/WSL). Os caminhos padrão por sistema operacional estão em [Configuração](../configuration.md).
 - **Proteção do Navegador Pessoal:** O SPECTRE recusa categoricamente apontamentos para diretórios de dados pessoais de navegadores do usuário (`PathSafetyError`).
-- **Zero Captura de Senhas:** O login é feito manualmente pelo operador em janela visível. O SPECTRE armazena apenas os cookies de sessão pública necessários para as consultas, nunca manipulando ou gravando senhas.
+- **Zero Captura de Senhas:** O login é feito manualmente pelo operador em janela visível; o SPECTRE nunca recebe, manipula ou grava credenciais.
+- **Estado de sessão não é apenas cookie.** O registro de sessão do backend Playwright pode conter cookies **e** estado por origem (`localStorage`); no backend Chrome CDP o registro salvo é apenas um sentinela sem segredos e o estado autenticado permanece no perfil dedicado do Chrome. Ao proteger, copiar ou apagar esses artefatos, trate também os diretórios de perfil — não só `storage_state.json`. O detalhamento por backend está em [Authenticated Public](../technical/authenticated-public.md).
 
 ---
 

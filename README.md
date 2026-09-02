@@ -19,7 +19,7 @@
 [![CI](https://github.com/slycoder0/spectre-osint/actions/workflows/ci.yml/badge.svg)](https://github.com/slycoder0/spectre-osint/actions/workflows/ci.yml)
 
 <p align="center">
-  O <strong>SPECTRE</strong> é uma ferramenta de linha de comando para mapear, estruturar e correlacionar pegadas digitais públicas a partir de usernames, domínios, e-mails e outros indicadores, preservando a proveniência exata de cada dado e evitando transformar suposições em fatos.
+  O <strong>SPECTRE</strong> é uma ferramenta de linha de comando para mapear, estruturar e correlacionar pegadas digitais públicas a partir de usernames, domínios, e-mails e outros indicadores, registrando a origem de cada achado e evitando transformar suposições em fatos.
 </p>
 
 </div>
@@ -104,7 +104,7 @@ Diferente de scripts que consideram qualquer resposta HTTP 200 como um perfil v�
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ✖  HTTP 200 ≠ Perfil Confirmado       ✖  Mesmo Username ≠ Mesma Pessoa     │
 │  ✖  Entrada do Analista ≠ Evidência    ✖  Candidato de Busca ≠ CONFIRMED    │
-│  ✔  Proveniência Estrita por Campo     ✔  Correlação Conservadora de Perfis │
+│  ✔  Proveniência Explícita de Origem   ✔  Correlação Conservadora de Perfis │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

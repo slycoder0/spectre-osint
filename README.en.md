@@ -102,7 +102,7 @@ Investigation findings will be output to your terminal and saved locally under `
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ✖  HTTP 200 ≠ Confirmed Profile        ✖  Same Username ≠ Same Person      │
 │  ✖  Operator Input ≠ Observed Fact      ✖  Search Candidate ≠ CONFIRMED     │
-│  ✔  Strict Field-Level Provenance       ✔  Conservative Profile Clustering  │
+│  ✔  Explicit Source Provenance          ✔  Conservative Profile Clustering  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

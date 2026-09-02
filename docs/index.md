@@ -94,7 +94,7 @@ spectre investigate alice_osint --email alice@example.com
     <li class="no">✖ Mesmo Username ≠ Mesma Pessoa</li>
     <li class="no">✖ Entrada do Analista ≠ Evidência Observada</li>
     <li class="no">✖ Candidato de Busca ≠ Perfil Confirmado</li>
-    <li class="yes">✔ Proveniência Estrita por Campo</li>
+    <li class="yes">✔ Proveniência Explícita de Origem</li>
     <li class="yes">✔ Correlação Conservadora de Perfis</li>
   </ul>
 </div>

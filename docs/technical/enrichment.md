@@ -23,7 +23,9 @@ A função `_personal_website` valida se a URL extraída é um domínio pessoal 
 
 ---
 
-## 3. Estrutura de Proveniência (`ObservedField`)
+## 3. Estrutura de Proveniência de Campo Observado
+
+Cada campo emitido por `enrich_profile` é um dicionário simples (não há classe/modelo `ObservedField` no código) e aparece apenas sob `data["observed"]` dos achados do módulo `username`:
 
 ```python
 {
@@ -33,3 +35,8 @@ A função `_personal_website` valida se a URL extraída é um domínio pessoal 
     "observed_at": "2026-09-01T12:00:00.000000+00:00"
 }
 ```
+
+- `value` pode ser uma string ou, para `external_links` / `social_links`, uma lista de strings.
+- `source` é derivado do provedor e do caminho de extração — por exemplo `github_api.<campo>` para respostas JSON, `github.username` para o handle normalizado, e `html_og.title`, `html_title`, `html_canonical`, `html_jsonld.<campo>` ou `html_rel_me` para extração de HTML.
+- Campos vazios são omitidos, e o primeiro valor não-vazio para um campo escalar prevalece (`put` não sobrescreve um campo já preenchido).
+- Essa convenção é local ao enriquecimento de perfis de username; outros módulos gravam valores diretamente em `Finding.data`. Veja [Resultados & Status](../results.md).

@@ -76,11 +76,11 @@ cp .env.example .env
 | `SPECTRE_AUTH_DIR` | `None` | Diretório de armazenamento de sessões autenticadas. Padrão no Linux/BSD: `~/.local/share/spectre/auth` (respeita `XDG_DATA_HOME`); no macOS: `~/Library/Application Support/spectre/auth`. |
 | `SPECTRE_BROWSER_PROFILES_DIR` | `None` | Diretório para perfis dedicados do Chromium (`.spectre-owned`). Padrão no Linux/BSD: `~/.local/share/spectre/browser-profiles`; no macOS: `~/Library/Application Support/spectre/browser-profiles`. |
 | `SPECTRE_CHROME_PATH` | `None` | Caminho explícito do executável do Google Chrome no sistema. |
-| `SPECTRE_CHROME_PROFILES_DIR` | `None` | Diretório dedicado para perfis do Google Chrome via CDP loopback. |
+| `SPECTRE_CHROME_PROFILES_DIR` | `None` | Diretório dedicado para perfis do Google Chrome via CDP loopback — árvore separada dos perfis do Playwright. Padrão no Windows/WSL: `%USERPROFILE%\.spectre\chrome`; no macOS: `~/Library/Application Support/spectre/chrome`; no Linux/BSD: `~/.local/share/spectre/chrome-profiles`. Contém o estado autenticado real do backend Chrome CDP. |
 | `SPECTRE_WINDOWS_USERPROFILE` | `None` | Caminho do perfil de usuário do Windows quando em ambiente WSL. |
 | `SPECTRE_BROWSER_BACKEND` | `playwright` | Backend de automação de navegador (`playwright` ou `chrome_cdp`). |
 | `SPECTRE_BROWSER_VISIBLE` | `false` | Executa o navegador de coleta em modo visível (o login manual é sempre visível). |
-| `SPECTRE_KEYRING` | `true` | Utiliza armazenamento protegido no chaveiro do sistema operacional (Keyring) quando disponível, com fallback para arquivo local com permissão restrita 0600. |
+| `SPECTRE_KEYRING` | `true` | Utiliza armazenamento protegido no chaveiro do sistema operacional (Keyring) quando disponível, com fallback para arquivo local com permissão restrita 0600. Aplica-se apenas ao registro de sessão do `SessionStore`; os diretórios de perfil do navegador continuam em disco (protegidos por permissão `0700`, sem criptografia própria do SPECTRE). |
 
 ### 6. Provedores de Threat Intelligence
 
