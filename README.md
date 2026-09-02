@@ -32,7 +32,7 @@
 - **Inteligência de Busca & Descoberta:** Executa consultas dorking em motores de busca públicos, identifica perfis candidatos e descobre novos pivôs de investigação.
 - **Correlação Conservadora de Identidades:** Avalia a convergência entre múltiplos perfis públicos utilizando pesos determinísticos e detecção de conflitos biográficos.
 - **Sessões Públicas Autenticadas:** Permite observar metadados públicos em redes com login-wall (ex: Instagram) via perfis isolados do Chromium, sem coletar ou armazenar senhas.
-- **Relatórios Locais & Grafos:** Gera relatórios detalhados em HTML standalone, JSON, Markdown, CSV e Grafos de Relacionamento (GraphML).
+- **Relatórios Locais & Grafos:** Gera relatórios detalhados em HTML de arquivo único (o grafo interativo carrega a biblioteca Cytoscape de `unpkg.com` ao abrir), JSON, Markdown, CSV e Grafos de Relacionamento (GraphML).
 
 ---
 

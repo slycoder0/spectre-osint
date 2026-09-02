@@ -17,7 +17,7 @@ spectre [OPÇÕES GLOBAIS] COMANDO [ARGUMENTOS] [OPÇÕES]
 | `--version` | Exibe a versão instalada do SPECTRE e sai. |
 | `--no-banner` | Suprime a exibição do banner inicial no terminal. |
 | `--compact` | Saída compacta orientada a resumo. |
-| `--verbose` | Exibe detalhes técnicos completos e logs de cada achado. |
+| `--verbose` | Expande a apresentação do resultado: exibe a tabela de entidades, acrescenta a coluna de detalhe na tabela de plataformas e mantém os pivôs visíveis em modo compacto. Não altera `SPECTRE_LOG_LEVEL` nem emite logs por achado; as tabelas de entidades e de achados seguem limitadas a 40 linhas e o texto de detalhe é truncado. |
 | `--help` | Exibe a mensagem de ajuda e opções do comando. |
 
 ---
@@ -240,16 +240,16 @@ spectre providers --probe --name github
 ```
 
 ### `spectre cache`
-Gerencia o cache local de resultados de consultas OSINT.
+Gerencia o cache local de resultados de investigação (`ResultCache`, em `data/cache/results.sqlite`). Este comando **não** atua sobre o cache de respostas HTTP usado pelo `HttpClient` (`ResponseCache`, em `data/cache/cache.sqlite`), que permanece intacto e pode continuar servindo respostas em cache dentro do respectivo TTL.
 
 ```bash
-# Exibir status e registros do cache
+# Exibir status e registros do cache de resultados
 spectre cache status
 
-# Limpar todo o cache
+# Limpar todo o cache de resultados (não remove o cache de respostas HTTP)
 spectre cache clear
 
-# Limpar cache de um provedor específico
+# Limpar entradas do cache de resultados de um provedor específico
 spectre cache clear --provider github
 ```
 
@@ -270,7 +270,7 @@ spectre network 127.0.0.1 --authorized
 ## 7. Interface Web Legada (Depreciação)
 
 ### `spectre web`
-Inicia o dashboard local FastAPI em loopback. **Comando depreciado e agendado para remoção na versão 0.1.0b2** em favor da arquitetura CLI-first e relatórios estáticos standalone.
+Inicia o dashboard local FastAPI em loopback. **Comando depreciado e agendado para remoção na versão 0.1.0b2** em favor da arquitetura CLI-first e dos relatórios estáticos em arquivo único.
 
 - **Endereço de Bind:** O comando CLI utiliza `--host 127.0.0.1` como padrão (mascarando `SPECTRE_WEB_HOST` se a flag for omitida). Vincular a interfaces de rede externas via `--host` exige opt-in explícito do operador com `SPECTRE_ALLOW_PUBLIC_BIND=true`.
 - **Porta:** Padrão `8000` (configurável via `--port`).

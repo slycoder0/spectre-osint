@@ -32,7 +32,7 @@
 - **Search Intelligence & Discovery:** Plans dorking queries across public search engines, discovers candidate profiles, and extracts new investigation pivots.
 - **Conservative Identity Correlation:** Evaluates profile overlap across platforms using deterministic weights and biographical conflict detection.
 - **Authenticated Public Sessions:** Allows inspection of public metadata on login-walled platforms (e.g. Instagram) via isolated Chromium profiles without storing passwords.
-- **Local Artifacts & Graphs:** Generates rich standalone HTML dossiers, machine-readable JSON/Markdown, CSVs, and Relationship Graphs (GraphML).
+- **Local Artifacts & Graphs:** Generates rich single-file HTML dossiers (the interactive graph loads Cytoscape from `unpkg.com` when opened), machine-readable JSON/Markdown, CSVs, and Relationship Graphs (GraphML).
 
 ---
 
@@ -85,7 +85,7 @@ Investigation findings will be output to your terminal and saved locally under `
 | **Investigate Email** | `spectre email <email>` | Format validation, DNS/MX check, and public footprint check. |
 | **Investigate Domain** | `spectre domain <domain>` | DNS intelligence, RDAP registration, CT certificates, and fingerprinting. |
 | **Investigate IP Address** | `spectre ip <ip>` | IP intelligence, network allocation, and threat footprint. |
-| **Full Investigation** | `spectre investigate <target>` | Full pipeline with correlation, entity graph, and standalone HTML report. |
+| **Full Investigation** | `spectre investigate <target>` | Full pipeline with correlation, entity graph, and single-file HTML report. |
 | **Generate Reports** | `spectre report [case]` | Regenerates investigation artifacts (HTML, JSON, Markdown, GraphML). |
 | **Authenticated Sessions** | `spectre auth status` | Inspects and manages isolated sessions for login-walled public platforms. |
 | **Cache Status** | `spectre cache status` | Displays local cached records and TTL expiration status. |

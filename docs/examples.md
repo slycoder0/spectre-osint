@@ -41,7 +41,7 @@ spectre investigate alice_osint \
 2. **Busca e Menções Públicas:** Consulta motores de busca para descobrir menções associadas ao e-mail e website.
 3. **Classificação de Novidade:** Identifica novos indicadores encontrados como `NOVEL` ou `DERIVED`.
 4. **Motor de Correlação:** Compara pares de perfis encontrados calculando pontuações com base em URLs de avatar normalizadas, links recíprocos e biografias.
-5. **Geração de Dossiê:** Cria o arquivo `reports/case-username-alice_osint-....html` contendo o Grafo D3 interativo e gavetas de proveniência de evidências.
+5. **Geração de Dossiê:** Cria o arquivo `reports/case-username-alice_osint-....html` contendo o grafo interativo e gavetas de proveniência de evidências. O grafo é renderizado pela biblioteca Cytoscape carregada de `unpkg.com`, portanto exige internet no momento da abertura; sem rede, o restante do dossiê continua legível.
 
 ---
 

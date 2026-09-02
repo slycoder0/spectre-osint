@@ -39,7 +39,7 @@ spectre_osint/
   providers/              Provedores HTTP de threat intelligence (keyless, optional-key, required-key)
   browser/                Sessões autenticadas públicas, Chrome CDP e Playwright
   correlation/            Grafo de entidades, sugestões de pivôs genéricos e fusão de confiança
-  reporting/              Geradores de artefatos standalone em HTML, JSON, Markdown, CSV e GraphML
+  reporting/              Geradores de artefatos de arquivo único em HTML, JSON, Markdown, CSV e GraphML
   web/                    Dashboard local FastAPI + Jinja2 (DEPRECATED: agendado para remoção na 0.1.0b2)
   data/                   sites.yaml (Site Catalog 2.0), providers.yaml, user_agents.txt
   migrations/             Alembic (esquema inicial 0001_initial)
@@ -145,7 +145,7 @@ spectre_osint/
 - **Fronteira:** Não altera semântica de evidências; o comando CLI vincula a `127.0.0.1:8000` por padrão (bind em interfaces externas via `--host` exige opt-in com `SPECTRE_ALLOW_PUBLIC_BIND=true`).
 
 ### Relatórios — `spectre_osint/reporting/`
-- **Responsabilidade:** Geração de artefatos standalone a partir do `InvestigationResult` (HTML, Markdown, JSON, CSV, GraphML).
+- **Responsabilidade:** Geração de artefatos de arquivo único a partir do `InvestigationResult` (HTML, Markdown, JSON, CSV, GraphML). O relatório HTML depende da biblioteca Cytoscape servida por `unpkg.com` apenas para renderizar o grafo interativo; os dados em si já vão embutidos no arquivo.
 - **Efeitos Colaterais:** Gravação de arquivos sob `SPECTRE_REPORTS_DIR` (gitignored).
 
 ### Extras de Correlação — `spectre_osint/correlation/`
