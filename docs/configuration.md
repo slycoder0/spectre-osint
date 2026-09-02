@@ -102,6 +102,21 @@ cp .env.example .env
 | `GITHUB_TOKEN` | GitHub API | Chave opcional | Eleva limite de requisições de 60/h para 5.000/h. |
 | `OTX_API_KEY` | AlienVault OTX | Chave opcional | Indicadores de ameaça (pulses). |
 
+### 7. Apresentação no Terminal (Banner)
+
+Estas duas variáveis **não são campos de `Settings`**: são lidas diretamente do ambiente do processo por `_want_banner()` em `spectre_osint/cli/display.py`. Como o `Settings` carrega o `.env` apenas para os próprios campos (`env_file=".env"` com `extra="ignore"`) e o projeto não utiliza `load_dotenv`, **declará-las no arquivo `.env` não produz efeito** — elas precisam estar exportadas no ambiente do shell.
+
+| Variável | Padrão | Descrição |
+| :--- | :--- | :--- |
+| `SPECTRE_NO_BANNER` | não definida | Qualquer valor **não vazio** suprime o banner ASCII nos comandos que o imprimem. Equivale à opção global `--no-banner`. |
+| `NO_BANNER` | não definida | Mesma semântica, na convenção genérica sem prefixo. Qualquer valor não vazio também suprime o banner. |
+
+Limites que o operador precisa conhecer:
+
+- **O valor não é interpretado como booleano.** Apenas a presença de uma string não vazia é testada, portanto `SPECTRE_NO_BANNER=0` e `SPECTRE_NO_BANNER=false` **também suprimem** o banner. Para manter o banner, deixe a variável indefinida (ou com string vazia).
+- **Basta uma das três formas.** `--no-banner`, `SPECTRE_NO_BANNER` e `NO_BANNER` são verificadas de forma independente; qualquer uma delas ativa é suficiente.
+- **O escopo é apenas o banner.** Suprimi-lo não altera as tabelas de resultado, o nível de log, nem a apresentação controlada por `--compact` e `--verbose`.
+
 ---
 
 ## Configurações do Módulo LLM (Experimental / Não Conectado)

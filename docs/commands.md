@@ -53,16 +53,24 @@ Realiza a varredura passiva de um username em dezenas de plataformas públicas d
 # Varredura básica
 spectre username alice_osint
 
-# Varredura com pistas do analista e criação de caso
+# Varredura com pistas do analista (um caso novo é criado automaticamente)
 spectre username alice_osint \
   --alias alice-sec \
   --name "Alice Example" \
   --email alice@example.com \
   --website "https://alice.example"
 
+# Anexar a varredura a um caso nomeado em vez de criar um novo
+spectre username alice_osint --case "Operacao-Alpha"
+
+# Ampliar a coleta com pivôs automáticos
+spectre username alice_osint --auto-pivot --depth 2
+
 # Forçar atualização ignorando o cache local
 spectre username alice_osint --refresh
 ```
+
+A semântica de `--case` está detalhada em [Opção `--case`](#opcao-case).
 
 ### `spectre email`
 Coleta inteligência pública a partir de um endereço de e-mail (validação de formato, registros MX/DNS e presença pública).
@@ -153,7 +161,12 @@ Executa o pipeline unificado completo: detecção automática do tipo de alvo, v
 
 ```bash
 spectre investigate alice_osint --name "Alice Example" --auto-pivot
+
+# Anexar a execução a um caso nomeado
+spectre investigate alice_osint --case "Operacao-Alpha" --auto-pivot --depth 2
 ```
+
+Aceita o mesmo conjunto de pistas de `spectre username` (`--alias`, `--name`, `--email`, `--website`) e a mesma opção `--case`.
 
 ### `spectre search`
 Executa o helper de busca pública via Google Custom Search Engine (Google CSE). Requer `GOOGLE_API_KEY` e `GOOGLE_CSE_ID`; sem ambos o comando retorna `NOT_CONFIGURED`. Os resultados são links públicos de busca e não constituem confirmação de identidade.
@@ -182,12 +195,29 @@ spectre case runs "Operacao-Alpha"
 spectre case rollback <run_id>
 ```
 
+#### Opção `--case`
+
+A opção `--case <nome>` existe **apenas** em `spectre username` e `spectre investigate`. Nenhum outro comando de indicador (`email`, `domain`, `ip`, `url`, `hash`, `company`, `person`, `threat`, `wayback`, `metadata`, `search`, `network`) a aceita.
+
+| Situação | Comportamento |
+| :--- | :--- |
+| `--case` com nome de caso existente | O caso é selecionado, passa a ser o **caso ativo** e a execução é anexada a ele. |
+| `--case` com nome inexistente | O caso é **criado** e passa a ativo. Nomear um caso novo não é erro. |
+| Sem `--case` | Um caso novo é sempre criado, com nome único no formato `case-<tipo>-<alvo>-<sufixo hexadecimal de 8 caracteres>`. O caso ativo anterior nunca é reutilizado. |
+
+O nome informado é normalizado para slug (`validate_case_name`, limite de 80 caracteres) e é o slug — não a string original — que fica gravado. Nomes vazios ou que contenham `/`, `\` ou `..` são rejeitados.
+
+`spectre report` **não** utiliza `--case`: recebe o caso como argumento posicional opcional (`spectre report "Operacao-Alpha"`) e, se omitido, usa o caso ativo.
+
 ### `spectre report`
 Regenera relatórios locais a partir da última execução concluída no banco de dados SQLite.
 
 ```bash
-# Gerar relatório HTML padrão
+# Gerar relatório HTML padrão (usa o caso ativo)
 spectre report
+
+# Regenerar os relatórios de um caso específico (argumento posicional, não `--case`)
+spectre report "Operacao-Alpha"
 
 # Exportar em múltiplos formatos
 spectre report --format all
@@ -219,6 +249,32 @@ spectre auth clear instagram
 
 # Listar plataformas e status de sessão
 spectre auth list
+```
+
+#### Opções de `spectre auth login`
+
+| Opção | Padrão | Comportamento |
+| :--- | :--- | :--- |
+| `--profile <nome>` | `osint-research` | **Rótulo** gravado no registro de sessão (`profile_name`). Não seleciona diretório: o perfil em disco é derivado do slug da plataforma (`ensure_platform_profile` / `ensure_chrome_profile`), portanto trocar `--profile` não cria nem alterna árvores de perfil. |
+| `--keep-open` | desativado | No backend Playwright/Chromium, mantém o contexto do navegador aberto após a observação do login em vez de fechá-lo. No backend Chrome CDP o parâmetro é aceito, mas a conexão é encerrada ao final de qualquer forma — ali a opção não tem efeito. |
+| `--timeout <segundos>` | `300` | Prazo de espera pela autenticação manual. Faixa aceita: mínimo `30`, máximo `1800`; valores fora da faixa são rejeitados antes da execução. |
+| `--browser <modo>` | `auto` | `auto` resolve pelo navegador preferido da plataforma e pela disponibilidade do Chrome; `chrome` (ou `cdp`) força o Google Chrome do SPECTRE via CDP; `playwright` (ou `pw`) força o Chromium do Playwright. Valores não reconhecidos caem para `playwright` sem erro. **O Edge nunca é selecionado.** |
+| `--attach` | desativado | Aplica-se apenas ao caminho Chrome CDP: reutiliza um endpoint CDP do Chrome do SPECTRE já em execução e **nunca inicia o navegador**. Sem nenhum endpoint disponível, o comando falha com `CDP_UNAVAILABLE`. Sem `--attach`, um endpoint existente também é reutilizado, mas o SPECTRE inicia o perfil dedicado quando não há nenhum. |
+
+Quando `SPECTRE_BROWSER_BACKEND` está definido como `fake`, `test` ou `mock`, a resolução de `--browser` retorna o backend de testes em vez de abrir um navegador real.
+
+```bash
+# Login manual com prazo maior e navegador explícito
+spectre auth login instagram --browser chrome --timeout 900
+
+# Reaproveitar uma janela do Chrome do SPECTRE já aberta (não inicia o navegador)
+spectre auth login instagram --browser chrome --attach
+
+# Manter a janela do Chromium aberta após o login (backend Playwright)
+spectre auth login instagram --browser playwright --keep-open
+
+# Rótulo alternativo no registro de sessão
+spectre auth login instagram --profile investigacao-2026
 ```
 
 ---
