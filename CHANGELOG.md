@@ -6,6 +6,24 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+- **Site Catalog identity is now explicit (B2-02B):** all 57 production entries in
+  `spectre_osint/data/sites.yaml` declare a stable `slug`, and `load_catalog()` —
+  the production catalog loader — rejects an entry that omits or blanks it instead
+  of deriving one from the display name;
+- display names are presentation labels only: renaming a provider no longer moves
+  its stable identifier;
+- production catalog validation rejects missing, blank, malformed
+  (outside `^[a-z0-9_]+$`) and duplicate slugs, naming the offending site and field;
+- every declared slug is the identifier the entry already resolved to, so no
+  effective provider identifier changed and no provider behavior changed;
+- `slugify_name()` is retained only as a compatibility fallback for custom and
+  legacy definitions loaded through `SiteCatalog.from_dict()`,
+  `SiteCatalog.from_yaml_file()`, `SiteDefinition.model_validate()` or the explicit
+  `load_catalog(path, require_explicit_slug=False)` opt-out;
+- the in-memory catalog cache is keyed by path *and* validation mode, so a
+  leniently loaded catalog can never be served to a strict caller.
+
 ### Removed
 - **BREAKING:** the deprecated `spectre web` and `spectre dashboard` commands were
   removed; invoking either now fails as an unknown command with a non-zero exit;

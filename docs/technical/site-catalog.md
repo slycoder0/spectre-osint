@@ -10,6 +10,7 @@ O catálogo contém atualmente a especificação determinística de 57 provedore
 
 ```yaml
   - name: GitHub
+    slug: github
     category: Development
     profile_url: "https://github.com/{username}"
     check_url: "https://api.github.com/users/{username}"
@@ -30,7 +31,33 @@ O catálogo contém atualmente a especificação determinística de 57 provedore
 
 ---
 
-## 2. Métodos de Verificação (`check_method`)
+## 2. Identidade do Catálogo (`slug`)
+
+Toda entrada de produção declara um `slug` **explícito e estável**. O `slug` é o identificador do provedor no catálogo: é a chave de `SiteCatalog.get_by_slug()`, do índice interno de unicidade e do campo `slug` exportado por `to_dict()` / `load_sites()`.
+
+- **`name` é um rótulo de apresentação**, não um identificador. Renomear o `name` de um provedor não altera o `slug` declarado.
+- **`slug` é estável**: formato canônico `^[a-z0-9_]+$` (ASCII minúsculo, dígitos e sublinhados).
+- **Validação de produção** (`load_catalog()`, o carregador usado pelo runtime) rejeita:
+  - `slug` ausente;
+  - `slug` vazio ou composto apenas por espaços;
+  - `slug` fora do formato canônico;
+  - `slug` duplicado entre entradas;
+  - `name` duplicado (colisão sem diferenciação de maiúsculas/minúsculas).
+
+Nenhuma entrada de produção pode omitir `slug` e receber silenciosamente um identificador derivado do nome de exibição.
+
+### Compatibilidade com definições customizadas e legadas
+
+A derivação `slugify_name(name)` continua existindo apenas como *fallback* de compatibilidade para definições **não-produção** — catálogos customizados ou legados anteriores ao contrato explícito. Ela é alcançada por:
+
+- `SiteCatalog.from_dict()` / `SiteCatalog.from_yaml_file()` / `SiteDefinition.model_validate()`, que permanecem tolerantes por padrão;
+- `load_catalog(caminho, require_explicit_slug=False)`, a saída explícita para carregar um arquivo de catálogo anterior ao B2-02B.
+
+O padrão de `load_catalog()` é `require_explicit_slug=True`. O cache do catálogo é indexado por caminho **e** por modo de validação, de modo que um catálogo carregado em modo tolerante nunca é servido a um chamador estrito.
+
+---
+
+## 3. Métodos de Verificação (`check_method`)
 
 1. **`json_api` (APIs Estruturadas JSON):**
    - Utiliza endpoints públicos que retornam payloads JSON estruturados.
@@ -42,7 +69,7 @@ O catálogo contém atualmente a especificação determinística de 57 provedore
 
 ---
 
-## 3. Predicado de Identidade JSON
+## 4. Predicado de Identidade JSON
 
 No motor central (`engine.py`), a confirmação de provedores JSON obedece à função `_is_meaningful_json_identity`:
 
@@ -61,6 +88,6 @@ Rejeita strings vazias, valores booleanos, contêineres vazios e strings compost
 
 ---
 
-## 4. Testes Offline Determinísticos
+## 5. Testes Offline Determinísticos
 
 Todos os provedores de API JSON possuem cobertura de testes 100% offline via `httpx.MockTransport`, validando payloads positivos, ausência de campo e status de erro sem requisições à internet.
