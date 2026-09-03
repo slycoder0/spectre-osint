@@ -64,7 +64,7 @@ A derivação `slugify_name(name)` continua existindo apenas como *fallback* de 
 | qualquer alvo | `True` | estrito |
 | qualquer alvo | `False` | tolerante |
 
-Ou seja: o contrato de produção nunca é enfraquecido para o catálogo empacotado, e chamadores existentes de `load_sites(caminho_customizado)` continuam funcionando sem alteração. Os dois modos podem ser declarados explicitamente quando o chamador quiser ser deliberado.
+Ou seja: o catálogo empacotado é **estrito por padrão**, e esse contrato nunca é enfraquecido implicitamente — nenhum caminho de carregamento o reduz sem que o chamador peça. Passar `require_explicit_slug=False` é a única forma de carregar o catálogo empacotado em modo tolerante, e é uma escolha deliberada do chamador. Chamadores existentes de `load_sites(caminho_customizado)` continuam funcionando sem alteração, e ambos os modos podem ser declarados explicitamente quando o chamador quiser ser deliberado.
 
 O cache do catálogo é indexado por caminho **e** por modo de validação, de modo que um catálogo carregado em modo tolerante nunca é servido a um chamador estrito.
 
