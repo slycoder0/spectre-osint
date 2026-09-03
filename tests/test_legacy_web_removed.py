@@ -68,8 +68,18 @@ def test_removed_commands_exit_non_zero(command: str) -> None:
 
 
 def test_web_package_no_longer_exists() -> None:
-    assert not (PACKAGE_DIR / "web").exists()
-    assert importlib.util.find_spec("spectre_osint.web") is None
+    # A stale __pycache__/ left over from before the removal keeps the bare directory
+    # alive in a working tree, and an empty directory is still an implicit namespace
+    # package. Assert on the tracked content, then on "not a real package": a namespace
+    # remnant has spec.origin None, a genuine package points at its __init__.py.
+    survivors = sorted(
+        str(path.relative_to(PACKAGE_DIR))
+        for path in (PACKAGE_DIR / "web").rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    assert survivors == []
+    spec = importlib.util.find_spec("spectre_osint.web")
+    assert spec is None or spec.origin is None
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("spectre_osint.web.app")
 
