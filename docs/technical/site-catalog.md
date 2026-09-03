@@ -37,23 +37,36 @@ Toda entrada de produção declara um `slug` **explícito e estável**. O `slug`
 
 - **`name` é um rótulo de apresentação**, não um identificador. Renomear o `name` de um provedor não altera o `slug` declarado.
 - **`slug` é estável**: formato canônico `^[a-z0-9_]+$` (ASCII minúsculo, dígitos e sublinhados).
-- **Validação de produção** (`load_catalog()`, o carregador usado pelo runtime) rejeita:
+- **Validação de produção** (catálogo empacotado) rejeita:
   - `slug` ausente;
   - `slug` vazio ou composto apenas por espaços;
-  - `slug` fora do formato canônico;
+  - `slug` com espaços à esquerda ou à direita (`" github "`);
+  - `slug` com maiúsculas (`GitHub`);
+  - `slug` fora do formato canônico (`git hub`, `git/hub`, `git\hub`, `git-hub`, `git.hub`);
   - `slug` duplicado entre entradas;
   - `name` duplicado (colisão sem diferenciação de maiúsculas/minúsculas).
 
-Nenhuma entrada de produção pode omitir `slug` e receber silenciosamente um identificador derivado do nome de exibição.
+A validação de produção inspeciona o valor **declarado**, antes de qualquer normalização do modelo. Um `slug` que só se tornaria canônico após `strip()`/`lower()` é rejeitado, não corrigido silenciosamente. Nenhuma entrada de produção pode omitir `slug` e receber um identificador derivado do nome de exibição.
 
 ### Compatibilidade com definições customizadas e legadas
 
 A derivação `slugify_name(name)` continua existindo apenas como *fallback* de compatibilidade para definições **não-produção** — catálogos customizados ou legados anteriores ao contrato explícito. Ela é alcançada por:
 
 - `SiteCatalog.from_dict()` / `SiteCatalog.from_yaml_file()` / `SiteDefinition.model_validate()`, que permanecem tolerantes por padrão;
-- `load_catalog(caminho, require_explicit_slug=False)`, a saída explícita para carregar um arquivo de catálogo anterior ao B2-02B.
+- `load_catalog(caminho)` e `load_sites(caminho)` para um arquivo que **não** é o catálogo empacotado.
 
-O padrão de `load_catalog()` é `require_explicit_slug=True`. O cache do catálogo é indexado por caminho **e** por modo de validação, de modo que um catálogo carregado em modo tolerante nunca é servido a um chamador estrito.
+`load_catalog()` e `load_sites()` aceitam `require_explicit_slug`:
+
+| alvo | `require_explicit_slug` | comportamento |
+|---|---|---|
+| catálogo empacotado | `None` (padrão) | **estrito** |
+| caminho customizado | `None` (padrão) | tolerante (compatível com o comportamento anterior ao B2-02B) |
+| qualquer alvo | `True` | estrito |
+| qualquer alvo | `False` | tolerante |
+
+Ou seja: o contrato de produção nunca é enfraquecido para o catálogo empacotado, e chamadores existentes de `load_sites(caminho_customizado)` continuam funcionando sem alteração. Os dois modos podem ser declarados explicitamente quando o chamador quiser ser deliberado.
+
+O cache do catálogo é indexado por caminho **e** por modo de validação, de modo que um catálogo carregado em modo tolerante nunca é servido a um chamador estrito.
 
 ---
 

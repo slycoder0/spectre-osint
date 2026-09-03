@@ -27,6 +27,7 @@ from spectre_osint.core.types import (
     EntityType,
     UsernameCheckStatus,
 )
+from spectre_osint.modules.username import catalog as catalog_module
 from spectre_osint.modules.username.catalog import (
     AccessDefinition,
     CatalogSafeLoader,
@@ -3778,14 +3779,35 @@ def test_effective_production_identifiers_are_unchanged(tmp_path: Any) -> None:
     clear_catalog_cache()
 
 
-def test_production_loading_refuses_display_name_derived_slugs(tmp_path: Any) -> None:
+def test_production_loading_refuses_display_name_derived_slugs(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """The bundled catalog is strict by default, with no keyword from the caller."""
     stripped = _production_catalog_without_slugs(tmp_path)
 
+    # Forced strict mode on any target refuses derivation
     clear_catalog_cache()
-    with pytest.raises(CatalogValidationError) as exc_info:
-        load_catalog(stripped, reload=True)
-    assert exc_info.value.field_name == "slug"
-    assert "display name" in str(exc_info.value)
+    with pytest.raises(CatalogValidationError) as exc_forced:
+        load_catalog(stripped, reload=True, require_explicit_slug=True)
+    assert exc_forced.value.field_name == "slug"
+    assert "display name" in str(exc_forced.value)
+
+    # Standing in as the bundled catalog, the same file is refused with no keyword
+    bundled_dir = tmp_path / "bundled_data"
+    bundled_dir.mkdir()
+    (bundled_dir / "sites.yaml").write_bytes(stripped.read_bytes())
+    monkeypatch.setattr(catalog_module, "BUNDLED_DATA_DIR", bundled_dir)
+
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError) as exc_default:
+        load_catalog(reload=True)
+    assert exc_default.value.field_name == "slug"
+
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError):
+        load_catalog(bundled_dir / "sites.yaml", reload=True)
+
+    monkeypatch.undo()
 
     # The real production catalog satisfies the same strict contract
     clear_catalog_cache()
@@ -3901,13 +3923,29 @@ def test_custom_catalog_definitions_keep_the_derivation_fallback(tmp_path: Any) 
     derived = SiteCatalog.from_yaml_file(custom)
     assert derived.get_by_slug("legacy_platform") is not None
 
+    # A custom path stays lenient by default: pre-B2-02B callers keep working
     clear_catalog_cache()
-    opted_out = load_catalog(custom, reload=True, require_explicit_slug=False)
-    assert opted_out.get_by_slug("legacy_platform") is not None
+    assert load_catalog(custom, reload=True).get_by_slug("legacy_platform") is not None
+    clear_catalog_cache()
+    assert load_catalog(custom, reload=True, require_explicit_slug=False).get_by_slug(
+        "legacy_platform"
+    ) is not None
 
+    # ...and the public load_sites() surface behaves the same way
+    clear_catalog_cache()
+    assert [row["slug"] for row in load_sites(custom)] == ["legacy_platform"]
+    clear_catalog_cache()
+    assert [
+        row["slug"] for row in load_sites(custom, require_explicit_slug=False)
+    ] == ["legacy_platform"]
+
+    # Opting in is deliberate and does reject the legacy file
     clear_catalog_cache()
     with pytest.raises(CatalogValidationError):
-        load_catalog(custom, reload=True)
+        load_catalog(custom, reload=True, require_explicit_slug=True)
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError):
+        load_sites(custom, require_explicit_slug=True)
     clear_catalog_cache()
 
 
@@ -3920,7 +3958,7 @@ def test_catalog_cache_never_serves_a_lenient_catalog_to_a_strict_caller(tmp_pat
 
     # Same path, strict caller, no reload: the cached lenient catalog must not answer
     with pytest.raises(CatalogValidationError):
-        load_catalog(stripped)
+        load_catalog(stripped, require_explicit_slug=True)
     clear_catalog_cache()
 
 
@@ -3979,3 +4017,110 @@ def test_production_provider_identity_baseline_unchanged() -> None:
         "twitch",
         "x",
     }
+
+
+# ---------------------------------------------------------------------------
+# Bundled-vs-custom slug contract and raw slug canonicality (B2-02B review)
+# ---------------------------------------------------------------------------
+
+
+def test_bundled_is_strict_and_custom_paths_are_lenient_by_default(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """All four quadrants of the (target, keyword) matrix are deliberate."""
+    slugless = _production_catalog_without_slugs(tmp_path)
+
+    # 1. Custom path, no keyword -> lenient (pre-B2-02B behavior preserved)
+    clear_catalog_cache()
+    assert load_catalog(slugless, reload=True).total_sites(enabled_only=False) == 57
+    clear_catalog_cache()
+    assert len(load_sites(slugless)) == 57
+
+    # 2. Custom path, opted in -> strict
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError):
+        load_catalog(slugless, reload=True, require_explicit_slug=True)
+
+    # 3. Bundled catalog, no keyword -> strict
+    bundled_dir = tmp_path / "bundled_strict"
+    bundled_dir.mkdir()
+    (bundled_dir / "sites.yaml").write_bytes(slugless.read_bytes())
+    monkeypatch.setattr(catalog_module, "BUNDLED_DATA_DIR", bundled_dir)
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError):
+        load_catalog(reload=True)
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError):
+        load_sites(bundled_dir / "sites.yaml")
+
+    # 4. Bundled catalog, explicitly opted out -> lenient
+    clear_catalog_cache()
+    assert load_catalog(
+        reload=True, require_explicit_slug=False
+    ).total_sites(enabled_only=False) == 57
+
+    monkeypatch.undo()
+    clear_catalog_cache()
+    assert load_catalog(reload=True).total_sites(enabled_only=False) == 57
+    clear_catalog_cache()
+
+
+def test_strict_loading_rejects_non_canonical_raw_slugs() -> None:
+    """Strict mode validates the raw declaration, before model normalization."""
+    cases: list[tuple[str, str]] = [
+        ("GitHub", "uppercase"),
+        ("Git_Hub", "uppercase"),
+        (" github ", "whitespace"),
+        ("github ", "whitespace"),
+        ("\tgithub", "whitespace"),
+        ("git hub", "not canonical"),
+        ("git/hub", "not canonical"),
+        ("git\\hub", "not canonical"),
+        ("git.hub", "not canonical"),
+        ("git-hub", "not canonical"),
+        ("gitübé", "not canonical"),
+    ]
+    for raw_slug, expected_reason in cases:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            SiteCatalog.from_dict(
+                {"sites": [_valid_site_dict(slug=raw_slug)]}, require_explicit_slug=True
+            )
+        assert exc_info.value.field_name == "slug"
+        assert expected_reason in str(exc_info.value), f"{raw_slug!r}: {exc_info.value}"
+
+    # An already-canonical declaration passes untouched
+    accepted = SiteCatalog.from_dict(
+        {"sites": [_valid_site_dict(slug="already_canonical_1")]}, require_explicit_slug=True
+    )
+    assert accepted.get_by_slug("already_canonical_1") is not None
+
+
+def test_legacy_loading_still_normalizes_non_canonical_slugs() -> None:
+    """Lenient mode is unchanged: it keeps normalizing instead of rejecting."""
+    for raw_slug in (" GitHub ", "GITHUB", "github"):
+        lenient = SiteCatalog.from_dict({"sites": [_valid_site_dict(slug=raw_slug)]})
+        assert lenient.get_by_slug("github") is not None
+
+    # Genuinely malformed values are still rejected in both modes
+    for raw_slug in ("git hub", "git/hub", "git\\hub", "git-hub"):
+        with pytest.raises(CatalogValidationError):
+            SiteCatalog.from_dict({"sites": [_valid_site_dict(slug=raw_slug)]})
+
+    # slugify_name() behavior itself is untouched
+    assert slugify_name("Docker Hub") == "docker_hub"
+    assert slugify_name("WordPress.org") == "wordpress_org"
+    assert slugify_name("Ko-fi") == "ko_fi"
+
+
+def test_production_raw_slugs_need_no_normalization() -> None:
+    """Every declared production slug is byte-identical to the loaded identifier."""
+    clear_catalog_cache()
+    catalog = load_catalog(reload=True)
+    for entry in _production_entries():
+        raw_slug = entry["slug"]
+        assert raw_slug == raw_slug.strip().lower()
+        loaded = catalog.get_by_slug(raw_slug)
+        assert loaded is not None, f"raw slug {raw_slug!r} did not resolve"
+        assert loaded.slug == raw_slug
+        assert loaded.name == entry["name"]
+    clear_catalog_cache()
