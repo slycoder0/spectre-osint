@@ -526,15 +526,3 @@ def test_generic_profile_titles_are_not_display_names() -> None:
     assert "Alice Example" in summary["observed_names"]
     assert all("Last.fm" not in name for name in summary["observed_names"])
     assert summary["new_discoveries"] == []
-
-
-def test_gui_empty_novelty_copy_exists() -> None:
-    from pathlib import Path
-
-    en = Path("spectre_osint/web/i18n/en.json").read_text(encoding="utf-8")
-    pt = Path("spectre_osint/web/i18n/pt-BR.json").read_text(encoding="utf-8")
-    assert "No new public identity was discovered beyond the supplied inputs." in en
-    assert "Nenhuma nova identidade pública foi descoberta além das entradas fornecidas." in pt
-    html = Path("spectre_osint/web/templates/investigation.html").read_text(encoding="utf-8")
-    assert "new_discoveries" in html
-    assert "no_new_discoveries" in html

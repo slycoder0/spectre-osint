@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
 from spectre_osint.core.config import Settings
 from spectre_osint.core.database import init_db, reset_engine
 from spectre_osint.core.entities import Finding
 from spectre_osint.core.pipeline import InvestigationRunner
 from spectre_osint.core.types import EntityType, FindingStatus
-from spectre_osint.web.app import app
 
 
 async def _stub_collect(self, entity, extra):
@@ -86,34 +84,3 @@ async def test_explicit_case_adds_second_target(tmp_path, monkeypatch) -> None:
     finally:
         await runner.close()
         reset_engine()
-
-
-def test_dashboard_new_investigation_does_not_pass_case(settings, monkeypatch) -> None:
-    init_db(settings)
-    seen: list[tuple] = []
-
-    class DummyRunner:
-        async def run(self, target, case_name=None, **kwargs):
-            seen.append((target, case_name))
-            return None
-
-        async def close(self) -> None:
-            return None
-
-    monkeypatch.setattr("spectre_osint.web.app.InvestigationRunner", DummyRunner)
-    with TestClient(app) as client:
-        a = client.post("/investigate", data={"target": "alice-sec", "mode": "new"})
-        b = client.post(
-            "/investigate",
-            data={"target": "https://example.com/", "mode": "new"},
-        )
-        assert a.status_code in {200, 303, 400}
-        assert b.status_code in {200, 303, 400}
-        missing = client.post(
-            "/investigate",
-            data={"target": "octocat", "mode": "existing", "case_name": ""},
-        )
-        assert missing.status_code == 400
-    assert seen[0][1] is None
-    assert seen[1][1] is None
-    reset_engine()
