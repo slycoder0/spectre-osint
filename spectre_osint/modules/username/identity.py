@@ -350,9 +350,11 @@ def _name_conflict(a: str, b: str) -> bool:
 
 
 def _link_points_at(record: IdentityRecord, other: IdentityRecord) -> bool:
+    """True when record publicly links to other's *profile*."""
+    # other.website is deliberately not a target. Two profiles carrying the same
+    # website is one observation, already scored by same_personal_domain /
+    # same_personal_url; treating it as a link as well counts it twice.
     targets = {other.profile_n}
-    if other.url_n:
-        targets.add(other.url_n)
     for raw in record.links + [record.website, record.profile_url]:
         canon = normalize_url(raw)
         if canon and canon in targets:
@@ -463,15 +465,20 @@ def compare_records(left: IdentityRecord, right: IdentityRecord) -> dict[str, An
     elif left.loc_n and right.loc_n and left.loc_n != right.loc_n:
         conflicts.append("distinct_location")
         score += CONFLICTS["distinct_location"]
+    # normalize_domain() and normalize_url() are two views of one observed website
+    # value, so both codes are reported but only the strongest one scores.
+    website_signals: list[str] = []
     if left.domain and left.domain == right.domain:
         evidence.append("same_personal_domain")
-        score += WEIGHTS["same_personal_domain"]
+        website_signals.append("same_personal_domain")
     elif left.domain and right.domain and left.domain != right.domain:
         conflicts.append("distinct_personal_domain")
         score += CONFLICTS["distinct_personal_domain"]
     if left.url_n and left.url_n == right.url_n:
         evidence.append("same_personal_url")
-        score += WEIGHTS["same_personal_url"]
+        website_signals.append("same_personal_url")
+    if website_signals:
+        score += max(WEIGHTS[code] for code in website_signals)
     if _link_points_at(left, right) or _link_points_at(right, left):
         evidence.append("cross_profile_link")
         score += WEIGHTS["cross_profile_link"]

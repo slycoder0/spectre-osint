@@ -5,6 +5,10 @@ from __future__ import annotations
 from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus
 from spectre_osint.modules.username.identity import (
+    BANDS,
+    CLUSTER_MIN,
+    CONFLICTS,
+    WEIGHTS,
     compare_records,
     correlate_identities,
     identity_artifacts,
@@ -193,3 +197,188 @@ def test_identity_finding_and_html_section(tmp_path) -> None:
     assert "Identity Correlation" in html
     assert "GitHub" in html
     assert "cookie" not in html.lower() or "cookies" not in html.lower()
+
+
+def test_shared_website_alone_does_not_cluster() -> None:
+    """One website observation is one signal, not enough to cluster two handles."""
+    left = _finding(
+        "AlphaSite",
+        username="alice",
+        profile_url="https://alphasite.example/alice",
+        website="https://acme.com/",
+    )
+    right = _finding(
+        "BetaSite",
+        username="bobmarley",
+        profile_url="https://betasite.example/bobmarley",
+        website="https://acme.com/",
+    )
+    pair = compare_records(*records_from_findings([left, right]))
+    assert pair["score"] < CLUSTER_MIN
+    assert pair["score"] == WEIGHTS["same_personal_domain"]
+    assert "cross_profile_link" not in pair["evidence"]
+    payload = correlate_identities([left, right])
+    assert payload["clusters"] == []
+    assert payload["max_score"] < CLUSTER_MIN
+
+
+def test_shared_link_hub_url_alone_does_not_cluster() -> None:
+    """A shared link hub suppresses the domain signal and must not cluster on the URL."""
+    left = _finding(
+        "AlphaSite",
+        username="alice",
+        profile_url="https://alphasite.example/alice",
+        website="https://linktr.ee/acmeteam",
+    )
+    right = _finding(
+        "BetaSite",
+        username="bobmarley",
+        profile_url="https://betasite.example/bobmarley",
+        website="https://linktr.ee/acmeteam",
+    )
+    pair = compare_records(*records_from_findings([left, right]))
+    assert pair["score"] < CLUSTER_MIN
+    assert pair["score"] == WEIGHTS["same_personal_url"]
+    assert "same_personal_domain" not in pair["evidence"]
+    assert "cross_profile_link" not in pair["evidence"]
+    payload = correlate_identities([left, right])
+    assert payload["clusters"] == []
+
+
+def test_shared_website_with_same_handle_still_does_not_cluster() -> None:
+    """The common single-handle sweep must not cluster on a website alone either."""
+    pair = _pair(
+        _finding("AlphaSite", website="https://acme.com/"),
+        _finding("BetaSite", website="https://acme.com/"),
+    )
+    assert pair["score"] < CLUSTER_MIN
+    assert pair["score"] == WEIGHTS["same_personal_domain"] + WEIGHTS["same_username"]
+
+
+def test_one_website_observation_is_reported_twice_but_scored_once() -> None:
+    """Both codes stay visible to the operator; only one of them earns points."""
+    pair = _pair(
+        _finding("AlphaSite", website="https://acme.com/"),
+        _finding("BetaSite", website="http://www.acme.com"),
+    )
+    assert "same_personal_domain" in pair["evidence"]
+    assert "same_personal_url" in pair["evidence"]
+    codes = {row["code"] for row in pair["evidence_detail"]}
+    assert {"same_personal_domain", "same_personal_url"} <= codes
+    inflated = (
+        WEIGHTS["same_username"]
+        + WEIGHTS["same_personal_domain"]
+        + WEIGHTS["same_personal_url"]
+    )
+    assert pair["score"] < inflated
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["same_personal_domain"]
+
+
+def test_cross_profile_link_requires_a_profile_target() -> None:
+    """A link to the other record's website restates the website; only a profile link counts."""
+    website_only = _pair(
+        _finding(
+            "AlphaSite",
+            username="alice",
+            profile_url="https://alphasite.example/alice",
+            public_links=["https://acme.com/"],
+        ),
+        _finding(
+            "BetaSite",
+            username="alice",
+            profile_url="https://betasite.example/alice",
+            website="https://acme.com/",
+        ),
+    )
+    assert "cross_profile_link" not in website_only["evidence"]
+
+    profile_link = _pair(
+        _finding(
+            "AlphaSite",
+            username="alice",
+            profile_url="https://alphasite.example/alice",
+            public_links=["https://betasite.example/alice"],
+        ),
+        _finding(
+            "BetaSite",
+            username="alice",
+            profile_url="https://betasite.example/alice",
+        ),
+    )
+    assert "cross_profile_link" in profile_link["evidence"]
+
+
+def test_independent_signals_still_stack_to_strong() -> None:
+    """Name + website + a real profile cross-link are three observations, not one."""
+    pair = _pair(
+        _finding(
+            "GitHub",
+            display_name="Alice Example",
+            website="https://alice.dev",
+            public_links=["https://instagram.com/alice"],
+            profile_url="https://github.com/alice",
+        ),
+        _finding(
+            "Instagram",
+            display_name="alice example",
+            website="https://www.alice.dev/",
+            profile_url="https://instagram.com/alice",
+        ),
+    )
+    assert set(pair["evidence"]) >= {
+        "same_display_name",
+        "same_personal_domain",
+        "cross_profile_link",
+    }
+    assert pair["score"] >= 80
+    assert pair["band"] == "STRONG"
+
+
+def test_weights_conflicts_and_bands_are_unchanged_by_the_hotfix() -> None:
+    """The hotfix changes how signals are counted, never what they are worth."""
+    assert WEIGHTS == {
+        "same_username": 6,
+        "same_display_name": 16,
+        "similar_bio": 10,
+        "same_organization": 10,
+        "same_location": 8,
+        "same_personal_domain": 42,
+        "same_personal_url": 40,
+        "cross_profile_link": 38,
+        "same_public_id": 32,
+        "same_public_email": 35,
+        "same_avatar_url": 18,
+    }
+    assert CONFLICTS == {
+        "distinct_display_name": -28,
+        "distinct_personal_domain": -32,
+        "distinct_organization": -18,
+        "distinct_location": -12,
+        "distinct_public_id": -40,
+        "distinct_public_email": -35,
+    }
+    assert BANDS == ((80, "STRONG"), (60, "LIKELY"), (30, "POSSIBLE"), (0, "LOW"))
+    assert CLUSTER_MIN == 60
+
+
+def test_strong_conflicts_still_cap_and_block_clustering() -> None:
+    """Conflict handling is untouched: capped at 24, never clustered."""
+    left = _finding("GitHub", display_name="Alice Example", website="https://alice.dev")
+    right = _finding("Steam", display_name="Bob Other", website="https://bob.invalid")
+    pair = compare_records(*records_from_findings([left, right]))
+    assert pair["strong_conflict"] is True
+    assert "distinct_display_name" in pair["conflicts"]
+    assert "distinct_personal_domain" in pair["conflicts"]
+    assert pair["score"] <= 24
+    assert pair["band"] == "LOW"
+    assert correlate_identities([left, right])["clusters"] == []
+
+
+def test_distinct_public_id_alone_still_caps_the_score() -> None:
+    """A single strong conflict keeps capping even when a website matches."""
+    left = _finding("GitHub", website="https://acme.com/", public_id="1")
+    right = _finding("GitLab", website="https://acme.com/", public_id="2")
+    pair = compare_records(*records_from_findings([left, right]))
+    assert pair["strong_conflict"] is True
+    assert pair["score"] <= 24
+    assert correlate_identities([left, right])["clusters"] == []
