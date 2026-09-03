@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -14,7 +16,7 @@ from spectre_osint.browser.models import (
     normalize_platform,
     platform_for_site,
 )
-from spectre_osint.core.config import Settings
+from spectre_osint.core.config import BUNDLED_DATA_DIR, Settings
 from spectre_osint.core.entities import Entity
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.result_cache import ResultCache
@@ -3687,3 +3689,293 @@ def test_http_status_code_matrix_100_to_599_invariants() -> None:
                 not_found_status=[code],
             ))
             assert site_nf.detection.not_found_status == [code]
+
+
+# ---------------------------------------------------------------------------
+# Explicit Production Slug Contract (B2-02B)
+# ---------------------------------------------------------------------------
+
+PRODUCTION_CATALOG_PATH = BUNDLED_DATA_DIR / "sites.yaml"
+
+# Production display names whose slug is intentionally no longer the value that
+# slugify_name() would derive. Add an entry here, with the reason, when a display
+# name is renamed after B2-02B: the stable slug must NOT follow the rename.
+SLUG_DERIVATION_EXCEPTIONS: dict[str, str] = {}
+
+
+def _production_entries() -> list[dict[str, Any]]:
+    """Raw production catalog entries, read from YAML without any model coercion."""
+    parsed = yaml.safe_load(PRODUCTION_CATALOG_PATH.read_text(encoding="utf-8"))
+    entries = parsed["sites"]
+    assert isinstance(entries, list)
+    return entries
+
+
+def _production_catalog_without_slugs(tmp_path: Any) -> Path:
+    """Reproduce the pre-B2-02B production catalog by dropping every explicit slug."""
+    parsed = yaml.safe_load(PRODUCTION_CATALOG_PATH.read_text(encoding="utf-8"))
+    for entry in parsed["sites"]:
+        entry.pop("slug", None)
+    target = tmp_path / "sites_without_explicit_slugs.yaml"
+    target.write_text(
+        yaml.safe_dump(parsed, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return target
+
+
+def test_every_production_entry_declares_an_explicit_slug() -> None:
+    """The YAML source itself must declare slug: a loaded model could have derived it."""
+    entries = _production_entries()
+    assert len(entries) == 57
+    for entry in entries:
+        declared = entry.get("slug")
+        assert isinstance(declared, str) and declared.strip(), (
+            f"Production entry {entry.get('name')!r} does not declare an explicit slug"
+        )
+
+
+def test_production_slugs_are_unique_and_canonical() -> None:
+    declared = [entry["slug"] for entry in _production_entries()]
+    assert len(set(declared)) == len(declared), "Production slugs are not unique"
+    for slug in declared:
+        assert re.fullmatch(r"[a-z0-9_]+", slug), f"Non-canonical production slug {slug!r}"
+
+
+def test_production_slugs_preserve_previously_derived_identifiers() -> None:
+    """Migration fidelity: B2-02B declared identifiers, it did not churn them.
+
+    This is a migration guard rather than a forward contract. A later rename may
+    legitimately break the name -> slug correspondence; record it in
+    SLUG_DERIVATION_EXCEPTIONS instead of changing the stable slug.
+    """
+    for entry in _production_entries():
+        name = entry["name"]
+        if name in SLUG_DERIVATION_EXCEPTIONS:
+            continue
+        assert entry["slug"] == slugify_name(name), (
+            f"Explicit slug for {name!r} changed the previously effective identifier "
+            f"({slugify_name(name)!r} -> {entry['slug']!r})"
+        )
+
+
+def test_effective_production_identifiers_are_unchanged(tmp_path: Any) -> None:
+    """The explicit declarations reproduce exactly the pre-B2-02B identity mapping."""
+    clear_catalog_cache()
+    explicit = load_catalog(reload=True)
+    derived = SiteCatalog.from_yaml_file(_production_catalog_without_slugs(tmp_path))
+
+    assert {(s.name, s.slug) for s in explicit.sites} == {(s.name, s.slug) for s in derived.sites}
+
+    # Catalog lookup keeps resolving through the same effective identifiers
+    for site in explicit.sites:
+        assert explicit.get_by_slug(site.slug) is not None
+        by_name = explicit.get_by_name(site.name)
+        assert by_name is not None
+        assert by_name.slug == site.slug
+
+    # The legacy dict export consumed by the engine exposes the same identifiers
+    assert {row["slug"] for row in load_sites()} == {s.slug for s in explicit.sites}
+    clear_catalog_cache()
+
+
+def test_production_loading_refuses_display_name_derived_slugs(tmp_path: Any) -> None:
+    stripped = _production_catalog_without_slugs(tmp_path)
+
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError) as exc_info:
+        load_catalog(stripped, reload=True)
+    assert exc_info.value.field_name == "slug"
+    assert "display name" in str(exc_info.value)
+
+    # The real production catalog satisfies the same strict contract
+    clear_catalog_cache()
+    assert load_catalog(reload=True).total_sites(enabled_only=False) == 57
+    clear_catalog_cache()
+
+
+def test_strict_loading_rejects_missing_and_blank_slug() -> None:
+    for blank in ("", "   ", "\t"):
+        with pytest.raises(CatalogValidationError) as exc_blank:
+            SiteCatalog.from_dict(
+                {"sites": [_valid_site_dict(slug=blank)]}, require_explicit_slug=True
+            )
+        assert exc_blank.value.field_name == "slug"
+
+    with pytest.raises(CatalogValidationError) as exc_missing:
+        SiteCatalog.from_dict({"sites": [_valid_site_dict()]}, require_explicit_slug=True)
+    assert exc_missing.value.field_name == "slug"
+
+    accepted = SiteCatalog.from_dict(
+        {"sites": [_valid_site_dict(slug="explicit_identity")]}, require_explicit_slug=True
+    )
+    assert accepted.get_by_slug("explicit_identity") is not None
+
+
+def test_non_string_slug_reports_type_error_under_strict_loading() -> None:
+    """A wrong-typed slug must surface as a type error, not as the missing-slug error."""
+    with pytest.raises(CatalogValidationError) as exc_info:
+        SiteCatalog.from_dict({"sites": [_valid_site_dict(slug=456)]}, require_explicit_slug=True)
+    assert "must be a string" in str(exc_info.value)
+
+
+def test_invalid_slug_syntax_rejected_in_both_load_modes() -> None:
+    malformed = [
+        "invalid slug",
+        "Bad-Caps",
+        "has.dot",
+        "has/slash",
+        "has\\backslash",
+        "trailing!",
+        "emoji_✨",
+    ]
+    for bad_slug in malformed:
+        for strict in (True, False):
+            with pytest.raises(CatalogValidationError) as exc_info:
+                SiteCatalog.from_dict(
+                    {"sites": [_valid_site_dict(slug=bad_slug)]},
+                    require_explicit_slug=strict,
+                )
+            assert "slug" in str(exc_info.value).lower()
+
+
+def test_display_name_change_does_not_change_explicit_slug() -> None:
+    before = SiteDefinition.model_validate(
+        _valid_site_dict(name="Example Service", slug="stable_identity")
+    )
+    after = SiteDefinition.model_validate(
+        _valid_site_dict(name="Totally Rebranded Service", slug="stable_identity")
+    )
+
+    assert before.slug == after.slug == "stable_identity"
+    assert slugify_name(before.name) != slugify_name(after.name)
+    assert before.slug != slugify_name(before.name)
+    assert after.to_dict()["slug"] == "stable_identity"
+
+
+def test_explicit_slugs_decouple_identity_from_display_name_collisions() -> None:
+    # Two distinct display names that derive the same identifier stay distinguishable
+    assert slugify_name("Dev.to") == slugify_name("Dev To")
+    catalog = SiteCatalog.from_dict(
+        {
+            "sites": [
+                _valid_site_dict(
+                    name="Dev.to", slug="dev_to", profile_url="https://dev.to/{username}"
+                ),
+                _valid_site_dict(
+                    name="Dev To",
+                    slug="dev_to_mirror",
+                    profile_url="https://mirror.example/{username}",
+                ),
+            ]
+        },
+        require_explicit_slug=True,
+    )
+    assert {s.slug for s in catalog.sites} == {"dev_to", "dev_to_mirror"}
+
+    with pytest.raises(CatalogValidationError) as exc_info:
+        SiteCatalog.from_dict(
+            {
+                "sites": [
+                    _valid_site_dict(name="Alpha Platform", slug="same_slug"),
+                    _valid_site_dict(name="Beta Platform", slug="same_slug"),
+                ]
+            },
+            require_explicit_slug=True,
+        )
+    assert "Duplicate slug" in str(exc_info.value)
+
+
+def test_custom_catalog_definitions_keep_the_derivation_fallback(tmp_path: Any) -> None:
+    """Non-production definitions are unchanged: the low-level API still derives slugs."""
+    custom = tmp_path / "custom_sites.yaml"
+    custom.write_text(
+        "sites:\n"
+        "  - name: Legacy Platform\n"
+        "    category: Development\n"
+        "    profile_url: https://legacy.example/{username}\n"
+        "    check_method: generic_html\n"
+        '    success_patterns: ["user-profile"]\n',
+        encoding="utf-8",
+    )
+
+    derived = SiteCatalog.from_yaml_file(custom)
+    assert derived.get_by_slug("legacy_platform") is not None
+
+    clear_catalog_cache()
+    opted_out = load_catalog(custom, reload=True, require_explicit_slug=False)
+    assert opted_out.get_by_slug("legacy_platform") is not None
+
+    clear_catalog_cache()
+    with pytest.raises(CatalogValidationError):
+        load_catalog(custom, reload=True)
+    clear_catalog_cache()
+
+
+def test_catalog_cache_never_serves_a_lenient_catalog_to_a_strict_caller(tmp_path: Any) -> None:
+    stripped = _production_catalog_without_slugs(tmp_path)
+
+    clear_catalog_cache()
+    lenient = load_catalog(stripped, require_explicit_slug=False)
+    assert lenient.total_sites(enabled_only=False) == 57
+
+    # Same path, strict caller, no reload: the cached lenient catalog must not answer
+    with pytest.raises(CatalogValidationError):
+        load_catalog(stripped)
+    clear_catalog_cache()
+
+
+def test_production_provider_identity_baseline_unchanged() -> None:
+    """B2-02B is identity/schema hardening only: no provider or strategy drift."""
+    clear_catalog_cache()
+    catalog = load_catalog(reload=True)
+
+    assert catalog.total_sites(enabled_only=False) == 57
+    assert catalog.total_sites(enabled_only=True) == 57
+
+    assert {
+        s.slug for s in catalog.sites if s.detection.strategy is CheckMethod.JSON_API
+    } == {
+        "bluesky",
+        "chess_com",
+        "crates_io",
+        "docker_hub",
+        "github",
+        "hugging_face",
+        "keybase",
+        "lichess",
+        "mastodon_mastodon_social",
+        "modrinth",
+        "reddit",
+    }
+    assert {
+        s.slug for s in catalog.sites if s.detection.strategy is CheckMethod.LOGIN_WALL
+    } == {"facebook", "instagram", "threads", "tiktok", "x"}
+
+    assert catalog.count_by_strategy() == {"generic_html": 41, "json_api": 11, "login_wall": 5}
+    assert catalog.count_by_confidence_strategy() == {
+        "explicit_api": 11,
+        "multi_signal": 38,
+        "never_confirmed": 8,
+    }
+    assert catalog.count_by_category() == {
+        "Art": 5,
+        "Creator": 1,
+        "Development": 17,
+        "Forums": 2,
+        "Freelance": 1,
+        "Gaming": 8,
+        "Identity": 1,
+        "Music": 2,
+        "Security": 3,
+        "Social": 13,
+        "Tech": 1,
+        "Video": 3,
+    }
+    assert {s.auth_platform for s in catalog.sites if s.auth_platform} == {
+        "facebook",
+        "instagram",
+        "threads",
+        "tiktok",
+        "twitch",
+        "x",
+    }
