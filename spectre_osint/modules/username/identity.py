@@ -235,12 +235,22 @@ class IdentityRecord:
         return normalize_text(self.bio)
 
     @property
+    def website_n(self) -> str:
+        """Observed website, unless it only restates this record's own profile URL."""
+        # Several catalog providers leak their own canonical/og:url into the website
+        # field. Comparing that self-reference would score the platform, not the person.
+        canon = normalize_url(self.website)
+        if not canon or canon == self.profile_n:
+            return ""
+        return canon
+
+    @property
     def domain(self) -> str:
-        return normalize_domain(self.website) or ""
+        return normalize_domain(self.website_n) or ""
 
     @property
     def url_n(self) -> str:
-        return normalize_url(self.website) or ""
+        return self.website_n
 
     @property
     def profile_n(self) -> str:

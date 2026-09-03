@@ -382,3 +382,76 @@ def test_distinct_public_id_alone_still_caps_the_score() -> None:
     assert pair["strong_conflict"] is True
     assert pair["score"] <= 24
     assert correlate_identities([left, right])["clusters"] == []
+
+
+def test_website_that_only_restates_its_own_profile_url_is_not_an_observation() -> None:
+    """Providers leaking canonical/og:url into `website` must not add a second signal."""
+    linking = _finding(
+        "GitHub",
+        username="alice",
+        profile_url="https://github.com/alice",
+        website="https://tryhackme.com/p/bob",
+    )
+    self_referential = _finding(
+        "TryHackMe",
+        username="bob",
+        profile_url="https://tryhackme.com/p/bob",
+        website="https://tryhackme.com/p/bob",
+    )
+    pair = compare_records(*records_from_findings([linking, self_referential]))
+    assert pair["evidence"] == ["cross_profile_link"]
+    assert pair["score"] == WEIGHTS["cross_profile_link"]
+    assert pair["score"] < CLUSTER_MIN
+    assert correlate_identities([linking, self_referential])["clusters"] == []
+    honest = compare_records(
+        *records_from_findings(
+            [
+                linking,
+                _finding("TryHackMe", username="bob", profile_url="https://tryhackme.com/p/bob"),
+            ]
+        )
+    )
+    assert (pair["score"], pair["evidence"]) == (honest["score"], honest["evidence"])
+
+
+def test_self_referential_websites_on_one_platform_do_not_match() -> None:
+    """Two users on a leaking provider share only the platform, which is not identity."""
+    left = _finding(
+        "TryHackMe",
+        username="alice",
+        profile_url="https://tryhackme.com/p/alice",
+        website="https://tryhackme.com/p/alice",
+    )
+    right = _finding(
+        "TryHackMe",
+        username="bobmarley",
+        profile_url="https://tryhackme.com/p/bobmarley",
+        website="https://tryhackme.com/p/bobmarley",
+    )
+    pair = compare_records(*records_from_findings([left, right]))
+    assert "same_personal_domain" not in pair["evidence"]
+    assert "same_personal_url" not in pair["evidence"]
+    assert "distinct_personal_domain" not in pair["conflicts"]
+    assert pair["score"] < CLUSTER_MIN
+    assert correlate_identities([left, right])["clusters"] == []
+
+
+def test_website_n_drops_only_the_self_reference() -> None:
+    """A genuine website survives; any normalization of the own profile URL does not."""
+    genuine = records_from_findings(
+        [_finding("GitHub", profile_url="https://github.com/alice", website="https://alice.dev")]
+    )[0]
+    assert genuine.website_n == "https://alice.dev/"
+    assert genuine.url_n == "https://alice.dev/"
+    assert genuine.domain == "alice.dev"
+    for variant in (
+        "https://tryhackme.com/p/alice",
+        "http://www.tryhackme.com/p/alice/",
+        "tryhackme.com/p/alice?utm_source=x",
+    ):
+        leaked = records_from_findings(
+            [_finding("TryHackMe", profile_url="https://tryhackme.com/p/alice", website=variant)]
+        )[0]
+        assert leaked.website_n == "", variant
+        assert leaked.url_n == "", variant
+        assert leaked.domain == "", variant
