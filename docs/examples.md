@@ -41,7 +41,7 @@ spectre investigate alice_osint \
 2. **Busca e Menções Públicas:** Consulta motores de busca para descobrir menções associadas ao e-mail e website.
 3. **Classificação de Novidade:** Identifica novos indicadores encontrados como `NOVEL` ou `DERIVED`.
 4. **Motor de Correlação:** Compara pares de perfis encontrados calculando pontuações com base em URLs de avatar normalizadas, links recíprocos e biografias.
-5. **Geração de Dossiê:** Cria o arquivo `reports/case-username-alice_osint-....html` contendo o grafo interativo e gavetas de proveniência de evidências. O grafo é renderizado pela biblioteca Cytoscape carregada de `unpkg.com`, portanto exige internet no momento da abertura; sem rede, o restante do dossiê continua legível.
+5. **Geração de Dossiê:** Cria um relatório HTML em `reports/` contendo o grafo interativo e gavetas de proveniência de evidências. O nome do arquivo é derivado pelo runtime a partir dos identificadores do caso e do alvo, com truncamento e sufixos de hash determinísticos quando necessário — não é um nome fixo previsível. O grafo é renderizado pela biblioteca Cytoscape carregada de `unpkg.com`, portanto exige internet no momento da abertura; sem rede, o restante do dossiê continua legível.
 
 ---
 
@@ -59,7 +59,7 @@ spectre domain example.com --auto-pivot --depth 2
 - **DNS:** Registros A, AAAA, MX, TXT, NS e CNAME.
 - **Certificate Transparency (crt.sh):** Lista de subdomínios históricos que emitiram certificados SSL/TLS.
 - **RDAP / Whois:** Entidades registrantes e servidores de nomes autoritativos.
-- **Pivots Automáticos:** Quando `--auto-pivot` está ativo, o SPECTRE inicia investigações secundárias sobre os endereços IP dos registros A/MX descobertos.
+- **Pivots Automáticos:** Quando `--auto-pivot` está ativo, o SPECTRE inicia investigações secundárias sobre as entidades descobertas de tipo pivotável (`IP`, `DOMAIN` e `SUBDOMAIN`, conforme `PIVOTABLE` em `core/pipeline.py`) que tenham confiança `CONFIRMED` ou `HIGH`. Os registros A/AAAA geram entidades de **IP**, investigadas como endereços; os registros MX geram entidades de **domínio** — o host do servidor de e-mail —, investigadas como domínios e não como IPs. Endereços privados são ignorados, e a expansão respeita `--depth` e o orçamento de `SPECTRE_PIVOT_BUDGET`.
 
 ---
 

@@ -30,5 +30,5 @@ spectre investigate alice_osint --email alice@example.com --website https://alic
 ## 🛡️ Core Principles
 
 - **CLI-First:** Built for high-speed terminal investigations and automated SOC pipelines.
-- **Passive-First:** Gathers public information without intrusive network probing.
+- **Passive-First:** Collection is passive by default — public sources are read without probing the target's own infrastructure. The single exception is `spectre network`, an opt-in **active** TCP connect scan that is disabled by default and runs only when the operator passes `--authorized` and confirms authorization interactively. See [Privacidade & Segurança](../concepts/privacy-and-safety.md) (Portuguese).
 - **Evidence-First:** Strict provenance tracking; identity is never assumed from HTTP 200 responses or matching handles alone.

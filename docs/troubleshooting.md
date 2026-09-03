@@ -43,7 +43,9 @@ playwright install chromium
 **Sintoma:** O SPECTRE recusa iniciar a sessão informando `PathSafetyError`.
 
 **Solução:**
-O SPECTRE **recusa explicitamente** utilizar perfis pessoais do seu navegador padrão para proteger seus dados pessoais. Todas as sessões são criadas no diretório isolado do SPECTRE (`~/.local/share/spectre/browser-profiles`).
+O SPECTRE **recusa explicitamente** utilizar perfis pessoais do seu navegador padrão para proteger seus dados pessoais. As sessões usam sempre perfis dedicados do próprio SPECTRE, marcados com `.spectre-owned`, e os caminhos padrão **dependem do sistema operacional**. Além disso, os dois backends mantêm **raízes de perfil distintas**: uma para Chromium/Playwright (`SPECTRE_BROWSER_PROFILES_DIR`) e outra para o Google Chrome via CDP (`SPECTRE_CHROME_PROFILES_DIR`).
+
+Os padrões por sistema operacional estão em [Configuração](configuration.md) e o detalhamento por backend em [Authenticated Public](technical/authenticated-public.md). Se uma dessas variáveis apontar para um diretório de perfil pessoal do Chrome/Edge, o `PathSafetyError` é exatamente o comportamento esperado.
 
 ---
 

@@ -50,7 +50,7 @@ Antes de iniciar investigações, execute o comando de diagnóstico. Ele valida 
 spectre doctor
 ```
 
-Exemplo de saída esperada:
+Exemplo **abreviado** da saída — apenas alguns trechos são reproduzidos aqui; o relatório real é mais longo:
 
 ```text
 SPECTRE DOCTOR
@@ -58,21 +58,23 @@ SPECTRE DOCTOR
 Core
   Python                   3.13.x           OK
   SPECTRE                  0.1.0b1          OK
-  Package import           OK               OK
-  Database                 SQLite           OK
-  Database writable        OK               OK
-  Reports directory        OK               OK
+  ...
 
 Browser
   Chrome/Chromium          detected         OK
+  ...
 
 Security
   Bind address             127.0.0.1        OK
-  Secrets redaction        OK               OK
   SSRF policy              enabled          OK
+  ...
 
 Overall: READY WITH OPTIONAL FEATURES MISSING
 ```
+
+O relatório completo é agrupado em seis seções, renderizadas na ordem `Core`, `Browser`, `Search`, `Authenticated public sessions`, `API providers` e `Security`; apenas seções que não produziram nenhuma linha são omitidas. Portanto, além dos trechos acima, espere também as linhas de busca (SearXNG e Google CSE), uma linha por plataforma de sessão autenticada e uma linha por provedor de API — em uma instalação limpa sem chaves configuradas, essas linhas normalmente aparecem marcadas como `OPTIONAL`.
+
+O status final é `READY`, `READY WITH OPTIONAL FEATURES MISSING` ou `ACTION REQUIRED`. O comando retorna código de saída `1` apenas em `ACTION REQUIRED`.
 
 ---
 
@@ -105,6 +107,6 @@ spectre investigate alice_osint \
 
 ## 6. Onde os Resultados Ficam Salvos?
 
-- **Relatórios HTML:** Pasta local `reports/` (exemplo: `reports/case-username-alice_osint-....html`).
+- **Relatórios HTML:** Pasta local `reports/`. O nome de cada artefato é **gerado pelo runtime** a partir dos identificadores do caso e do alvo (`core/paths.py::artifact_stem`): cada identificador é convertido em slug, pode ser truncado quando excede o limite de tamanho — recebendo então um sufixo de hash determinístico — e o nome final termina com um hash do par caso+alvo. Não presuma um nome previsível ou legível: localize o arquivo pela listagem de `reports/` ou pelos caminhos que `spectre report` imprime.
 - **Banco de Dados SQLite:** Armazenado em `data/spectre.db`.
 - **Exportação:** Gere relatórios a qualquer momento com `spectre report`.
