@@ -76,7 +76,7 @@ nav:
       - "Busca & Descoberta": technical/search-discovery.md
       - "Correlação de Identidades": technical/identity-correlation.md
       - "Authenticated Public": technical/authenticated-public.md
-      - "Interface Web Legada": technical/legacy-web.md
+      - "Interface Web Legada (Removida)": technical/legacy-web.md
       - "Testes & Qualidade": technical/testing.md
       - "Processo de Release": technical/release.md
   - "English Docs":

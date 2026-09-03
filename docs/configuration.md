@@ -41,8 +41,6 @@ cp .env.example .env
 | `SPECTRE_USER_AGENT` | `SPECTRE-OSINT/0.1-alpha (+passive-osint)` | Header `User-Agent` padrão para requisições HTTP. |
 | `SPECTRE_SSRF_ENABLED` | `true` | Bloqueia requisições a redes privadas, loopback e metadados de nuvem (`169.254.169.254`). |
 | `SPECTRE_ALLOW_PRIVATE_TARGETS`| `false` | Permite explicitamente alvos em redes privadas se ativado pelo operador. |
-| `SPECTRE_ALLOW_PUBLIC_BIND` | `false` | Permite vincular o servidor web legado em interfaces externas (não recomendado). |
-| `SPECTRE_WEB_HOST` | `127.0.0.1` | Campo de configuração em `Settings`. O comando CLI `spectre web` possui `--host 127.0.0.1` como padrão; para alterar o endereço de escuta, informe explicitamente `--host <endereço>` na linha de comando (endereços externos exigem `SPECTRE_ALLOW_PUBLIC_BIND=true`). |
 | `SPECTRE_PIVOT_BUDGET` | `8` | Limite de pivôs automáticos por execução padrão. |
 
 ### 3. Inteligência de Busca & Discovery

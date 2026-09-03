@@ -26,7 +26,8 @@ to say `CONFIGURED` rather than print secrets.
 
 ## Model
 
-- Dashboard bind default is `127.0.0.1`.
+- SPECTRE is CLI-first and runs no local HTTP server. The legacy localhost
+  dashboard was removed in the 0.1.0b2 development milestone.
 - `AUTHENTICATED_PUBLIC` means the operator logged in to view **public** pages
   in a SPECTRE-owned browser profile. It is not private-message access and not
   a bypass of platform controls.

@@ -323,25 +323,6 @@ spectre network 127.0.0.1 --authorized
 
 ---
 
-## 7. Interface Web Legada (Depreciação)
+## 7. Interface Web Legada (Removida)
 
-### `spectre web`
-Inicia o dashboard local FastAPI em loopback. **Comando depreciado e agendado para remoção na versão 0.1.0b2** em favor da arquitetura CLI-first e dos relatórios estáticos em arquivo único.
-
-- **Endereço de Bind:** O comando CLI utiliza `--host 127.0.0.1` como padrão (mascarando `SPECTRE_WEB_HOST` se a flag for omitida). Vincular a interfaces de rede externas via `--host` exige opt-in explícito do operador com `SPECTRE_ALLOW_PUBLIC_BIND=true`.
-- **Porta:** Padrão `8000` (configurável via `--port`).
-
-```bash
-# Iniciar servidor local na porta padrão 8000
-spectre web
-
-# Especificar porta alternativa
-spectre web --port 8080
-```
-
-### `spectre dashboard`
-Alias legado para o comando `spectre web`. Também depreciado e agendado para remoção na versão 0.1.0b2.
-
-```bash
-spectre dashboard
-```
+Os comandos `spectre web` e `spectre dashboard` foram **removidos** no milestone de desenvolvimento 0.1.0b2. Invocá-los falha como comando desconhecido. O SPECTRE é CLI-first: use os comandos de investigação acima e o `spectre report` para gerar relatórios estáticos em arquivo único. Consulte [Interface Web Legada](technical/legacy-web.md) para o registro histórico da remoção.
