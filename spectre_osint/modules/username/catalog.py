@@ -176,12 +176,28 @@ _ALLOWED_ROOT_KEYS: frozenset[str] = frozenset({"sites", "defaults"})
 def slugify_name(name: str) -> str:
     """Derive a deterministic, stable, lowercase ASCII slug from a display name.
 
-    Note: Automatic slug derivation is transitional for B2-02A. B2-02B will declare
-    explicit slug fields for all production catalog definitions.
+    Retained only as a compatibility fallback for custom and legacy catalog
+    definitions that predate explicit slugs. Production catalog definitions
+    declare `slug` explicitly and are loaded with `require_explicit_slug=True`,
+    so this derivation is never reached for the bundled catalog (B2-02B).
     """
     s = name.strip().lower()
     s = re.sub(r"[^a-z0-9]+", "_", s)
     return s.strip("_")
+
+
+def _declares_explicit_slug(raw_site: dict[str, Any]) -> bool:
+    """False only when a raw catalog entry omits `slug` or declares it blank.
+
+    Non-string values report True so that the `SiteDefinition` type error surfaces
+    instead of the production-contract error, keeping diagnostics precise.
+    """
+    raw_slug = raw_site.get("slug")
+    if raw_slug is None:
+        return False
+    if isinstance(raw_slug, str) and not raw_slug.strip():
+        return False
+    return True
 
 
 def _validate_regex_patterns(patterns: list[str], field_name: str) -> None:
@@ -507,6 +523,8 @@ class SiteDefinition(CatalogBaseModel):
         raw_slug = d.get("slug")
         if raw_slug is not None and not isinstance(raw_slug, str):
             raise ValueError(f"Site 'slug' must be a string, got {type(raw_slug).__name__}")
+        # Display-name derivation is the custom/legacy fallback only. Production loading
+        # rejects missing slugs at the catalog boundary (require_explicit_slug).
         slug = str(raw_slug or "").strip().lower() or slugify_name(name)
 
         raw_cat = d.get("category")
@@ -987,8 +1005,19 @@ class SiteCatalog:
         ]
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], source_label: str = "sites.yaml") -> SiteCatalog:
-        """Construct and validate a SiteCatalog from a dictionary structure."""
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        source_label: str = "sites.yaml",
+        *,
+        require_explicit_slug: bool = False,
+    ) -> SiteCatalog:
+        """Construct and validate a SiteCatalog from a dictionary structure.
+
+        With require_explicit_slug=True every entry must declare its own non-blank
+        `slug`; display-name derivation is refused. This is the production contract
+        enforced by load_catalog().
+        """
         if not isinstance(data, dict):
             raise CatalogValidationError(
                 site_identifier=source_label,
@@ -1032,6 +1061,15 @@ class SiteCatalog:
                     reason=f"Site entry at index {idx} must be a dictionary, got {type(item).__name__}",
                 )
             site_name = str(item.get("name") or item.get("slug") or f"index_{idx}")
+            if require_explicit_slug and not _declares_explicit_slug(item):
+                raise CatalogValidationError(
+                    site_identifier=site_name,
+                    field_name="slug",
+                    reason=(
+                        "Production catalog entries must declare an explicit non-blank 'slug'; "
+                        "deriving an identifier from the display name is not permitted"
+                    ),
+                )
             try:
                 site_def = SiteDefinition.model_validate(item)
                 validated_sites.append(site_def)
@@ -1058,7 +1096,7 @@ class SiteCatalog:
         return cls(validated_sites)
 
     @classmethod
-    def from_yaml_file(cls, path: Path) -> SiteCatalog:
+    def from_yaml_file(cls, path: Path, *, require_explicit_slug: bool = False) -> SiteCatalog:
         """Load and validate a SiteCatalog from a YAML file path."""
         if not path.exists():
             raise FileNotFoundError(f"Catalog file not found: {path}")
@@ -1079,24 +1117,42 @@ class SiteCatalog:
                 field_name=None,
                 reason="Top-level YAML document must be a dictionary mapping",
             )
-        return cls.from_dict(parsed, source_label=str(path))
+        return cls.from_dict(
+            parsed,
+            source_label=str(path),
+            require_explicit_slug=require_explicit_slug,
+        )
 
 
-_CATALOG_CACHE: dict[Path, SiteCatalog] = {}
+_CATALOG_CACHE: dict[tuple[Path, bool], SiteCatalog] = {}
 
 
-def load_catalog(path: Path | None = None, *, reload: bool = False) -> SiteCatalog:
+def load_catalog(
+    path: Path | None = None,
+    *,
+    reload: bool = False,
+    require_explicit_slug: bool = True,
+) -> SiteCatalog:
     """Load and validate the process-local cached site catalog.
 
     Results are cached in memory for low-overhead process-local access.
     Pass reload=True to force re-reading and re-validating the file.
+
+    This is the production catalog loader, so explicit slugs are mandatory by
+    default: an entry that omits `slug` is rejected instead of silently receiving
+    a display-name-derived identifier. Pass require_explicit_slug=False only to
+    load a legacy or custom catalog that predates explicit slugs.
     """
     target_path = (path or (BUNDLED_DATA_DIR / "sites.yaml")).resolve()
-    if not reload and target_path in _CATALOG_CACHE:
-        return _CATALOG_CACHE[target_path]
+    cache_key = (target_path, require_explicit_slug)
+    if not reload and cache_key in _CATALOG_CACHE:
+        return _CATALOG_CACHE[cache_key]
 
-    catalog = SiteCatalog.from_yaml_file(target_path)
-    _CATALOG_CACHE[target_path] = catalog
+    catalog = SiteCatalog.from_yaml_file(
+        target_path,
+        require_explicit_slug=require_explicit_slug,
+    )
+    _CATALOG_CACHE[cache_key] = catalog
     return catalog
 
 
