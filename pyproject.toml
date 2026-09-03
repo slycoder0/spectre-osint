@@ -42,10 +42,6 @@ dependencies = [
     "Pillow>=10.4.0,<13",
     "exifread>=3.0.0,<4",
     "pypdf>=4.3.0,<7",
-    "fastapi>=0.115.0,<0.142",
-    "starlette>=0.46.0,<1.7",
-    "uvicorn[standard]>=0.30.0,<0.53",
-    "python-multipart>=0.0.9,<0.1",
     "playwright>=1.49.0,<1.56",
     "keyring>=25.0.0,<26",
 ]
@@ -82,10 +78,6 @@ include = ["spectre_osint*"]
 spectre_osint = [
     "data/*",
     "reporting/templates/*",
-    "web/templates/*",
-    "web/static/*",
-    "web/static/fonts/*",
-    "web/i18n/*",
     "migrations/*.py",
     "migrations/*.mako",
     "migrations/versions/*.py",

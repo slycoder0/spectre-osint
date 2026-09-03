@@ -65,7 +65,7 @@ Browser
   ...
 
 Security
-  Bind address             127.0.0.1        OK
+  Secrets redaction        OK               OK
   SSRF policy              enabled          OK
   ...
 

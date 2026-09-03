@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from spectre_osint.browser.auth import AuthService
@@ -31,7 +30,6 @@ from spectre_osint.core.types import (
     UsernameCheckStatus,
 )
 from spectre_osint.modules.username.engine import analyze_username
-from spectre_osint.web.app import app as web_app
 
 runner = CliRunner()
 GOOGLE_OAUTH_TEXT = "This browser or app may not be secure. Try using a different browser."
@@ -188,21 +186,3 @@ def test_cli_explains_oauth_rejection_and_official_api(tmp_path, monkeypatch) ->
     assert again.exit_code == 1
     assert "Opening SPECTRE-owned" not in again.stdout
     assert FakeBrowserBackend.login_calls == 1
-
-
-def test_dashboard_suggests_official_api_for_x(settings) -> None:
-    from spectre_osint.core.database import init_db, reset_engine
-
-    init_db(settings)
-    with TestClient(web_app) as client:
-        home = client.get("/")
-        assert home.status_code == 200
-        assert OFFICIAL_API_SUGGESTION in home.text
-        assert "PLAYWRIGHT_SESSION" in home.text
-        assert "BOTH" in home.text
-        sessions = client.get("/sessions")
-        assert sessions.status_code == 200
-        assert OFFICIAL_API_SUGGESTION in sessions.text
-        assert "Anonymous public username lookup is unaffected." in sessions.text
-        assert "spectre auth login instagram" in sessions.text
-    reset_engine()

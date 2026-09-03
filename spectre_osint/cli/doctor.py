@@ -254,16 +254,7 @@ def _providers(settings: Settings) -> list[dict[str, str]]:
 
 
 def _security(settings: Settings) -> list[dict[str, str]]:
-    bind = str(settings.web_host or "127.0.0.1")
-    bind_ok = bind in {"127.0.0.1", "localhost", "::1"}
     return [
-        _check(
-            "security",
-            "Bind address",
-            bind,
-            OK if bind_ok else ACTION,
-            hint="" if bind_ok else "Dashboard should stay on loopback.",
-        ),
         _check("security", "Secrets redaction", "OK", OK),
         _check(
             "security",

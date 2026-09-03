@@ -40,4 +40,6 @@ pip check
 ## CLI notes
 
 - `spectre doctor` diagnoses the install. It must not start investigations.
-- `spectre web` starts the legacy dashboard (`spectre dashboard` is an alias; deprecated: scheduled for removal in 0.1.0b2).
+- SPECTRE is CLI-first. The legacy `spectre web` / `spectre dashboard` dashboard was
+  removed in the 0.1.0b2 development milestone; do not reintroduce a served UI.
+  Operator-facing output is the CLI plus the standalone report artifacts.

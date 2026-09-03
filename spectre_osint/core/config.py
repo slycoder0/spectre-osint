@@ -106,8 +106,6 @@ class Settings(BaseSettings):
     )
     ssrf_enabled: bool = Field(default=True, alias="SPECTRE_SSRF_ENABLED")
     allow_private_targets: bool = Field(default=False, alias="SPECTRE_ALLOW_PRIVATE_TARGETS")
-    allow_public_bind: bool = Field(default=False, alias="SPECTRE_ALLOW_PUBLIC_BIND")
-    web_host: str = Field(default="127.0.0.1", alias="SPECTRE_WEB_HOST")
     pivot_budget: int = Field(default=8, alias="SPECTRE_PIVOT_BUDGET")
     searxng_url: str | None = Field(default=None, alias="SEARXNG_URL")
     search_query_budget: int = Field(default=12, alias="SPECTRE_SEARCH_QUERY_BUDGET")

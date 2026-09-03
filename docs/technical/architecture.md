@@ -40,7 +40,6 @@ spectre_osint/
   browser/                Sessões autenticadas públicas, Chrome CDP e Playwright
   correlation/            Grafo de entidades, sugestões de pivôs genéricos e fusão de confiança
   reporting/              Geradores de artefatos de arquivo único em HTML, JSON, Markdown, CSV e GraphML
-  web/                    Dashboard local FastAPI + Jinja2 (DEPRECATED: agendado para remoção na 0.1.0b2)
   data/                   sites.yaml (Site Catalog 2.0), providers.yaml, user_agents.txt
   migrations/             Alembic (esquema inicial 0001_initial)
   llm/                    Módulo experimental de sumarização (atualmente não conectado ao pipeline principal)
@@ -56,7 +55,7 @@ spectre_osint/
 | **Novelty Classifier** | Não pode inflar scores de confiança ou identidade automaticamente. |
 | **Mentions Module** | Não substitui o status `CONFIRMED` ou `LIKELY` do catálogo oficial. |
 | **Identity Correlator** | Não consome linhas não-validadas de descoberta externa (`discovered_profile`). |
-| **UI / Relatórios** | Não reclassifica achados nem altera pontuações calculadas pelo core. |
+| **Relatórios** | Não reclassifica achados nem altera pontuações calculadas pelo core. |
 | **Pivot Engine** | Não transforma um candidato de descoberta em identidade confirmada. |
 | **Doctor** | Nunca inicia investigações, nunca realiza logins e nunca inicializa o Chrome. |
 | **LLM Helper** | Não está conectado ao pipeline principal nesta versão; saídas experimentais nunca mutam fatos observados. |
@@ -69,9 +68,9 @@ spectre_osint/
 - **Responsabilidade:** Comandos do operador, `spectre --version`, `spectre doctor`.
 - **Entradas:** `sys.argv`, `.env` e variáveis de ambiente via `Settings`.
 - **Saídas:** `stdout` (Rich), códigos de saída (`doctor`: 0 pronto/opcional, 1 ação necessária).
-- **Efeitos Colaterais:** Investigações gravam no banco e relatórios; `auth` grava arquivos de sessão; `web`/`dashboard` vinculam a loopback por padrão. O `doctor` não produz efeitos colaterais.
+- **Efeitos Colaterais:** Investigações gravam no banco e relatórios; `auth` grava arquivos de sessão. O `doctor` não produz efeitos colaterais.
 - **Dependências:** `core`, `browser`, `modules`, `reporting`.
-- **Comandos Principais:** `username`, `email`, `domain`, `ip`, `url`, `hash`, `company`, `person`, `investigate`, `metadata`, `threat`, `wayback`, `providers`, `report`, `search` (helper CSE), `web`/`dashboard` (legado), `network`, `case`, `auth`, `cache`, `doctor`, `version`.
+- **Comandos Principais:** `username`, `email`, `domain`, `ip`, `url`, `hash`, `company`, `person`, `investigate`, `metadata`, `threat`, `wayback`, `providers`, `report`, `search` (helper CSE), `network`, `case`, `auth`, `cache`, `doctor`, `version`.
 
 ### Pipeline — `spectre_osint/core/pipeline.py`
 - **Responsabilidade:** Ciclo de vida de casos e execuções, despacho de coletores, pontuação, persistência e relatórios.
@@ -137,12 +136,10 @@ spectre_osint/
 - **Responsabilidade:** Armazenamento de casos, execuções, entidades, achados, evidências e relacionamentos.
 - **Efeitos Colaterais:** Gravações no banco SQLite local sob `SPECTRE_DATA_DIR`.
 
-### Interface Web Legada — `spectre_osint/web/` (DEPRECATED)
-- **Status:** Depreciada no milestone `0.1.0b2`; agendada para remoção em favor de fluxos CLI-first.
-- **Responsabilidade:** Dashboard local para operador único (dossiê, grafo, sessões, provedores).
-- **Entradas:** Mesmo `CaseManager` e pipeline da CLI.
-- **Efeitos Colaterais:** Jobs assíncronos em memória (`web/jobs.py`), relatórios.
-- **Fronteira:** Não altera semântica de evidências; o comando CLI vincula a `127.0.0.1:8000` por padrão (bind em interfaces externas via `--host` exige opt-in com `SPECTRE_ALLOW_PUBLIC_BIND=true`).
+### Interface Web Legada — removida no `0.1.0b2`
+- **Status:** Removida no milestone de desenvolvimento `0.1.0b2` em favor de fluxos CLI-first. O pacote `spectre_osint/web/` e os comandos `spectre web` / `spectre dashboard` não existem mais.
+- **Registro:** Veja [Interface Web Legada](legacy-web.md) para o inventário completo do que foi removido.
+- **Fronteira:** A remoção não alterou a semântica de evidências. As configurações `SPECTRE_WEB_HOST` e `SPECTRE_ALLOW_PUBLIC_BIND` foram retiradas junto com o diagnóstico `Bind address` do `doctor`; `SPECTRE_SSRF_ENABLED` e `SPECTRE_ALLOW_PRIVATE_TARGETS` permanecem intactas.
 
 ### Relatórios — `spectre_osint/reporting/`
 - **Responsabilidade:** Geração de artefatos de arquivo único a partir do `InvestigationResult` (HTML, Markdown, JSON, CSV, GraphML). O relatório HTML depende da biblioteca Cytoscape servida por `unpkg.com` apenas para renderizar o grafo interativo; os dados em si já vão embutidos no arquivo.

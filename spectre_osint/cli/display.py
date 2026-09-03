@@ -382,7 +382,7 @@ def _print_mentions_summary(result: InvestigationResult) -> None:
             query = str(data.get("query") or "")
             lines.append(f"  {data.get('relevance')}  {query}  {title}")
         if counts["AMBIGUOUS"] or len(ranked) > 5:
-            lines.append("  Full list: GUI / HTML report")
+            lines.append("  Full list: HTML report")
     console.print(Panel("\n".join(lines), title="PUBLIC MENTIONS", border_style="cyan"))
 
 

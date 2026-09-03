@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastapi.testclient import TestClient
 
 from spectre_osint.core.case_manager import CaseManager
 from spectre_osint.core.database import init_db, reset_engine
@@ -12,7 +11,6 @@ from spectre_osint.core.exceptions import ValidationError
 from spectre_osint.core.inputs import parse_target_inputs
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus, RelationType
 from spectre_osint.modules.username.identity import correlate_identities
-from spectre_osint.web.app import app
 
 
 def test_primary_only_and_alias_dedupe() -> None:
@@ -83,7 +81,7 @@ async def test_multi_alias_sweeps_are_sequential(monkeypatch, settings) -> None:
     assert peak == 1
 
 
-def test_pairwise_gui_hides_zero_scores_by_default() -> None:
+def test_pairwise_hides_zero_scores_by_default() -> None:
     from spectre_osint.core.presentation import identity_view
 
     result = InvestigationResult(
@@ -159,17 +157,6 @@ def test_operator_alias_does_not_raise_identity_score() -> None:
     assert any("alice_osint" in item or "GitHub" in item for item in payload["unclustered"])
 
 
-def test_web_rejects_invalid_email(settings) -> None:
-    init_db(settings)
-    with TestClient(app) as client:
-        response = client.post(
-            "/investigate",
-            data={"target": "alice", "mode": "new", "email": "bad"},
-        )
-        assert response.status_code == 400
-    reset_engine()
-
-
 def test_refresh_keeps_inputs(settings) -> None:
     init_db(settings)
     manager = CaseManager()
@@ -214,8 +201,5 @@ def test_refresh_keeps_inputs(settings) -> None:
     assert loaded is not None
     assert loaded.inputs is not None
     assert loaded.inputs["aliases"] == ["bob"]
-    with TestClient(app) as client:
-        page = client.get(f"/investigations/{case.id}")
-        assert "bob" in page.text
-        assert "investigation leads" in page.text.lower() or "pistas de investigação" in page.text.lower() or "Target inputs" in page.text or "Entradas" in page.text
+    assert loaded.inputs["primary"] == "alice"
     reset_engine()

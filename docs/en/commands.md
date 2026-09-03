@@ -93,9 +93,9 @@ Supported platforms: `instagram`, `facebook`, `threads`, `tiktok`, `x`, `twitch`
 
 ---
 
-## Legacy Web Interface (deprecated)
+## Legacy Web Interface (removed)
 
-| Command | Description |
-| :--- | :--- |
-| `spectre web [--host] [--port]` | Starts the local FastAPI dashboard. **Deprecated and scheduled for removal in 0.1.0b2.** Defaults to `127.0.0.1:8000`; binding to a non-loopback address requires the operator to set `SPECTRE_ALLOW_PUBLIC_BIND=true`. |
-| `spectre dashboard` | Legacy alias for `spectre web`, deprecated on the same schedule. |
+`spectre web` and `spectre dashboard` were **removed** in the 0.1.0b2 development
+milestone; invoking either fails as an unknown command. SPECTRE is CLI-first: run
+the investigation commands above and use `spectre report` for standalone
+single-file report artifacts.

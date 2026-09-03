@@ -405,39 +405,6 @@ def search_cmd(query: str = typer.Argument(..., help="Public web search query"))
 
 
 @app.command()
-def web(
-    host: str = typer.Option("127.0.0.1", "--host"),
-    port: int = typer.Option(8000, "--port"),
-) -> None:
-    """Start the localhost web dashboard (Deprecated: scheduled for removal in milestone 0.1.0b2)."""
-    _bootstrap()
-    settings = get_settings()
-    bind = host or settings.web_host
-    if bind not in {"127.0.0.1", "localhost", "::1"} and not settings.allow_public_bind:
-        raise typer.BadParameter(
-            "Dashboard is single-user and binds to 127.0.0.1. "
-            "Set SPECTRE_ALLOW_PUBLIC_BIND=true only if you accept the risk."
-        )
-    typer.echo(
-        "[DEPRECATION NOTICE] The web dashboard is deprecated and scheduled for removal in milestone 0.1.0b2. "
-        "SPECTRE is transitioning to a CLI-first workstation with rich standalone HTML/JSON reporting.",
-        err=True,
-    )
-    import uvicorn
-
-    uvicorn.run("spectre_osint.web.app:app", host=bind, port=port, reload=False)
-
-
-@app.command("dashboard")
-def dashboard(
-    host: str = typer.Option("127.0.0.1", "--host"),
-    port: int = typer.Option(8000, "--port"),
-) -> None:
-    """Alias for `spectre web` (Deprecated: scheduled for removal in milestone 0.1.0b2)."""
-    web(host=host, port=port)
-
-
-@app.command()
 def network(
     target: str = typer.Argument(..., help="Host or domain"),
     authorized: bool = typer.Option(False, "--authorized", help="Required for active recon"),

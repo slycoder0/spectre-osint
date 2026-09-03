@@ -24,8 +24,6 @@ RUN mkdir -p /app/data /app/reports /app/logs \
 
 USER spectre
 
-EXPOSE 8000
-
 # .env is never copied into the image. Mount it at runtime if needed.
 ENTRYPOINT ["spectre"]
 CMD ["--help"]
