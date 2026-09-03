@@ -2,6 +2,7 @@
 # check_method: json_api | generic_html | login_wall
 sites:
   - name: GitHub
+    slug: github
     category: Development
     profile_url: "https://github.com/{username}"
     check_url: "https://api.github.com/users/{username}"
@@ -20,6 +21,7 @@ sites:
     notes: Public users API. Token optional for quota.
 
   - name: GitLab
+    slug: gitlab
     category: Development
     profile_url: "https://gitlab.com/{username}"
     check_url: "https://gitlab.com/{username}"
@@ -33,6 +35,7 @@ sites:
     rate_limit: 0.4
 
   - name: Bitbucket
+    slug: bitbucket
     category: Development
     profile_url: "https://bitbucket.org/{username}/"
     check_method: generic_html
@@ -45,6 +48,7 @@ sites:
     rate_limit: 0.5
 
   - name: Codeberg
+    slug: codeberg
     category: Development
     profile_url: "https://codeberg.org/{username}"
     check_method: generic_html
@@ -57,6 +61,7 @@ sites:
     rate_limit: 0.5
 
   - name: Reddit
+    slug: reddit
     category: Social
     profile_url: "https://www.reddit.com/user/{username}"
     check_url: "https://www.reddit.com/user/{username}/about.json"
@@ -72,6 +77,7 @@ sites:
     rate_limit: 0.6
 
   - name: HackerNews
+    slug: hackernews
     category: Forums
     profile_url: "https://news.ycombinator.com/user?id={username}"
     check_method: generic_html
@@ -84,6 +90,7 @@ sites:
     rate_limit: 0.5
 
   - name: Dev.to
+    slug: dev_to
     category: Development
     profile_url: "https://dev.to/{username}"
     check_method: generic_html
@@ -96,6 +103,7 @@ sites:
     rate_limit: 0.5
 
   - name: Medium
+    slug: medium
     category: Social
     profile_url: "https://medium.com/@{username}"
     check_method: generic_html
@@ -108,6 +116,7 @@ sites:
     rate_limit: 0.6
 
   - name: Keybase
+    slug: keybase
     category: Security
     profile_url: "https://keybase.io/{username}"
     check_url: "https://keybase.io/_/api/1.0/user/lookup.json?username={username}"
@@ -124,6 +133,7 @@ sites:
     notes: Lookup API. them[] empty means not found — handled as missing identity field.
 
   - name: Docker Hub
+    slug: docker_hub
     category: Development
     profile_url: "https://hub.docker.com/u/{username}"
     check_url: "https://hub.docker.com/v2/users/{username}/"
@@ -137,6 +147,7 @@ sites:
     rate_limit: 0.5
 
   - name: npm
+    slug: npm
     category: Development
     profile_url: "https://www.npmjs.com/~{username}"
     check_method: generic_html
@@ -149,6 +160,7 @@ sites:
     rate_limit: 0.5
 
   - name: PyPI
+    slug: pypi
     category: Development
     profile_url: "https://pypi.org/user/{username}/"
     check_method: generic_html
@@ -164,6 +176,7 @@ sites:
     notes: Profile pages use title/canonical /user/{username}/. HTTP 200 on the request URL is not enough.
 
   - name: Replit
+    slug: replit
     category: Development
     profile_url: "https://replit.com/@{username}"
     check_method: generic_html
@@ -179,6 +192,7 @@ sites:
     notes: SPA shell is INCONCLUSIVE. Need canonical/og:url + title with @{username}.
 
   - name: Kaggle
+    slug: kaggle
     category: Tech
     profile_url: "https://www.kaggle.com/{username}"
     check_method: generic_html
@@ -191,6 +205,7 @@ sites:
     rate_limit: 0.6
 
   - name: Pinterest
+    slug: pinterest
     category: Art
     profile_url: "https://www.pinterest.com/{username}/"
     check_method: generic_html
@@ -207,6 +222,7 @@ sites:
     notes: Branding/og:title tag names are not evidence. Need profile canonical/og:url + title.
 
   - name: Tumblr
+    slug: tumblr
     category: Social
     profile_url: "https://{username}.tumblr.com/"
     check_method: generic_html
@@ -220,6 +236,7 @@ sites:
     rate_limit: 0.6
 
   - name: Steam
+    slug: steam
     category: Gaming
     profile_url: "https://steamcommunity.com/id/{username}"
     check_method: generic_html
@@ -234,6 +251,7 @@ sites:
     notes: /id/{username} resolving to /profiles/{steamid} is a positive identity signal.
 
   - name: YouTube
+    slug: youtube
     category: Video
     profile_url: "https://www.youtube.com/@{username}"
     check_method: generic_html
@@ -246,6 +264,7 @@ sites:
     rate_limit: 0.6
 
   - name: Twitch
+    slug: twitch
     category: Video
     profile_url: "https://www.twitch.tv/{username}"
     auth_platform: twitch
@@ -261,6 +280,7 @@ sites:
     notes: SPA; Helix API requires a key we do not require.
 
   - name: Vimeo
+    slug: vimeo
     category: Video
     profile_url: "https://vimeo.com/{username}"
     check_method: generic_html
@@ -273,6 +293,7 @@ sites:
     rate_limit: 0.6
 
   - name: SoundCloud
+    slug: soundcloud
     category: Music
     profile_url: "https://soundcloud.com/{username}"
     check_method: generic_html
@@ -285,6 +306,7 @@ sites:
     rate_limit: 0.6
 
   - name: Last.fm
+    slug: last_fm
     category: Music
     profile_url: "https://www.last.fm/user/{username}"
     check_method: generic_html
@@ -299,6 +321,7 @@ sites:
     notes: Need /user/{username} canonical or og:url plus title match. og:title tag name is not evidence.
 
   - name: Chess.com
+    slug: chess_com
     category: Gaming
     profile_url: "https://www.chess.com/member/{username}"
     check_url: "https://api.chess.com/pub/player/{username}"
@@ -315,6 +338,7 @@ sites:
     rate_limit: 0.6
 
   - name: Lichess
+    slug: lichess
     category: Gaming
     profile_url: "https://lichess.org/@/{username}"
     check_url: "https://lichess.org/api/user/{username}"
@@ -328,6 +352,7 @@ sites:
     rate_limit: 0.5
 
   - name: Bluesky
+    slug: bluesky
     category: Social
     profile_url: "https://bsky.app/profile/{username}"
     check_url: "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor={username}"
@@ -344,6 +369,7 @@ sites:
     notes: Public AppView API. Handle may need domain (user.bsky.social).
 
   - name: Mastodon-mastodon.social
+    slug: mastodon_mastodon_social
     category: Social
     profile_url: "https://mastodon.social/@{username}"
     check_url: "https://mastodon.social/.well-known/webfinger?resource=acct:{username}@mastodon.social"
@@ -357,6 +383,7 @@ sites:
     notes: Only mastodon.social. Other instances are not enumerated.
 
   - name: Linktree
+    slug: linktree
     category: Social
     profile_url: "https://linktr.ee/{username}"
     check_method: generic_html
@@ -369,6 +396,7 @@ sites:
     rate_limit: 0.6
 
   - name: HackerOne
+    slug: hackerone
     category: Security
     profile_url: "https://hackerone.com/{username}"
     check_method: generic_html
@@ -381,6 +409,7 @@ sites:
     rate_limit: 0.6
 
   - name: Bugcrowd
+    slug: bugcrowd
     category: Security
     profile_url: "https://bugcrowd.com/{username}"
     check_method: generic_html
@@ -393,6 +422,7 @@ sites:
     rate_limit: 0.6
 
   - name: Behance
+    slug: behance
     category: Art
     profile_url: "https://www.behance.net/{username}"
     check_method: generic_html
@@ -405,6 +435,7 @@ sites:
     rate_limit: 0.6
 
   - name: Dribbble
+    slug: dribbble
     category: Art
     profile_url: "https://dribbble.com/{username}"
     check_method: generic_html
@@ -417,6 +448,7 @@ sites:
     rate_limit: 0.6
 
   - name: ArtStation
+    slug: artstation
     category: Art
     profile_url: "https://www.artstation.com/{username}"
     check_method: generic_html
@@ -429,6 +461,7 @@ sites:
     rate_limit: 0.6
 
   - name: Flickr
+    slug: flickr
     category: Art
     profile_url: "https://www.flickr.com/people/{username}/"
     check_method: generic_html
@@ -441,6 +474,7 @@ sites:
     rate_limit: 0.6
 
   - name: Telegram
+    slug: telegram
     category: Social
     profile_url: "https://t.me/{username}"
     check_method: generic_html
@@ -454,6 +488,7 @@ sites:
     notes: t.me contact shells are INCONCLUSIVE. LIKELY only with tgme_page_photo and username in title. Never CONFIRMED.
 
   - name: Instagram
+    slug: instagram
     category: Social
     profile_url: "https://www.instagram.com/{username}/"
     auth_platform: instagram
@@ -470,6 +505,7 @@ sites:
     notes: No public unauthenticated profile API. Never CONFIRMED.
 
   - name: Facebook
+    slug: facebook
     category: Social
     profile_url: "https://www.facebook.com/{username}"
     auth_platform: facebook
@@ -482,6 +518,7 @@ sites:
     notes: Login wall. No reliable public existence check.
 
   - name: Threads
+    slug: threads
     category: Social
     profile_url: "https://www.threads.net/@{username}"
     auth_platform: threads
@@ -494,6 +531,7 @@ sites:
     notes: Same constraints as Instagram.
 
   - name: TikTok
+    slug: tiktok
     category: Social
     profile_url: "https://www.tiktok.com/@{username}"
     auth_platform: tiktok
@@ -509,6 +547,7 @@ sites:
     notes: Challenge/login pages are common. Never CONFIRMED.
 
   - name: X
+    slug: x
     category: Social
     profile_url: "https://x.com/{username}"
     auth_platform: x
@@ -522,6 +561,7 @@ sites:
 
   # Conservative coverage expansion. HTTP 200 is never CONFIRMED without explicit API identity.
   - name: GOG
+    slug: gog
     category: Gaming
     profile_url: "https://www.gog.com/u/{username}"
     check_method: generic_html
@@ -535,6 +575,7 @@ sites:
     notes: "URL /u/{username}. HTML profile markers. 404 = NOT_FOUND. HTTP 200 only = INCONCLUSIVE. CONFIRMED not possible."
 
   - name: WordPress.org
+    slug: wordpress_org
     category: Development
     profile_url: "https://profiles.wordpress.org/{username}/"
     check_method: generic_html
@@ -548,6 +589,7 @@ sites:
     notes: "profiles.wordpress.org/{username}. Member-since text. Soft-404 via not_found_patterns. Never CONFIRMED."
 
   - name: WordPress Support
+    slug: wordpress_support
     category: Forums
     profile_url: "https://wordpress.org/support/users/{username}/"
     check_method: generic_html
@@ -561,6 +603,7 @@ sites:
     notes: "support/users/{username}. Forum profile chrome. 404 = NOT_FOUND. CONFIRMED not possible."
 
   - name: Freelancer
+    slug: freelancer
     category: Freelance
     profile_url: "https://www.freelancer.com/u/{username}"
     check_method: generic_html
@@ -575,6 +618,7 @@ sites:
     notes: "freelancer.com/u/{username}. Login wall possible. HTTP 200 only INCONCLUSIVE."
 
   - name: NameMC
+    slug: namemc
     category: Gaming
     profile_url: "https://namemc.com/profile/{username}"
     check_method: generic_html
@@ -588,6 +632,7 @@ sites:
     notes: "Public Minecraft name history. Title/canonical still required by evidence layer. Never CONFIRMED."
 
   - name: Scratch
+    slug: scratch
     category: Gaming
     profile_url: "https://scratch.mit.edu/users/{username}"
     check_method: generic_html
@@ -601,6 +646,7 @@ sites:
     notes: "scratch.mit.edu/users/{username}. 404 if missing. CONFIRMED not possible."
 
   - name: Letterboxd
+    slug: letterboxd
     category: Social
     profile_url: "https://letterboxd.com/{username}/"
     check_method: generic_html
@@ -614,6 +660,7 @@ sites:
     notes: "letterboxd.com/{username}. Soft-404 copy. Never CONFIRMED."
 
   - name: Hugging Face
+    slug: hugging_face
     category: Development
     profile_url: "https://huggingface.co/{username}"
     check_url: "https://huggingface.co/api/users/{username}/overview"
@@ -628,6 +675,7 @@ sites:
     notes: "JSON overview API. json_id_field user. 404 = NOT_FOUND. CONFIRMED possible from API identity."
 
   - name: SourceForge
+    slug: sourceforge
     category: Development
     profile_url: "https://sourceforge.net/u/{username}/profile/"
     check_method: generic_html
@@ -641,6 +689,7 @@ sites:
     notes: "u/{username}/profile. HTML only. Never CONFIRMED."
 
   - name: Launchpad
+    slug: launchpad
     category: Development
     profile_url: "https://launchpad.net/~{username}"
     check_method: generic_html
@@ -654,6 +703,7 @@ sites:
     notes: "launchpad.net/~{username}. 404/lost-something. CONFIRMED not possible."
 
   - name: crates.io
+    slug: crates_io
     category: Development
     profile_url: "https://crates.io/users/{username}"
     check_url: "https://crates.io/api/v1/users/{username}"
@@ -668,6 +718,7 @@ sites:
     notes: "Official JSON API. CONFIRMED possible when user.login matches."
 
   - name: RubyGems
+    slug: rubygems
     category: Development
     profile_url: "https://rubygems.org/profiles/{username}"
     check_method: generic_html
@@ -681,6 +732,7 @@ sites:
     notes: "HTML profile. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
 
   - name: Modrinth
+    slug: modrinth
     category: Gaming
     profile_url: "https://modrinth.com/user/{username}"
     check_url: "https://api.modrinth.com/v2/user/{username}"
@@ -697,6 +749,7 @@ sites:
     notes: "Official user API. CONFIRMED possible. Minecraft-related public profile."
 
   - name: itch.io
+    slug: itch_io
     category: Gaming
     profile_url: "https://itch.io/profile/{username}"
     check_method: generic_html
@@ -710,6 +763,7 @@ sites:
     notes: "itch.io/profile/{username}. HTML. Never CONFIRMED."
 
   - name: TryHackMe
+    slug: tryhackme
     category: Development
     profile_url: "https://tryhackme.com/p/{username}"
     check_method: generic_html
@@ -724,6 +778,7 @@ sites:
     notes: "tryhackme.com/p/{username}. Login wall possible. Never CONFIRMED."
 
   - name: Ko-fi
+    slug: ko_fi
     category: Creator
     profile_url: "https://ko-fi.com/{username}"
     check_method: generic_html
@@ -737,6 +792,7 @@ sites:
     notes: "ko-fi.com/{username}. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
 
   - name: About.me
+    slug: about_me
     category: Identity
     profile_url: "https://about.me/{username}"
     check_method: generic_html
@@ -750,6 +806,7 @@ sites:
     notes: "about.me/{username}. Public HTML. HTTP 200 only INCONCLUSIVE. Never CONFIRMED."
 
   - name: CodePen
+    slug: codepen
     category: Development
     profile_url: "https://codepen.io/{username}"
     check_method: generic_html

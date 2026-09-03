@@ -77,8 +77,18 @@ STATUS_TO_CONFIDENCE = {
 }
 
 
-def load_sites(path: Path | None = None) -> list[dict[str, Any]]:
-    catalog = load_catalog(path)
+def load_sites(
+    path: Path | None = None,
+    *,
+    require_explicit_slug: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Load enabled site definitions as legacy dictionaries.
+
+    require_explicit_slug is forwarded to load_catalog(): None resolves the slug
+    contract from the target (strict for the bundled production catalog, lenient for
+    a custom path), True or False states it deliberately.
+    """
+    catalog = load_catalog(path, require_explicit_slug=require_explicit_slug)
     return catalog.to_dict_list(enabled_only=True)
 
 
