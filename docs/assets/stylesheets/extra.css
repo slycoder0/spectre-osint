@@ -1,0 +1,247 @@
+/* SPECTRE OSINT — Custom Material Theme Overrides */
+
+:root {
+  --spectre-cyan: #00e5ff;
+  --spectre-blue: #38bdf8;
+  --spectre-navy-dark: #080c14;
+}
+
+/* Slate / Dark Mode Custom Colors */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #080c14;
+  --md-default-bg-color--light: #0e1626;
+  --md-default-bg-color--lighter: #131d31;
+  --md-default-fg-color: #f1f5f9;
+  --md-default-fg-color--light: #cbd5e1;
+  --md-default-fg-color--lighter: #94a3b8;
+  --md-primary-fg-color: #0c1222;
+  --md-primary-bg-color: #00f5ff;
+  --md-accent-fg-color: #00f5ff;
+  --md-typeset-a-color: #38bdf8;
+
+  --spectre-card-bg: #0e1626;
+  --spectre-card-border: #1e293b;
+  --spectre-card-border-hover: #00f5ff;
+  --spectre-card-title: #00f5ff;
+  --spectre-card-desc: #94a3b8;
+  --spectre-invariants-bg: rgba(0, 245, 255, 0.04);
+  --spectre-invariants-border: #00f5ff;
+  --spectre-invariants-item-bg: rgba(14, 22, 38, 0.7);
+  --spectre-invariants-item-border: #1e293b;
+  --spectre-deprecation-bg: rgba(234, 179, 8, 0.06);
+  --spectre-deprecation-border: #eab308;
+}
+
+/* Default / Light Mode Custom Colors */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0f172a;
+  --md-primary-bg-color: #0284c7;
+  --md-accent-fg-color: #0284c7;
+  --md-typeset-a-color: #0284c7;
+
+  --spectre-card-bg: #ffffff;
+  --spectre-card-border: #e2e8f0;
+  --spectre-card-border-hover: #0284c7;
+  --spectre-card-title: #0284c7;
+  --spectre-card-desc: #475569;
+  --spectre-invariants-bg: #f0f9ff;
+  --spectre-invariants-border: #0284c7;
+  --spectre-invariants-item-bg: #ffffff;
+  --spectre-invariants-item-border: #cbd5e1;
+  --spectre-deprecation-bg: #fefce8;
+  --spectre-deprecation-border: #ca8a04;
+}
+
+/* Header & Navigation Styling */
+.md-header {
+  border-bottom: 1px solid var(--spectre-card-border);
+  backdrop-filter: blur(8px);
+}
+
+.md-tabs {
+  border-bottom: 1px solid var(--spectre-card-border);
+}
+
+/* Brand Banner Container */
+.spectre-banner-wrap {
+  text-align: center;
+  margin: 1.5rem 0 2rem 0;
+}
+
+.spectre-banner-wrap img,
+.spectre-banner-wrap svg {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px -10px rgba(0, 245, 255, 0.15);
+}
+
+/* Navigation Card Grid */
+.spectre-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin: 2rem 0;
+}
+
+.spectre-card {
+  border: 1px solid var(--spectre-card-border);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  background: var(--spectre-card-bg);
+  transition: all 0.25s ease-in-out;
+  text-decoration: none !important;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.spectre-card:hover {
+  border-color: var(--spectre-card-border-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -6px rgba(0, 245, 255, 0.18);
+}
+
+.spectre-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.15rem;
+  color: var(--spectre-card-title) !important;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spectre-card p {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--spectre-card-desc);
+  line-height: 1.5;
+}
+
+/* Invariant Callout Box */
+.spectre-invariants-box {
+  border: 1px solid var(--spectre-invariants-border);
+  background: var(--spectre-invariants-bg);
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin: 1.5rem 0;
+}
+
+.spectre-invariants-box h4 {
+  margin: 0 0 0.75rem 0;
+  color: var(--spectre-card-title);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-size: 0.9rem;
+}
+
+.spectre-invariants-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spectre-invariants-list li {
+  background: var(--spectre-invariants-item-bg);
+  border: 1px solid var(--spectre-invariants-item-border);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.88rem;
+  font-family: ui-monospace, monospace;
+}
+
+.spectre-invariants-list li.no {
+  border-left: 3px solid #f43f5e;
+}
+
+.spectre-invariants-list li.yes {
+  border-left: 3px solid #10b981;
+}
+
+/* Status Badges in Tables */
+.status-pill {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.5px;
+}
+
+.status-confirmed {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-likely {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.status-inconclusive {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.status-not-found {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.status-blocked {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.status-login-required {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.status-rate-limited {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.status-unavailable {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+/* Code Blocks & Typography */
+.md-typeset code {
+  border-radius: 4px;
+}
+
+.md-typeset pre > code {
+  border: 1px solid var(--spectre-card-border);
+}
+
+/* Deprecation Notice Box */
+.spectre-deprecation-callout {
+  border: 1px solid var(--spectre-deprecation-border);
+  background: var(--spectre-deprecation-bg);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+}
+
+.spectre-deprecation-callout h4 {
+  color: #eab308;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

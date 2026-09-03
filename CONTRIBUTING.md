@@ -3,7 +3,7 @@
 SPECTRE is passive-first public OSINT. Patches that bypass access controls,
 CAPTCHAs, or private content will be rejected.
 
-Contributors: read `docs/ARCHITECTURE.md` and `docs/TESTING.md` before changing code.
+Contributors: read [Architecture Guide](docs/technical/architecture.md) and [Testing Guide](docs/technical/testing.md) before changing code.
 
 ## Setup
 
@@ -39,5 +39,5 @@ pip check
 
 ## CLI notes
 
-- `spectre web` starts the dashboard (`spectre dashboard` is an alias).
 - `spectre doctor` diagnoses the install. It must not start investigations.
+- `spectre web` starts the legacy dashboard (`spectre dashboard` is an alias; deprecated: scheduled for removal in 0.1.0b2).

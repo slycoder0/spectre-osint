@@ -1,165 +1,112 @@
-# Getting Started with SPECTRE OSINT
+# Guia de Início Rápido
 
-[English](getting-started.md) | [Português 🇧🇷](getting-started.pt-BR.md)
-
-SPECTRE is a passive-first, localhost public OSINT workstation designed for single-operator intelligence collection and conservative identity correlation.
+Este guia orienta a instalação do **SPECTRE OSINT** e a execução da sua primeira investigação no terminal.
 
 ---
 
-## System Requirements
+## 1. Pré-requisitos
 
-- **Python:** `3.12` or `3.13`
-- **Operating Systems:** Linux (Ubuntu/Debian recommended), macOS, Windows 11 (native or via WSL2)
-- **Browser (Optional):** Google Chrome / Chromium (required only for authenticated-public sessions)
-- **Local Search (Optional):** SearXNG running on loopback (`http://127.0.0.1:<port>`)
+- **Python 3.12** ou **Python 3.13** instalado.
+- **Git** instalado.
 
 ---
 
-## Installation
+## 2. Instalação Passo a Passo
 
-### 1. Clone the Repository
+### Passo 1: Clonar o Repositório
 
 ```bash
 git clone https://github.com/slycoder0/spectre-osint.git
 cd spectre-osint
 ```
 
-### 2. Create and Activate Virtual Environment
+### Passo 2: Criar e Ativar o Ambiente Virtual
 
-**Linux / macOS / WSL2:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-```
+=== "Linux / macOS"
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    ```
 
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
+=== "Windows (PowerShell)"
+    ```powershell
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    ```
 
-### 3. Install SPECTRE
+### Passo 3: Instalar o Pacote em Modo Editável
 
 ```bash
 pip install -e .
 ```
 
-*For development and running tests, install with dev dependencies:*
-```bash
-pip install -e ".[dev]"
-```
-
 ---
 
-## Environment Configuration
+## 3. Verificação de Diagnóstico: `spectre doctor`
 
-SPECTRE reads configuration from environment variables and `.env` in the project root.
-
-```bash
-cp .env.example .env
-chmod 600 .env  # on POSIX systems
-```
-
-### Key Configuration Variables
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `SPECTRE_DATA_DIR` | `./data` | SQLite database and HTTP cache directory |
-| `SPECTRE_REPORTS_DIR` | `./reports` | Export directory for HTML, JSON, MD, CSV, GraphML |
-| `SPECTRE_LOGS_DIR` | `./logs` | Application logs directory |
-| `SPECTRE_WEB_HOST` | `127.0.0.1` | Dashboard host interface (binds loopback only) |
-| `SPECTRE_ALLOW_PUBLIC_BIND` | `false` | Explicit safety override to allow non-loopback bind |
-| `SPECTRE_MAX_CONCURRENCY` | `8` | Max concurrent HTTP requests for catalog sweep |
-| `SPECTRE_PIVOT_BUDGET` | `8` | Outer runner auto-pivot cap (IP/Domain) |
-| `SPECTRE_SEARCH_QUERY_BUDGET` | `12` | Search planner query budget |
-| `SPECTRE_SEARCH_MAX_PIVOTS` | `25` | Search intelligence pivot budget |
-| `SPECTRE_SEARCH_MAX_DEPTH` | `2` | Search intelligence discovery depth |
-| `SPECTRE_BROWSER_BACKEND` | `playwright` | Browser engine: `playwright` or `chrome` (CDP) |
-| `SPECTRE_SSRF_ENABLED` | `true` | Private IP address filtering policy |
-| `SEARXNG_URL` | *(unset)* | Optional loopback SearXNG instance URL |
-
----
-
-## Diagnostic Check: `spectre doctor`
-
-Before running investigations, verify your installation:
+Antes de iniciar investigações, execute o comando de diagnóstico. Ele valida a instalação, permissões de pastas locais e integrações **sem iniciar investigações e sem imprimir segredos**:
 
 ```bash
 spectre doctor
 ```
 
+Exemplo **abreviado** da saída — apenas alguns trechos são reproduzidos aqui; o relatório real é mais longo:
+
 ```text
 SPECTRE DOCTOR
+
 Core
   Python                   3.13.x           OK
   SPECTRE                  0.1.0b1          OK
-  Database                 SQLite           OK
-  Database writable        OK               OK
-  Reports directory        OK               OK
+  ...
+
 Browser
   Chrome/Chromium          detected         OK
-  Chrome CDP               inactive         OPTIONAL
-Search
-  SearXNG                  missing          OPTIONAL
-API providers
-  VirusTotal               NOT CONFIGURED   OPTIONAL
+  ...
+
 Security
   Bind address             127.0.0.1        OK
-  Secrets redaction        OK               OK
   SSRF policy              enabled          OK
+  ...
+
 Overall: READY WITH OPTIONAL FEATURES MISSING
 ```
 
-> [!NOTE]
-> `spectre doctor` never starts an investigation, never logs into services, and never exposes plaintext secrets.
-> Missing optional providers (like VirusTotal or SearXNG) are marked `OPTIONAL` and will **not** block normal operations.
+O relatório completo é agrupado em seis seções, renderizadas na ordem `Core`, `Browser`, `Search`, `Authenticated public sessions`, `API providers` e `Security`; apenas seções que não produziram nenhuma linha são omitidas. Portanto, além dos trechos acima, espere também as linhas de busca (SearXNG e Google CSE), uma linha por plataforma de sessão autenticada e uma linha por provedor de API — em uma instalação limpa sem chaves configuradas, essas linhas normalmente aparecem marcadas como `OPTIONAL`.
+
+O status final é `READY`, `READY WITH OPTIONAL FEATURES MISSING` ou `ACTION REQUIRED`. O comando retorna código de saída `1` apenas em `ACTION REQUIRED`.
 
 ---
 
-## Running Your First Investigation via CLI
+## 4. Primeira Investigação de Username
 
-Investigate a public username target:
+Execute uma varredura de perfil público no catálogo de plataformas:
 
 ```bash
 spectre username alice_osint
 ```
 
-With additional operator leads (aliases, full name, seed email, personal website):
+### O que o comando faz:
+1. Consulta dezenas de plataformas públicas catalogadas em `sites.yaml`.
+2. Valida contratos de resposta (APIs JSON e assinaturas HTML de precisão).
+3. Extrai metadados públicos observados (nome de exibição, biografia, avatar, localização e links externos) com proveniência estrita.
+4. Salva o resultado no banco SQLite e os relatórios na pasta local `reports/`.
+
+---
+
+## 5. Investigação com Pistas do Operador
 
 ```bash
-spectre username alice_osint \
-  --alias alice-sec \
+spectre investigate alice_osint \
   --name "Alice Example" \
   --email alice@example.com \
-  --website alice.example
+  --website "https://alice.example"
 ```
-
-Upon completion, SPECTRE outputs the structured intelligence findings directly to your terminal and generates comprehensive standalone HTML, Markdown, and JSON reports under `./reports/`.
 
 ---
 
-## Web Dashboard (Deprecated)
+## 6. Onde os Resultados Ficam Salvos?
 
-> [!NOTE]
-> The web dashboard is deprecated and scheduled for removal in milestone 0.1.0b2. SPECTRE is a CLI-first workstation with rich standalone HTML/JSON reporting.
-
-Start the legacy localhost web dashboard:
-
-```bash
-spectre dashboard
-# or
-spectre web
-```
-
-Open your browser at `http://127.0.0.1:8000`.
-
----
-
-## Next Steps
-
-- Explore the [Evidence Model](evidence-model.md) to understand status classifications and scoring.
-- Learn about [Search Intelligence & Discovery](search-discovery.md).
-- Configure [Authenticated Public Sessions](authenticated-public.md).
-- Consult the full [CLI Reference](cli-reference.md).
+- **Relatórios HTML:** Pasta local `reports/`. O nome de cada artefato é **gerado pelo runtime** a partir dos identificadores do caso e do alvo (`core/paths.py::artifact_stem`): cada identificador é convertido em slug, pode ser truncado quando excede o limite de tamanho — recebendo então um sufixo de hash determinístico — e o nome final termina com um hash do par caso+alvo. Não presuma um nome previsível ou legível: localize o arquivo pela listagem de `reports/` ou pelos caminhos que `spectre report` imprime.
+- **Banco de Dados SQLite:** Armazenado em `data/spectre.db`.
+- **Exportação:** Gere relatórios a qualquer momento com `spectre report`.

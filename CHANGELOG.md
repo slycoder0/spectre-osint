@@ -4,6 +4,19 @@ All notable changes to SPECTRE OSINT are documented here.
 
 The format is based on Keep a Changelog.
 
+## [Unreleased]
+
+### Documentation
+- documentation consolidated into a single MkDocs Material site (`mkdocs.yml`), with
+  PT-BR as the canonical language and the previous paths kept as redirect stubs;
+- CLI reference, configuration reference and evidence/provenance semantics aligned
+  with the current runtime behavior;
+- `docs` optional-dependency group added (`mkdocs`, `mkdocs-material`,
+  `pymdown-extensions`) and the generated `site/` directory ignored by git.
+
+### Notes
+- documentation only; no runtime, provider, evidence or pipeline behavior changed.
+
 ## [0.1.0b1] - 2026-08-27
 
 ### Reliability / resilience
@@ -37,4 +50,5 @@ The format is based on Keep a Changelog.
 - doctor reports ready with optional features missing.
 
 ### Notes
-- `0.1.0b1` validated on CI (Python 3.12 / 3.13) and Windows native (ready to tag).
+- `0.1.0b1` validated on CI (Python 3.12 / 3.13) and Windows native; tagged as the
+  annotated tag `0.1.0b1` and pushed to `origin`.
