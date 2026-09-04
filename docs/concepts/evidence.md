@@ -55,12 +55,28 @@ Pistas fornecidas pelo investigador permanecem separadas dos dados observados di
 | **Pistas suplementares do operador** | `"operator"` | `core/pipeline.py` — aliases extras (`--alias`), nome (`--name`), e-mail (`--email`) e site/domínio (`--website`), junto das relações `OPERATOR_PROVIDED_ALIAS` / `OPERATOR_PROVIDED_INPUT`. |
 | **Campos observados/enriquecidos** | Identificador concreto do ponto de extração, ex.: `github_api.name`, `github.username`, `html_og.title`, `html_jsonld.sameAs`, `html_canonical`, `html_rel_me`, `instagram_og.title` | `modules/username/enrichment.py` — dentro de `data["observed"]` dos achados de username. |
 
+### Atributo observado != atributo civil verificado (B2-03A)
+
+Um campo em `data["observed"]` registra que uma página ou API **afirmou** algo sobre um handle, em um instante, e de onde essa afirmação veio. Ele não afirma que o conteúdo é verdadeiro e não identifica uma pessoa física. `ObservedField` (`spectre_osint/modules/username/observed.py`) modela essa distinção explicitamente:
+
+| Chave | Papel probatório |
+| :--- | :--- |
+| `value` / `original` | O que foi afirmado, normalizado e como veio. |
+| `source` | O ponto de extração concreto (string livre, congelada em B2-03A). |
+| `observed_at` | Quando foi observado, sempre com fuso horário em observações novas. |
+| `provider_slug` | Qual provedor afirmou, pelo `slug` estável do catálogo (B2-02B) — não pelo nome de exibição. |
+| `source_method` | Como chegou: `INPUT`, `JSON_API`, `HTML`, `AUTHENTICATED_PUBLIC` ou `DERIVED`. `AUTHENTICATED_PUBLIC` significa dado público lido através de sessão conectada, **nunca** acesso privado. |
+| `source_url` | De qual URL foi lido. Ausente em `INPUT`, que não veio de página alguma. |
+| `derived_from` | Quando o valor é derivado de outro campo observado (hoje `personal_domain` a partir de `website`). |
+
+**B2-03A modela a distinção; não garante que todo consumidor a imponha.** O contrato é aditivo e a correlação de identidades continua lendo o mapeamento simples — passar a tratar o modelo como autoridade é escopo de B2-03B.
+
 Observações importantes:
 
 - Não existem valores genéricos como `source="observed"` ou `source="platform_api"` no runtime atual.
 - As pistas suplementares recebem `Confidence.LOW` nas relações com o alvo e `metadata={"not_identity_evidence": True}`; a entidade em si pode ser criada como `CONFIRMED` apenas no sentido de valor tecnicamente válido (e-mail/domínio bem formado), **nunca** como identificação civil.
 - Os identificadores de campo observado são derivados do provedor e do caminho de extração, então **não são idênticos entre plataformas** e novos provedores podem introduzir novos rótulos. Trate-os como strings descritivas, não como um conjunto fechado.
-- Proveniência **por campo** existe hoje apenas nessa convenção de enriquecimento de perfis. Consulte [Resultados & Status](../results.md#proveniencia) para o alcance exato.
+- Proveniência **por campo** existe hoje apenas nessa convenção de enriquecimento de perfis, agora validada por `ObservedField`. Consulte [Resultados & Status](../results.md#proveniencia) para o alcance exato.
 
 ---
 

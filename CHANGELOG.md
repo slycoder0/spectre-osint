@@ -6,6 +6,29 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+- **Contrato validado de campo observado (B2-03A):** `spectre_osint/modules/username/observed.py`
+  introduz `ObservedField`, o container `ObservedFields` e o parser `parse_observed()`,
+  validando com Pydantic (`extra="forbid"`) o que o enriquecimento de perfis escreve em
+  `Finding.data["observed"]`;
+- `enrich_profile()` passa a construir e validar cada observação como `ObservedField`
+  internamente e serializa para o mesmo mapeamento JSON de sempre — `Finding.data["observed"]`
+  continua sendo o transporte, e consumidores que leem apenas `value`, `original`, `source`
+  e `observed_at` não mudam;
+- chaves aditivas de proveniência, omitidas quando desconhecidas: `provider_slug` (o `slug`
+  declarado pelo catálogo, nunca re-derivado do nome de exibição), `source_method`
+  (`INPUT` / `JSON_API` / `HTML` / `AUTHENTICATED_PUBLIC` / `DERIVED`), `source_url` (a URL
+  efetivamente lida, ausente em `INPUT`), `derived_from` (`personal_domain` a partir de
+  `website`) e `rejected_by`, reservada para B2-03B;
+- `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
+  possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
+  tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;
+- linhas gravadas antes do contrato continuam legíveis: as quatro chaves originais bastam e
+  um `observed_at` sem fuso é interpretado como UTC. **Sem migração de banco**
+  (`Finding.data` já é coluna JSON) e sem alteração de quais valores são aceitos, rejeitados
+  ou pontuados — as strings de `source` existentes seguem byte a byte idênticas, e a
+  correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B).
+
 ### Changed
 - **Site Catalog identity is now explicit (B2-02B):** all 57 production entries in
   `spectre_osint/data/sites.yaml` declare a stable `slug`, and loading the bundled
