@@ -642,12 +642,22 @@ def test_legacy_list_row_without_items_still_parses() -> None:
         )
 
     # The compatibility door treats a naive item stamp exactly like a naive row stamp.
+    # The row must still agree with its items, so it is built consistently.
     naive_item = parse_observed(
         {
             "social_links": {
-                **legacy["social_links"],
+                "value": ["https://x.com/alice"],
+                "original": ["https://x.com/alice"],
+                "source": "html_rel_me",
                 "observed_at": "2026-01-01T12:00:00",
-                "items": [{**_legacy_row(), "observed_at": "2026-01-01T12:00:00"}],
+                "items": [
+                    {
+                        "value": "https://x.com/alice",
+                        "original": "https://x.com/alice",
+                        "source": "html_rel_me",
+                        "observed_at": "2026-01-01T12:00:00",
+                    }
+                ],
             }
         }
     )
@@ -743,3 +753,46 @@ def test_presentation_and_flatten_ignore_item_provenance() -> None:
         "https://github.com/alice",
         "https://mastodon.social/@alice",
     ]
+
+
+# Codex P2 (comment 3930279744). A row carrying `items` must not contradict them.
+def test_row_contradicting_its_items_is_rejected() -> None:
+    truthful = _mixed_observed()["social_links"]
+
+    def mutated(**overrides: object) -> dict:
+        return parse_observed({"social_links": {**truthful, **overrides}})
+
+    # A value the items never observed.
+    with pytest.raises(ValidationError):
+        mutated(value=[*truthful["value"], "https://evil.example/alice"])
+    # A single source claimed over heterogeneous items.
+    with pytest.raises(ValidationError):
+        mutated(source="html_rel_me")
+    with pytest.raises(ValidationError):
+        mutated(source_method="HTML")
+    # Row metadata the items do not support.
+    with pytest.raises(ValidationError):
+        mutated(provider_slug="gitlab")
+    with pytest.raises(ValidationError):
+        mutated(source_url="https://elsewhere.example/")
+    with pytest.raises(ValidationError):
+        mutated(observed_at="2030-01-01T00:00:00+00:00")
+    # Reordering the compatibility list no longer matches first-seen order.
+    with pytest.raises(ValidationError):
+        mutated(value=list(reversed(truthful["value"])))
+    # A scalar row may not carry items, and an empty items list is not an observation.
+    with pytest.raises(ValidationError):
+        mutated(value="https://x.com/alice", original="https://x.com/alice")
+    with pytest.raises(ValidationError):
+        mutated(items=[])
+
+    # The truthful row itself round-trips.
+    assert parse_observed({"social_links": truthful}).to_transport() == {"social_links": truthful}
+
+
+def test_row_level_rejection_is_independent_of_items() -> None:
+    """rejected_by describes the field, not the items, so it is not projected."""
+    truthful = _mixed_observed()["social_links"]
+    parsed = parse_observed({"social_links": {**truthful, "rejected_by": "some_future_rule"}})
+    assert parsed["social_links"].rejected_by == "some_future_rule"
+    assert parsed["social_links"].items is not None

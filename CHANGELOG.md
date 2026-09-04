@@ -28,6 +28,9 @@ The format is based on Keep a Changelog.
   `source: "multiple"` e `source_method: "MIXED"` em vez de nomear o último extrator —
   **a única alteração de string de `source` neste marco**. Observações escalares e listas
   de origem única mantêm suas strings byte a byte idênticas;
+- uma linha que carrega `items` é rejeitada na validação se contradisser a projeção que
+  esses itens produzem, para que a leitura legada (`value` / `source`) e a leitura exata
+  (`items`) nunca divirjam;
 - `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
   possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
   tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;

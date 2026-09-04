@@ -101,6 +101,7 @@ Regras:
 - O mesmo valor pela mesma origem duas vezes é uma única observação (deduplicada por `value` + `source` + `source_method`).
 - Se todos os itens compartilham a mesma origem, o nível da linha repete essa origem exata (`source` e `source_method` inalterados). Caso contrário, `source` passa a ser `"multiple"`, `source_method` passa a ser `MIXED` — que **não** é uma origem de extração, e sim um marcador de linha — e as demais chaves compartilhadas são omitidas em vez de adivinhadas. `items` é a autoridade nesse caso.
 - `observed_at` da linha é a observação mais recente entre os itens; cada item preserva a sua.
+- **A linha não pode contradizer seus itens.** Uma linha que carrega `items` só é válida se `value`, `original`, `source`, `observed_at`, `provider_slug`, `source_method`, `source_url` e `derived_from` forem exatamente a projeção que aqueles itens produzem (`project_items()`). Sem essa validação, uma linha serializada poderia declarar um valor ou uma origem que nenhum item observou, e `flatten_observed()` / a apresentação leriam uma evidência diferente de consumidores que tratam `items` como autoridade. Uma linha de lista legada não tem `items` e não é afetada; `rejected_by` descreve o campo, não os itens, e por isso não entra na projeção.
 
 ### Compatibilidade
 

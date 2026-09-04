@@ -20,7 +20,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, RootModel, field_serializer
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    RootModel,
+    field_serializer,
+    model_validator,
+)
 
 LEGACY_KEYS = ("value", "original", "source", "observed_at")
 
@@ -141,28 +148,30 @@ class ObservedField(BaseModel):
         becomes SourceMethod.MIXED, and the remaining keys are dropped rather than
         guessed. `items` stays authoritative either way.
         """
-        if not items:
-            raise ValueError("a list observation needs at least one item")
-        values: list[str] = []
-        originals: list[str] = []
-        for item in items:
-            if item.value not in values:
-                values.append(item.value)
-                originals.append(item.original)
-        sources = {item.source for item in items}
-        methods = {item.source_method for item in items}
-        return cls(
-            value=values,
-            original=originals,
-            source=sources.pop() if len(sources) == 1 else MULTIPLE_SOURCES,
-            # The row is "as of" its most recent observation; each item keeps its own.
-            observed_at=max(item.observed_at for item in items),
-            provider_slug=_shared(item.provider_slug for item in items),
-            source_method=methods.pop() if len(methods) == 1 else SourceMethod.MIXED,
-            source_url=_shared(item.source_url for item in items),
-            derived_from=_shared(item.derived_from for item in items),
-            items=items,
-        )
+        return cls(**project_items(items), items=items)
+
+    @model_validator(mode="after")
+    def _row_must_not_contradict_its_items(self) -> ObservedField:
+        """A row carrying `items` must equal the projection those items produce.
+
+        Without this, a serialized row could pass validation while claiming a value or
+        a source its items never observed, and `flatten_observed()` / presentation
+        would then read different evidence from consumers that treat `items` as
+        authoritative. A legacy list row has no `items` and is unaffected;
+        `rejected_by` describes the field rather than the items, so it is not part of
+        the projection.
+        """
+        if self.items is None:
+            return self
+        expected = project_items(self.items)
+        mismatched = [
+            name for name, value in expected.items() if getattr(self, name) != value
+        ]
+        if mismatched:
+            raise ValueError(
+                "row contradicts its items on " + ", ".join(sorted(mismatched))
+            )
+        return self
 
 
 class ObservedFields(RootModel[dict[str, ObservedField]]):
@@ -221,6 +230,35 @@ def _coerce_stamp(row: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(stamp, datetime) and stamp.tzinfo is None:
         out["observed_at"] = stamp.replace(tzinfo=UTC)
     return out
+
+
+def project_items(items: list[ObservedItem]) -> dict[str, Any]:
+    """Row-level fields a list of items truthfully supports.
+
+    Single source of truth for both `ObservedField.from_items()` and the validator
+    that rejects a row disagreeing with its own items.
+    """
+    if not items:
+        raise ValueError("a list observation needs at least one item")
+    values: list[str] = []
+    originals: list[str] = []
+    for item in items:
+        if item.value not in values:
+            values.append(item.value)
+            originals.append(item.original)
+    sources = {item.source for item in items}
+    methods = {item.source_method for item in items}
+    return {
+        "value": values,
+        "original": originals,
+        "source": sources.pop() if len(sources) == 1 else MULTIPLE_SOURCES,
+        # The row is "as of" its most recent observation; each item keeps its own.
+        "observed_at": max(item.observed_at for item in items),
+        "provider_slug": _shared(item.provider_slug for item in items),
+        "source_method": methods.pop() if len(methods) == 1 else SourceMethod.MIXED,
+        "source_url": _shared(item.source_url for item in items),
+        "derived_from": _shared(item.derived_from for item in items),
+    }
 
 
 def _shared(values: Iterable[Any]) -> Any:
