@@ -901,3 +901,120 @@ def test_item_may_not_carry_rejection_metadata() -> None:
             rejected_by="some_rule",  # type: ignore[call-arg]
         )
     assert "extra_forbidden" in str(direct.value)
+
+
+# Codex P2 (comment 3934332467). INPUT is operator input, so it has no source URL.
+def _input_row(**overrides: object) -> dict:
+    row = {
+        "value": "alice",
+        "original": "alice",
+        "source": "github.username",
+        "observed_at": _STAMP,
+        "provider_slug": "github",
+        "source_method": "INPUT",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_input_provenance_cannot_claim_a_source_url() -> None:
+    url = "https://example.test/alice"
+
+    # Scalar row, the reproduction path: every other key is truthful, and the payload is
+    # refused for naming a page operator input was never read from.
+    with pytest.raises(ValidationError) as exc:
+        parse_observed({"username": _input_row(source_url=url)})
+    assert [e["loc"] for e in exc.value.errors()] == [("username",)]
+    assert "INPUT" in str(exc.value) and "source_url" in str(exc.value)
+    # Directly, too, and an empty string is not a weaker claim worth preserving.
+    with pytest.raises(ValidationError):
+        ObservedField(
+            value="alice",
+            original="alice",
+            source="github.username",
+            observed_at=_STAMP,
+            source_method=SourceMethod.INPUT,
+            source_url=url,
+        )
+    with pytest.raises(ValidationError):
+        ObservedField(
+            value="alice",
+            original="alice",
+            source="github.username",
+            observed_at=_STAMP,
+            source_method=SourceMethod.INPUT,
+            source_url="",
+        )
+
+    # An individual INPUT item may not claim it either. The row here is exactly the
+    # projection its one item produces, so nothing but this invariant can reject it.
+    truthful_item = _input_row()
+    truthful = {
+        **_input_row(),
+        "value": ["alice"],
+        "original": ["alice"],
+        "items": [truthful_item],
+    }
+    assert parse_observed({"aliases": truthful}).to_transport() == {"aliases": truthful}
+
+    poisoned = {
+        **truthful,
+        "source_url": url,
+        "items": [{**truthful_item, "source_url": url}],
+    }
+    with pytest.raises(ValidationError) as item_exc:
+        parse_observed({"aliases": poisoned})
+    assert [e["loc"] for e in item_exc.value.errors()] == [("aliases", "items", 0)]
+    message = str(item_exc.value)
+    assert "INPUT" in message and "source_url" in message
+    assert "row contradicts its items" not in message
+    with pytest.raises(ValidationError):
+        ObservedItem(
+            value="alice",
+            original="alice",
+            source="github.username",
+            observed_at=_STAMP,
+            source_method=SourceMethod.INPUT,
+            source_url=url,
+        )
+
+
+def test_network_origins_still_carry_a_source_url() -> None:
+    url = "https://example.test/alice"
+
+    # Every real acquisition origin still records where the payload was read from.
+    for method in (
+        SourceMethod.JSON_API,
+        SourceMethod.HTML,
+        SourceMethod.AUTHENTICATED_PUBLIC,
+        SourceMethod.DERIVED,
+    ):
+        field = ObservedField(
+            value="alice",
+            original="alice",
+            source="s",
+            observed_at=_STAMP,
+            source_method=method,
+            source_url=url,
+        )
+        assert field.to_transport()["source_url"] == url, method
+        item = ObservedItem(
+            value="alice", original="alice", source="s", observed_at=_STAMP,
+            source_method=method, source_url=url,
+        )
+        assert item.to_transport()["source_url"] == url, method
+
+    # INPUT without a URL is the valid shape, and a row that names no method at all is
+    # unaffected — the invariant is about the contradiction, not about URLs.
+    assert "source_url" not in ObservedField(**_input_row()).to_transport()
+    assert ObservedField(
+        value="alice", original="alice", source="s", observed_at=_STAMP, source_url=url
+    ).to_transport()["source_url"] == url
+
+    # And the writer already emitted it correctly: the handle is INPUT and claims no URL,
+    # so everything enrich_profile() produces satisfies the invariant.
+    observed = _github_observed(source_url="https://api.github.com/users/alice")
+    assert observed["username"]["source_method"] == "INPUT"
+    assert "source_url" not in observed["username"]
+    assert observed["display_name"]["source_url"] == "https://api.github.com/users/alice"
+    assert parse_observed(observed).to_transport() == observed

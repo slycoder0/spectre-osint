@@ -81,6 +81,23 @@ EXTRACTION_METHODS = frozenset(
 )
 
 
+def _reject_url_on_input(source_method: SourceMethod | None, source_url: str | None) -> None:
+    """INPUT is operator input, so there is no URL it could have been read from.
+
+    `source_method` and `source_url` are independently typed, so nothing else stops a
+    serialized observation from naming a page it never came from — fabricated network
+    provenance inside the validated contract. One shared rule for both models, because
+    it is the same contradiction at either level. Any present `source_url` is refused,
+    an empty string included: a blank URL is not weaker provenance, it is provenance
+    this observation cannot have. Other methods are untouched, and `None` still means
+    "not known".
+    """
+    if source_method == SourceMethod.INPUT and source_url is not None:
+        raise ValueError(
+            "INPUT is operator input, not a network read, so it cannot name a source_url"
+        )
+
+
 class ObservedItem(BaseModel):
     """One member of a list-valued observation, with its own provenance.
 
@@ -118,6 +135,12 @@ class ObservedItem(BaseModel):
                 "an item must name how it was actually observed"
             )
         return value
+
+    @model_validator(mode="after")
+    def _input_item_cannot_name_a_url(self) -> ObservedItem:
+        """An INPUT item is the operator's own handle, read from no page."""
+        _reject_url_on_input(self.source_method, self.source_url)
+        return self
 
     @field_serializer("observed_at")
     def _serialize_observed_at(self, value: datetime) -> str:
@@ -207,6 +230,12 @@ class ObservedField(BaseModel):
             raise ValueError(
                 "row contradicts its items on " + ", ".join(sorted(mismatched))
             )
+        return self
+
+    @model_validator(mode="after")
+    def _input_row_cannot_name_a_url(self) -> ObservedField:
+        """Same invariant at the row level, for a scalar or item-less observation."""
+        _reject_url_on_input(self.source_method, self.source_url)
         return self
 
 

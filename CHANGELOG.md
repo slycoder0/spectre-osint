@@ -18,7 +18,7 @@ The format is based on Keep a Changelog.
 - chaves aditivas de proveniência, omitidas quando desconhecidas: `provider_slug` (o `slug`
   declarado pelo catálogo, nunca re-derivado do nome de exibição), `source_method`
   (`INPUT` / `JSON_API` / `HTML` / `AUTHENTICATED_PUBLIC` / `DERIVED`), `source_url` (a URL
-  efetivamente lida, ausente em `INPUT`), `derived_from` (`personal_domain` a partir de
+  efetivamente lida, **proibida em `INPUT`**), `derived_from` (`personal_domain` a partir de
   `website`) e `rejected_by` — metadado **de campo** (`ObservedField`), reservado para
   B2-03B e **nunca emitido** em B2-03A;
 - **proveniência exata por item em campos de lista:** `ObservedItem` e a chave `items`
@@ -40,6 +40,12 @@ The format is based on Keep a Changelog.
   para que a lista de compatibilidade `value` não possa expor um item como aceito
   enquanto a proveniência desse mesmo item se diz rejeitada. **B2-03A não passa a
   registrar rejeições** e não introduz semântica de rejeição por item;
+- uma observação `INPUT` não pode declarar `source_url`, nem na linha nem em um item:
+  entrada do operador não veio de página alguma, e `source_method` / `source_url` eram
+  tipados de forma independente, o que permitia registrar **proveniência de rede
+  fabricada** dentro do contrato validado. O invariante passa a ser validado no modelo,
+  em `ObservedField` e em `ObservedItem`. As origens reais de rede seguem carregando a
+  URL, e **a extração não mudou**: `enrich_profile()` já emitia `INPUT` sem URL;
 - `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
   possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
   tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;
