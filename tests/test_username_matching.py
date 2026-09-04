@@ -22,6 +22,8 @@ from spectre_osint.modules.username.matching import (
     UNRELATED,
     classify_username_match,
     normalize_username_for_matching,
+    username_in_url_identity,
+    username_needle,
 )
 
 
@@ -465,3 +467,35 @@ def test_query_planner_budget_pressure_multiple_emails_and_domains() -> None:
     assert "alice@personal.test" in orig_leads
     assert "personal.test" in orig_leads
     assert "alice_shop" in orig_leads
+
+
+def test_username_in_url_identity_requires_a_whole_segment() -> None:
+    """A path segment or query value must *be* the username, never merely contain it."""
+    for url in (
+        "https://wordpress.org/support/users/alice",
+        "https://wordpress.org/support/users/alice/",
+        "https://wordpress.org/@alice",
+        "https://wordpress.org/P/Alice",
+        "https://wordpress.org/profile.php?user=alice",
+        "https://wordpress.org/profile.php?user=%40Alice",
+    ):
+        assert username_in_url_identity(url, "alice") is True, url
+    for url in (
+        "https://wordpress.org/support/users/alicebob",
+        "https://wordpress.org/support/users/malice",
+        "https://wordpress.org/news/alice-in-wonderland-review",
+        "https://wordpress.org/search.php?q=alice+example",
+        "https://alice.example.com/",
+        "",
+    ):
+        assert username_in_url_identity(url, "alice") is False, url
+    assert username_in_url_identity("https://wordpress.org/users/alice", "") is False
+
+
+def test_username_needle_normalization_is_unchanged() -> None:
+    """The needle differs from normalize_username_for_matching on leading whitespace."""
+    assert username_needle("@Alice") == "alice"
+    assert username_needle("Alice ") == "alice"
+    assert username_needle("") == ""
+    assert username_needle(" @Alice ") == "@alice"
+    assert normalize_username_for_matching(" @Alice ") == "alice"

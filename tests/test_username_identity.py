@@ -455,3 +455,147 @@ def test_website_n_drops_only_the_self_reference() -> None:
         assert leaked.website_n == "", variant
         assert leaked.url_n == "", variant
         assert leaked.domain == "", variant
+
+
+def test_cross_profile_link_rejects_a_username_substring() -> None:
+    """alicebob is a different account; alice being a prefix of it is not a link."""
+    pair = _pair(
+        _finding(
+            "AlphaSite",
+            username="alice",
+            profile_url="https://alphasite.example/alice",
+            public_links=["https://wordpress.org/support/users/alicebob"],
+        ),
+        _finding(
+            "WordPress",
+            username="alice",
+            profile_url="https://wordpress.org/support/users/alice",
+        ),
+    )
+    assert "cross_profile_link" not in pair["evidence"]
+    assert pair["score"] == WEIGHTS["same_username"]
+
+
+def test_cross_profile_link_rejects_a_username_suffix_and_infix() -> None:
+    """malice contains alice; so does an unrelated article slug. Neither is a profile."""
+    for decoy in (
+        "https://wordpress.org/support/users/malice",
+        "https://wordpress.org/support/users/notalicehere",
+        "https://wordpress.org/news/alice-in-wonderland-review",
+    ):
+        pair = _pair(
+            _finding(
+                "AlphaSite",
+                username="alice",
+                profile_url="https://alphasite.example/alice",
+                public_links=[decoy],
+            ),
+            _finding(
+                "WordPress",
+                username="alice",
+                profile_url="https://wordpress.org/support/users/alice",
+            ),
+        )
+        assert "cross_profile_link" not in pair["evidence"], decoy
+
+
+def test_cross_profile_link_accepts_an_exact_path_segment() -> None:
+    """A different path on the same host still counts when a segment *is* the username."""
+    pair = _pair(
+        _finding(
+            "AlphaSite",
+            username="alice",
+            profile_url="https://alphasite.example/alice",
+            public_links=["https://wordpress.org/users/alice"],
+        ),
+        _finding(
+            "WordPress",
+            username="alice",
+            profile_url="https://wordpress.org/support/users/alice",
+        ),
+    )
+    assert "cross_profile_link" in pair["evidence"]
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["cross_profile_link"]
+
+
+def test_cross_profile_link_accepts_at_prefixed_and_trailing_slash_segments() -> None:
+    """/p/alice/ and /@alice are the same identity claim as /alice."""
+    for link in (
+        "https://wordpress.org/p/alice/",
+        "https://wordpress.org/@alice",
+        "https://WordPress.ORG/P/Alice",
+    ):
+        pair = _pair(
+            _finding(
+                "AlphaSite",
+                username="alice",
+                profile_url="https://alphasite.example/alice",
+                public_links=[link],
+            ),
+            _finding(
+                "WordPress",
+                username="alice",
+                profile_url="https://wordpress.org/support/users/alice",
+            ),
+        )
+        assert "cross_profile_link" in pair["evidence"], link
+
+
+def test_cross_profile_link_reads_an_exact_query_value() -> None:
+    """?user=alice is an explicit identity claim; ?user=alicebob and ?q=alice are not."""
+    pair = _pair(
+        _finding(
+            "AlphaSite",
+            username="alice",
+            profile_url="https://alphasite.example/alice",
+            public_links=["https://wordpress.org/profile.php?user=alice"],
+        ),
+        _finding(
+            "WordPress",
+            username="alice",
+            profile_url="https://wordpress.org/support/users/alice",
+        ),
+    )
+    assert "cross_profile_link" in pair["evidence"]
+    for decoy in (
+        "https://wordpress.org/profile.php?user=alicebob",
+        "https://wordpress.org/search.php?q=alice+example",
+    ):
+        miss = _pair(
+            _finding(
+                "AlphaSite",
+                username="alice",
+                profile_url="https://alphasite.example/alice",
+                public_links=[decoy],
+            ),
+            _finding(
+                "WordPress",
+                username="alice",
+                profile_url="https://wordpress.org/support/users/alice",
+            ),
+        )
+        assert "cross_profile_link" not in miss["evidence"], decoy
+
+
+def test_repeated_cross_profile_link_scores_once() -> None:
+    """The same target listed several ways is one observation."""
+    pair = _pair(
+        _finding(
+            "AlphaSite",
+            username="alice",
+            profile_url="https://alphasite.example/alice",
+            public_links=[
+                "https://wordpress.org/users/alice",
+                "https://wordpress.org/users/alice/",
+                "http://www.wordpress.org/users/alice?utm_source=x",
+                "https://wordpress.org/support/users/alice",
+            ],
+        ),
+        _finding(
+            "WordPress",
+            username="alice",
+            profile_url="https://wordpress.org/support/users/alice",
+        ),
+    )
+    assert pair["evidence"].count("cross_profile_link") == 1
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["cross_profile_link"]
