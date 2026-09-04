@@ -81,20 +81,40 @@ EXTRACTION_METHODS = frozenset(
 )
 
 
-def _reject_url_on_input(source_method: SourceMethod | None, source_url: str | None) -> None:
-    """INPUT is operator input, so there is no URL it could have been read from.
+def _check_acquisition_metadata(
+    source_method: SourceMethod | None,
+    source_url: str | None,
+    derived_from: str | None,
+) -> None:
+    """How an observation was acquired constrains what else it may claim.
 
-    `source_method` and `source_url` are independently typed, so nothing else stops a
-    serialized observation from naming a page it never came from — fabricated network
-    provenance inside the validated contract. One shared rule for both models, because
-    it is the same contradiction at either level. Any present `source_url` is refused,
-    an empty string included: a blank URL is not weaker provenance, it is provenance
-    this observation cannot have. Other methods are untouched, and `None` still means
-    "not known".
+    These keys are independently typed, so nothing but a cross-field rule stops a
+    serialized observation from carrying provenance it cannot have. One shared
+    implementation for both models, because the contradictions are the same at either
+    level. `None` still means "not known" everywhere it is allowed.
+
+    INPUT is operator input, so there is no URL it could have been read from; any
+    present `source_url` is refused, an empty string included, because a blank URL is
+    not weaker provenance, it is provenance this observation cannot have.
+
+    DERIVED and `derived_from` are two halves of one statement: a derived observation
+    must name what it was derived from, and only a derived observation may name it.
+    The token itself is not interpreted — no origin vocabulary is hardcoded here — but
+    it must be non-empty to say anything at all.
     """
     if source_method == SourceMethod.INPUT and source_url is not None:
         raise ValueError(
             "INPUT is operator input, not a network read, so it cannot name a source_url"
+        )
+    if source_method == SourceMethod.DERIVED:
+        if not derived_from:
+            raise ValueError(
+                "a DERIVED observation must name the field it was derived from"
+            )
+    elif derived_from is not None:
+        named = source_method.value if source_method is not None else "an unknown method"
+        raise ValueError(
+            f"derived_from belongs to a DERIVED observation; {named} did not derive it"
         )
 
 
@@ -137,9 +157,9 @@ class ObservedItem(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _input_item_cannot_name_a_url(self) -> ObservedItem:
-        """An INPUT item is the operator's own handle, read from no page."""
-        _reject_url_on_input(self.source_method, self.source_url)
+    def _acquisition_metadata_must_agree(self) -> ObservedItem:
+        """An INPUT item was read from no page, and only a DERIVED one was derived."""
+        _check_acquisition_metadata(self.source_method, self.source_url, self.derived_from)
         return self
 
     @field_serializer("observed_at")
@@ -188,6 +208,23 @@ class ObservedField(BaseModel):
     def _serialize_observed_at(self, value: datetime) -> str:
         return _iso(value)
 
+    @model_validator(mode="after")
+    def _value_and_original_share_one_shape(self) -> ObservedField:
+        """An observation is scalar or list-valued, in both `value` and `original`.
+
+        The two unions are validated independently, so without this a row could pair a
+        scalar `value` with a one-element `original` list, or the reverse. Neither is a
+        shape enrichment emits, and a consumer could not tell which original belongs to
+        which normalized value. A legacy row is unaffected in either shape: the rule is
+        only that the two agree.
+        """
+        if isinstance(self.value, list) != isinstance(self.original, list):
+            raise ValueError(
+                "value and original must both be scalar or both be lists; got value "
+                f"{type(self.value).__name__} with original {type(self.original).__name__}"
+            )
+        return self
+
     def to_transport(self) -> dict[str, Any]:
         """Serialize to the JSON mapping stored in `Finding.data["observed"]`."""
         return self.model_dump(mode="json", exclude_none=True)
@@ -199,8 +236,9 @@ class ObservedField(BaseModel):
         The compatibility `value` list is the items' values in first-seen order,
         deduplicated. Row-level metadata collapses to a shared value only when every
         item agrees; otherwise `source` becomes MULTIPLE_SOURCES, `source_method`
-        becomes SourceMethod.MIXED, and the remaining keys are dropped rather than
-        guessed. `items` stays authoritative either way.
+        becomes SourceMethod.MIXED when the items prove several known methods, and the
+        remaining keys are dropped rather than guessed. An unknown item method leaves
+        the row's method unknown too. `items` stays authoritative either way.
         """
         return cls(**project_items(items), items=items)
 
@@ -214,12 +252,21 @@ class ObservedField(BaseModel):
         authoritative. A legacy list row has no `items` and is unaffected;
         `rejected_by` describes the field rather than the items, so it is not part of
         the projection.
+
+        A row without `items` may also not use either marker that exists to point at
+        them: MIXED for acquisition-method heterogeneity, MULTIPLE_SOURCES for
+        extractor heterogeneity. With no items, both point at nothing.
         """
         if self.items is None:
             if self.source_method is not None and self.source_method not in EXTRACTION_METHODS:
                 raise ValueError(
                     f"{self.source_method.value} needs items to point at; a row without "
                     "them must name how it was actually observed"
+                )
+            if self.source == MULTIPLE_SOURCES:
+                raise ValueError(
+                    f"{MULTIPLE_SOURCES!r} says the real sources are in items; a row "
+                    "without them must name the extractor that observed it"
                 )
             return self
         expected = project_items(self.items)
@@ -233,9 +280,9 @@ class ObservedField(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _input_row_cannot_name_a_url(self) -> ObservedField:
-        """Same invariant at the row level, for a scalar or item-less observation."""
-        _reject_url_on_input(self.source_method, self.source_url)
+    def _acquisition_metadata_must_agree(self) -> ObservedField:
+        """The same invariants at the row level, on the row's own projected metadata."""
+        _check_acquisition_metadata(self.source_method, self.source_url, self.derived_from)
         return self
 
 
@@ -312,7 +359,6 @@ def project_items(items: list[ObservedItem]) -> dict[str, Any]:
             values.append(item.value)
             originals.append(item.original)
     sources = {item.source for item in items}
-    methods = {item.source_method for item in items}
     return {
         "value": values,
         "original": originals,
@@ -320,10 +366,26 @@ def project_items(items: list[ObservedItem]) -> dict[str, Any]:
         # The row is "as of" its most recent observation; each item keeps its own.
         "observed_at": max(item.observed_at for item in items),
         "provider_slug": _shared(item.provider_slug for item in items),
-        "source_method": methods.pop() if len(methods) == 1 else SourceMethod.MIXED,
+        "source_method": _project_source_method(items),
         "source_url": _shared(item.source_url for item in items),
         "derived_from": _shared(item.derived_from for item in items),
     }
+
+
+def _project_source_method(items: list[ObservedItem]) -> SourceMethod | None:
+    """The method the items prove: the shared one, MIXED for several, None if any is unknown.
+
+    MIXED asserts that the items reached SPECTRE through more than one acquisition
+    method. An item whose method is unknown proves no second origin, so a list holding
+    one has a row-level method that is simply not known — omitting it is the truthful
+    answer, and guessing the missing method would be the false one. MIXED therefore
+    means at least two distinct, non-null methods were actually observed.
+    """
+    methods = [item.source_method for item in items]
+    if any(method is None for method in methods):
+        return None
+    distinct = set(methods)
+    return distinct.pop() if len(distinct) == 1 else SourceMethod.MIXED
 
 
 def _shared(values: Iterable[Any]) -> Any:

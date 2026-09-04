@@ -35,6 +35,20 @@ The format is based on Keep a Changelog.
 - `MIXED` é recusado em um item e em uma linha sem `items`: só `INPUT`, `JSON_API`,
   `HTML`, `AUTHENTICATED_PUBLIC` e `DERIVED` (`EXTRACTION_METHODS`) descrevem uma
   aquisição real;
+- `MIXED` fica reservado para **dois ou mais métodos conhecidos e distintos** entre os
+  itens. Se o método de qualquer item for desconhecido, a linha **omite** o método em vez
+  de declarar `MIXED`: proveniência desconhecida não prova uma segunda origem de
+  aquisição;
+- `value` e `original` precisam usar a **mesma forma** — ambos escalares ou ambos listas.
+  As duas uniões eram validadas de forma independente, e um `value` escalar com
+  `original` em lista (ou o inverso) não é nenhuma das duas formas emitidas pelo
+  enriquecimento. Linhas legadas seguem válidas em qualquer uma das duas formas;
+- `derived_from` e `DERIVED` passam a concordar nos dois sentidos, na linha e no item:
+  uma observação derivada precisa nomear sua origem, e só uma observação derivada pode
+  nomear uma. O token não é interpretado, apenas exigido não vazio;
+- `source: "multiple"` exige `items`, como já valia para `MIXED` sem itens: o marcador diz
+  que a proveniência autoritativa está nos itens, e sem eles não aponta para nada. Apenas
+  o marcador reservado participa da regra;
 - `rejected_by` é metadado **de campo**, e apenas de campo: `ObservedItem` não tem a
   chave, e um item serializado que a traga é recusado na validação (`extra="forbid"`),
   para que a lista de compatibilidade `value` não possa expor um item como aceito
