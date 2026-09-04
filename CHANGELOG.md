@@ -19,7 +19,8 @@ The format is based on Keep a Changelog.
   declarado pelo catálogo, nunca re-derivado do nome de exibição), `source_method`
   (`INPUT` / `JSON_API` / `HTML` / `AUTHENTICATED_PUBLIC` / `DERIVED`), `source_url` (a URL
   efetivamente lida, ausente em `INPUT`), `derived_from` (`personal_domain` a partir de
-  `website`) e `rejected_by`, reservada para B2-03B;
+  `website`) e `rejected_by` — metadado **de campo** (`ObservedField`), reservado para
+  B2-03B e **nunca emitido** em B2-03A;
 - **proveniência exata por item em campos de lista:** `ObservedItem` e a chave `items`
   registram qual extrator observou cada membro de `social_links` / `external_links`. Um
   extrator posterior acrescenta itens e nunca reescreve a proveniência dos anteriores, e o
@@ -34,6 +35,11 @@ The format is based on Keep a Changelog.
 - `MIXED` é recusado em um item e em uma linha sem `items`: só `INPUT`, `JSON_API`,
   `HTML`, `AUTHENTICATED_PUBLIC` e `DERIVED` (`EXTRACTION_METHODS`) descrevem uma
   aquisição real;
+- `rejected_by` é metadado **de campo**, e apenas de campo: `ObservedItem` não tem a
+  chave, e um item serializado que a traga é recusado na validação (`extra="forbid"`),
+  para que a lista de compatibilidade `value` não possa expor um item como aceito
+  enquanto a proveniência desse mesmo item se diz rejeitada. **B2-03A não passa a
+  registrar rejeições** e não introduz semântica de rejeição por item;
 - `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
   possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
   tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;

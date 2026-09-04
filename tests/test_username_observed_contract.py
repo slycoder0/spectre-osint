@@ -862,3 +862,42 @@ def test_mixed_is_not_a_valid_item_or_itemless_row_method() -> None:
         SourceMethod.DERIVED,
     }
     assert SourceMethod.MIXED not in EXTRACTION_METHODS
+
+
+# Codex P2 (comment 3930465367). Rejection is field-level; an item may not carry it.
+def test_item_may_not_carry_rejection_metadata() -> None:
+    truthful = _mixed_observed()["social_links"]
+
+    # The valid list observation is untouched, and no emitted item carries rejection.
+    assert parse_observed({"social_links": truthful}).to_transport() == {"social_links": truthful}
+    assert all("rejected_by" not in item for item in truthful["items"])
+
+    # One nested item gains `rejected_by` and nothing else, so every row and item
+    # projection field stays truthful. The payload is refused because the key is
+    # forbidden on an item, not because the row was made to contradict its items.
+    poisoned = {
+        **truthful,
+        "items": [
+            {**item, "rejected_by": "some_rule"} if index == 0 else dict(item)
+            for index, item in enumerate(truthful["items"])
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        parse_observed({"social_links": poisoned})
+    message = str(exc.value)
+    assert "extra_forbidden" in message
+    assert "items.0.rejected_by" in message
+    assert "row contradicts its items" not in message
+
+    # An item has no rejection state to begin with; the field keeps its own.
+    assert "rejected_by" not in ObservedItem.model_fields
+    assert "rejected_by" in ObservedField.model_fields
+    with pytest.raises(ValidationError) as direct:
+        ObservedItem(
+            value="https://x.com/alice",
+            original="https://x.com/alice",
+            source="html_rel_me",
+            observed_at=_STAMP,
+            rejected_by="some_rule",  # type: ignore[call-arg]
+        )
+    assert "extra_forbidden" in str(direct.value)

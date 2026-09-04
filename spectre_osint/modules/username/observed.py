@@ -104,7 +104,10 @@ class ObservedItem(BaseModel):
     source_method: SourceMethod | None = None
     source_url: str | None = None
     derived_from: str | None = None
-    rejected_by: str | None = None
+    # No `rejected_by`: rejection is field-level metadata on ObservedField. An item
+    # carrying it would describe a state this contract does not define, and would let a
+    # row present that item as accepted in the compatibility `value` list while the
+    # item's own provenance said otherwise. `extra="forbid"` refuses it.
 
     @field_validator("source_method")
     @classmethod
@@ -148,8 +151,10 @@ class ObservedField(BaseModel):
     source_method: SourceMethod | None = None
     source_url: str | None = None
     derived_from: str | None = None
-    # Forward compatibility for B2-03B. B2-03A never emits it: rejection semantics
-    # are unchanged, and a rejected value is still simply omitted.
+    # Field-level rejection metadata, and forward compatibility for B2-03B. It
+    # describes the field, never an individual item, so ObservedItem has no such key.
+    # B2-03A never emits it: rejection semantics are unchanged, and a rejected value is
+    # still simply omitted.
     rejected_by: str | None = None
 
     # Exact per-member provenance for a list-valued observation. Absent on scalars,

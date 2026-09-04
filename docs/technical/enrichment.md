@@ -55,7 +55,7 @@ Desde B2-03A existe um modelo validado — `ObservedField`, em `spectre_osint/mo
 | `source_method` | Origem da observação: `INPUT` (handle informado pelo operador), `JSON_API`, `HTML`, `AUTHENTICATED_PUBLIC` (mesmos extratores de HTML, porém sobre uma busca com sessão conectada — dado público, nunca acesso privado) ou `DERIVED`. |
 | `source_url` | URL de onde o payload foi efetivamente lido (`effective_url` do motor), com fallback para `profile_url`. Omitida em `INPUT`, que não veio de página alguma. |
 | `derived_from` | Campo de origem de um valor derivado. Hoje apenas `personal_domain`, com `derived_from="website"`. O cálculo de `personal_domain` não mudou. |
-| `rejected_by` | Reservado para B2-03B. **B2-03A não emite observações rejeitadas**; um valor rejeitado continua simplesmente omitido. |
+| `rejected_by` | Metadado **de campo** (`ObservedField`), reservado para B2-03B. **B2-03A não emite observações rejeitadas**; um valor rejeitado continua simplesmente omitido. `ObservedItem` **não** carrega estado de rejeição: um item serializado que traga `rejected_by` é inválido (`extra="forbid"`). Semântica de rejeição por item **não** é introduzida em B2-03A. |
 | `items` | Proveniência exata **por item** de um campo com valor de lista. Ausente em campos escalares e em linhas de lista gravadas antes deste contrato. |
 
 ### Proveniência por item em campos de lista
@@ -103,6 +103,7 @@ Regras:
 - `MIXED` é recusado em um **item** e em uma linha **sem** `items`: as origens reais de aquisição são `INPUT`, `JSON_API`, `HTML`, `AUTHENTICATED_PUBLIC` e `DERIVED` (`EXTRACTION_METHODS`). Um item marcado `MIXED` seria o registro autoritativo sem método real de aquisição, e uma linha `MIXED` sem itens não aponta para nada.
 - `observed_at` da linha é a observação mais recente entre os itens; cada item preserva a sua.
 - **A linha não pode contradizer seus itens.** Uma linha que carrega `items` só é válida se `value`, `original`, `source`, `observed_at`, `provider_slug`, `source_method`, `source_url` e `derived_from` forem exatamente a projeção que aqueles itens produzem (`project_items()`). Sem essa validação, uma linha serializada poderia declarar um valor ou uma origem que nenhum item observou, e `flatten_observed()` / a apresentação leriam uma evidência diferente de consumidores que tratam `items` como autoridade. Uma linha de lista legada não tem `items` e não é afetada; `rejected_by` descreve o campo, não os itens, e por isso não entra na projeção.
+- **`rejected_by` é de campo, não de item.** `ObservedField` carrega a chave; `ObservedItem` **não a tem**, e um item serializado que a traga é recusado como chave extra (`extra="forbid"`) — recusado por ser metadado fora de lugar, e não por a linha contradizer seus itens. Sem isso, a lista de compatibilidade `value` poderia expor um item como aceito enquanto a proveniência desse mesmo item se diz rejeitada. B2-03A **não** define estados de item aceito/rejeitado, **não** filtra itens por rejeição e **não** emite observações rejeitadas: `ObservedField.rejected_by` segue reservado para B2-03B.
 
 ### Compatibilidade
 
