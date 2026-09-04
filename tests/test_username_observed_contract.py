@@ -240,12 +240,15 @@ def test_source_method_differentiates_observation_origins() -> None:
     # The handle is operator input regardless of how the page was fetched.
     assert authenticated["username"]["source_method"] == "INPUT"
 
+    # MIXED is a row-level marker, never an extraction origin, so it is not produced
+    # by any single put(). See the list-provenance tests below.
     assert {m.value for m in SourceMethod} == {
         "INPUT",
         "JSON_API",
         "HTML",
         "AUTHENTICATED_PUBLIC",
         "DERIVED",
+        "MIXED",
     }
 
 
@@ -305,10 +308,17 @@ def test_existing_source_strings_are_byte_identical() -> None:
     assert sources["public_email"] == "html_jsonld.email"
     assert sources["website"] == "html_jsonld.sameAs"
     assert sources["personal_domain"] == "html_jsonld.sameAs"
-    assert sources["social_links"] == "html_rel_me"
     assert sources["external_links"] == "html_jsonld.sameAs"
     assert sources["avatar_url"] == "html_og.image"
     assert sources["username"] == "example_site.username"
+    # social_links here really is heterogeneous — JSON-LD sameAs contributed the
+    # GitHub URL and rel=me the Mastodon one — so the row says so and the items carry
+    # the exact strings. Claiming "html_rel_me" for the whole row was the P2 defect.
+    assert sources["social_links"] == "multiple"
+    assert sorted(i["source"] for i in html["social_links"]["items"]) == [
+        "html_jsonld.sameAs",
+        "html_rel_me",
+    ]
 
 
 # L. persistence round trip keeps the new metadata
@@ -485,3 +495,251 @@ async def test_engine_attributes_authenticated_public_and_effective_url(tmp_path
     assert all(row["source_url"] == insta.data["final_url"] for row in non_input)
     # Still the plain transport, and still valid.
     assert parse_observed(observed).to_transport() == observed
+
+
+_MIXED_HTML = (
+    '<html><head><script type="application/ld+json">'
+    '{"@type":"Person","name":"Alice Example",'
+    '"sameAs":["https://github.com/alice","https://mastodon.social/@alice"]}'
+    "</script></head><body>"
+    '<a rel="me" href="https://mastodon.social/@alice">also here</a>'
+    "</body></html>"
+)
+
+
+def _mixed_observed(**kwargs: object) -> dict[str, dict]:
+    params: dict = {
+        "platform": "GitHub",
+        "username": "alice",
+        "profile_url": "https://github.com/alice",
+        "site": _GITHUB_SITE,
+        "json_data": {"login": "alice", "name": "Alice Example", "twitter_username": "alice"},
+        "html": _MIXED_HTML,
+        "source_url": "https://api.github.com/users/alice",
+        "observed_at": _STAMP,
+    }
+    params.update(kwargs)
+    return enrich_profile(**params)
+
+
+# P2 (review comment 3929900408). One row-level source cannot describe a list whose
+# items came from different extractors.
+def test_list_items_keep_their_own_provenance() -> None:
+    row = _mixed_observed()["social_links"]
+    assert row["value"] == [
+        "https://x.com/alice",
+        "https://github.com/alice",
+        "https://mastodon.social/@alice",
+    ]
+    by_value: dict[str, list[dict]] = {}
+    for item in row["items"]:
+        by_value.setdefault(item["value"], []).append(item)
+
+    # The X URL came from the JSON API and must not be attributed to HTML.
+    x_item = by_value["https://x.com/alice"][0]
+    assert x_item["source"] == "github_api.twitter_username"
+    assert x_item["source_method"] == "JSON_API"
+
+    gh_item = by_value["https://github.com/alice"][0]
+    assert gh_item["source"] == "html_jsonld.sameAs"
+    assert gh_item["source_method"] == "HTML"
+
+    for item in row["items"]:
+        assert item["provider_slug"] == "github"
+        assert item["source_url"] == "https://api.github.com/users/alice"
+        assert item["observed_at"] == _STAMP
+        assert item["original"] == item["value"]
+
+
+def test_duplicate_value_from_two_sources_keeps_both_observations() -> None:
+    row = _mixed_observed()["social_links"]
+    # The compatibility list stays deduplicated.
+    assert row["value"].count("https://mastodon.social/@alice") == 1
+    dupes = [i for i in row["items"] if i["value"] == "https://mastodon.social/@alice"]
+    assert sorted(i["source"] for i in dupes) == ["html_jsonld.sameAs", "html_rel_me"]
+
+
+def test_mixed_list_row_metadata_does_not_claim_one_source() -> None:
+    row = _mixed_observed()["social_links"]
+    assert row["source"] == "multiple"
+    assert row["source_method"] == "MIXED"
+
+
+def test_homogeneous_list_keeps_its_exact_source() -> None:
+    row = _github_observed(
+        json_data={**_GITHUB_JSON, "twitter_username": "alice"},
+    )["social_links"]
+    assert row["value"] == ["https://x.com/alice"]
+    assert row["source"] == "github_api.twitter_username"
+    assert row["source_method"] == "JSON_API"
+    assert [i["source"] for i in row["items"]] == ["github_api.twitter_username"]
+
+
+def test_authenticated_public_list_items_carry_their_access_mode() -> None:
+    row = enrich_profile(
+        platform="Instagram",
+        username="alice",
+        profile_url="https://www.instagram.com/alice/",
+        site={"slug": "instagram"},
+        html=_MIXED_HTML,
+        access_mode=AccessMode.AUTHENTICATED_PUBLIC,
+        source_url="https://www.instagram.com/alice/",
+        observed_at=_STAMP,
+    )["social_links"]
+    assert row["source_method"] == "AUTHENTICATED_PUBLIC"
+    assert {i["source_method"] for i in row["items"]} == {"AUTHENTICATED_PUBLIC"}
+    assert sorted({i["source"] for i in row["items"]}) == ["html_jsonld.sameAs", "html_rel_me"]
+
+
+def test_repeating_one_extractor_does_not_repeat_the_observation() -> None:
+    """The same value from the same source twice is one observation, not two."""
+    row = enrich_profile(
+        platform="Example Site",
+        username="alice",
+        profile_url="https://example.test/alice",
+        site={"slug": "example_site"},
+        html=(
+            '<html><body><a rel="me" href="https://mastodon.social/@alice">a</a>'
+            '<a rel="me" href="https://mastodon.social/@alice">again</a></body></html>'
+        ),
+        observed_at=_STAMP,
+    )["social_links"]
+    assert row["value"] == ["https://mastodon.social/@alice"]
+    assert len(row["items"]) == 1
+    assert row["source"] == "html_rel_me"
+
+
+def test_scalar_observations_carry_no_items_key() -> None:
+    observed = _mixed_observed()
+    assert list(observed) == ["username", "display_name", "social_links"]
+    for name in ("username", "display_name"):
+        assert "items" not in observed[name], name
+    assert "items" not in _github_observed()["personal_domain"]
+    assert "items" in observed["social_links"]
+
+
+def test_legacy_list_row_without_items_still_parses() -> None:
+    legacy = {
+        "social_links": {
+            "value": ["https://x.com/alice", "https://github.com/alice"],
+            "original": ["https://x.com/alice", "https://github.com/alice"],
+            "source": "html_rel_me",
+            "observed_at": _STAMP,
+        }
+    }
+    parsed = parse_observed(legacy)
+    assert parsed["social_links"].items is None
+    assert parsed.to_transport() == legacy
+
+    with pytest.raises(ValidationError):
+        parse_observed(
+            {
+                "social_links": {
+                    **legacy["social_links"],
+                    "items": [{**_legacy_row(), "confidence": "HIGH"}],
+                }
+            }
+        )
+
+    # The compatibility door treats a naive item stamp exactly like a naive row stamp.
+    naive_item = parse_observed(
+        {
+            "social_links": {
+                **legacy["social_links"],
+                "observed_at": "2026-01-01T12:00:00",
+                "items": [{**_legacy_row(), "observed_at": "2026-01-01T12:00:00"}],
+            }
+        }
+    )
+    assert naive_item["social_links"].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    members = naive_item["social_links"].items
+    assert members is not None
+    assert members[0].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+def test_item_timestamps_keep_the_iso_offset_spelling() -> None:
+    row = _mixed_observed()["social_links"]
+    assert row["observed_at"] == _STAMP
+    assert all(i["observed_at"] == _STAMP for i in row["items"])
+    encoded = json.dumps(row)
+    assert "Z\"" not in encoded
+    assert json.loads(encoded) == row
+
+
+def test_mixed_list_provenance_survives_persistence_and_cache(settings, tmp_path: Path) -> None:
+    from spectre_osint.core.result_cache import ResultCache
+
+    observed = _mixed_observed()
+    expected = [
+        (i["value"], i["source"], i["source_method"]) for i in observed["social_links"]["items"]
+    ]
+
+    cache = ResultCache(settings)
+    try:
+        cache.set("username", "GitHub", "alice", {"observed": observed}, access_mode="ANONYMOUS_PUBLIC")
+        hit = cache.get("username", "GitHub", "alice", "ANONYMOUS_PUBLIC")
+        assert hit is not None
+        assert hit.payload["observed"] == observed
+    finally:
+        cache.close()
+
+    init_db(settings)
+    try:
+        manager = CaseManager()
+        case = manager.create("mixed-provenance")
+        run = manager.start_run(case.id, "alice", "USERNAME")
+        entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+        manager.persist_result(
+            InvestigationResult(
+                case_id=case.id,
+                case_name=case.name,
+                target="alice",
+                target_type=EntityType.USERNAME,
+                mode="PASSIVE_OSINT",
+                started_at=utcnow(),
+                finished_at=utcnow(),
+                run_id=run.id,
+                entities=[entity],
+                findings=[
+                    Finding(
+                        module="username",
+                        title="GitHub",
+                        status=FindingStatus.FOUND,
+                        summary="GitHub: CONFIRMED",
+                        data={
+                            "platform": "GitHub",
+                            "username": "alice",
+                            "check_status": "CONFIRMED",
+                            "profile_url": "https://github.com/alice",
+                            "observed": observed,
+                        },
+                        confidence=Confidence.CONFIRMED,
+                        entity_id=entity.id,
+                    )
+                ],
+            )
+        )
+        manager.finish_run(run.id, status="completed")
+        loaded = manager.load_result("mixed-provenance")
+        assert loaded is not None
+        stored = loaded.findings[0].data["observed"]
+        assert [
+            (i["value"], i["source"], i["source_method"]) for i in stored["social_links"]["items"]
+        ] == expected
+        assert parse_observed(stored).to_transport() == observed
+    finally:
+        reset_engine()
+
+
+def test_presentation_and_flatten_ignore_item_provenance() -> None:
+    observed = _mixed_observed()
+    rows = observed_profile_fields({"observed": observed})
+    social = next(r for r in rows if r["field"] == "social_links")
+    assert social["value"] == observed["social_links"]["value"]
+    assert social["source"] == "multiple"
+    assert set(social) == {"field", "value", "source", "observed_at", "kind"}
+    assert flatten_observed(observed)["public_links"] == [
+        "https://x.com/alice",
+        "https://github.com/alice",
+        "https://mastodon.social/@alice",
+    ]

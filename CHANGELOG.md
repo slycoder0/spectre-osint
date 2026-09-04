@@ -20,6 +20,14 @@ The format is based on Keep a Changelog.
   (`INPUT` / `JSON_API` / `HTML` / `AUTHENTICATED_PUBLIC` / `DERIVED`), `source_url` (a URL
   efetivamente lida, ausente em `INPUT`), `derived_from` (`personal_domain` a partir de
   `website`) e `rejected_by`, reservada para B2-03B;
+- **proveniência exata por item em campos de lista:** `ObservedItem` e a chave `items`
+  registram qual extrator observou cada membro de `social_links` / `external_links`. Um
+  extrator posterior acrescenta itens e nunca reescreve a proveniência dos anteriores, e o
+  mesmo valor observado por duas origens aparece uma vez em `value` e duas em `items`;
+- quando os itens de uma lista têm origens diferentes, o nível da linha passa a declarar
+  `source: "multiple"` e `source_method: "MIXED"` em vez de nomear o último extrator —
+  **a única alteração de string de `source` neste marco**. Observações escalares e listas
+  de origem única mantêm suas strings byte a byte idênticas;
 - `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
   possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
   tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;

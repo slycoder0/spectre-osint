@@ -68,6 +68,7 @@ Um campo em `data["observed"]` registra que uma página ou API **afirmou** algo 
 | `source_method` | Como chegou: `INPUT`, `JSON_API`, `HTML`, `AUTHENTICATED_PUBLIC` ou `DERIVED`. `AUTHENTICATED_PUBLIC` significa dado público lido através de sessão conectada, **nunca** acesso privado. |
 | `source_url` | De qual URL foi lido. Ausente em `INPUT`, que não veio de página alguma. |
 | `derived_from` | Quando o valor é derivado de outro campo observado (hoje `personal_domain` a partir de `website`). |
+| `items` | Em campos de lista, qual extrator observou **cada** membro. Um `source` único no nível da linha não pode descrever uma lista heterogênea, e atribuir um valor da API JSON ao HTML seria falsa atribuição. |
 
 **B2-03A modela a distinção; não garante que todo consumidor a imponha.** O contrato é aditivo e a correlação de identidades continua lendo o mapeamento simples — passar a tratar o modelo como autoridade é escopo de B2-03B.
 

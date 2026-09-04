@@ -23,7 +23,11 @@ from spectre_osint.modules.username.identity import (
     normalize_url,
     normalize_username,
 )
-from spectre_osint.modules.username.observed import ObservedField, SourceMethod
+from spectre_osint.modules.username.observed import (
+    ObservedField,
+    ObservedItem,
+    SourceMethod,
+)
 
 logger = get_logger("spectre.username")
 
@@ -304,20 +308,27 @@ def enrich_profile(
             if not cleaned:
                 return
             prior = observed.get(field)
-            existing = list(prior.value) if prior is not None and isinstance(prior.value, list) else []
-            for item in cleaned:
-                if item not in existing:
-                    existing.append(item)
-            observed[field] = ObservedField(
-                value=existing,
-                original=list(existing),
-                source=source,
-                observed_at=stamp,
-                provider_slug=slug,
-                source_method=method,
-                source_url=url,
-                derived_from=derived_from,
-            )
+            items = list(prior.items or []) if prior is not None else []
+            # A later extractor adds its own items; it never restates the provenance
+            # of the ones already recorded. The same value from a second source is a
+            # second observation, kept alongside the first.
+            seen = {entry.provenance_key for entry in items}
+            for text in cleaned:
+                entry = ObservedItem(
+                    value=text,
+                    original=text,
+                    source=source,
+                    observed_at=stamp,
+                    provider_slug=slug,
+                    source_method=method,
+                    source_url=url,
+                    derived_from=derived_from,
+                )
+                if entry.provenance_key in seen:
+                    continue
+                seen.add(entry.provenance_key)
+                items.append(entry)
+            observed[field] = ObservedField.from_items(items)
             return
         if field in observed:
             return

@@ -64,7 +64,7 @@ Proveniência **por campo** não é um contrato universal de `Finding.data`. Des
 }
 ```
 
-`provider_slug`, `source_method`, `source_url`, `derived_from` e `rejected_by` são **aditivos** e omitidos quando desconhecidos. Uma linha gravada antes de B2-03A, com apenas as quatro chaves originais, continua válida e legível. Não houve migração de banco. Veja [Regras de Enriquecimento](technical/enrichment.md#3-estrutura-de-proveniencia-de-campo-observado-b2-03a) para a semântica de cada chave.
+`provider_slug`, `source_method`, `source_url`, `derived_from`, `rejected_by` e `items` são **aditivos** e omitidos quando desconhecidos. Em campos com valor de lista (`social_links`, `external_links`), `items` guarda a proveniência exata de cada membro, e o nível da linha declara `source: "multiple"` / `source_method: "MIXED"` quando os membros vêm de extratores diferentes, em vez de atribuir todos ao último. Uma linha gravada antes de B2-03A, com apenas as quatro chaves originais, continua válida e legível. Não houve migração de banco. Veja [Regras de Enriquecimento](technical/enrichment.md#3-estrutura-de-proveniencia-de-campo-observado-b2-03a) para a semântica de cada chave.
 
 Limites que o consumidor precisa respeitar:
 
