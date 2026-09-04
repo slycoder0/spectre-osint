@@ -28,9 +28,11 @@ from spectre_osint.modules.username.engine import analyze_username
 from spectre_osint.modules.username.enrichment import enrich_profile, flatten_observed
 from spectre_osint.modules.username.identity import compare_records, records_from_findings
 from spectre_osint.modules.username.observed import (
+    EXTRACTION_METHODS,
     LEGACY_KEYS,
     ObservedField,
     ObservedFields,
+    ObservedItem,
     SourceMethod,
     parse_observed,
 )
@@ -796,3 +798,67 @@ def test_row_level_rejection_is_independent_of_items() -> None:
     parsed = parse_observed({"social_links": {**truthful, "rejected_by": "some_future_rule"}})
     assert parsed["social_links"].rejected_by == "some_future_rule"
     assert parsed["social_links"].items is not None
+
+
+# Codex P2 (comment 3930386406). MIXED is a row marker, never an acquisition method.
+def test_mixed_is_not_a_valid_item_or_itemless_row_method() -> None:
+    truthful = _mixed_observed()["social_links"]
+
+    # An item may not claim MIXED: it would leave the authoritative record with no
+    # real acquisition method.
+    with pytest.raises(ValidationError):
+        ObservedItem(
+            value="https://x.com/alice",
+            original="https://x.com/alice",
+            source="html_rel_me",
+            observed_at=_STAMP,
+            source_method=SourceMethod.MIXED,
+        )
+    # Not even when the row-level method would agree with it.
+    with pytest.raises(ValidationError):
+        parse_observed(
+            {
+                "social_links": {
+                    "value": ["https://x.com/alice"],
+                    "original": ["https://x.com/alice"],
+                    "source": "html_rel_me",
+                    "source_method": "MIXED",
+                    "observed_at": _STAMP,
+                    "items": [
+                        {
+                            "value": "https://x.com/alice",
+                            "original": "https://x.com/alice",
+                            "source": "html_rel_me",
+                            "source_method": "MIXED",
+                            "observed_at": _STAMP,
+                        }
+                    ],
+                }
+            }
+        )
+
+    # A row without items has nothing for MIXED to point at.
+    with pytest.raises(ValidationError):
+        parse_observed(
+            {
+                "social_links": {
+                    "value": ["https://x.com/alice"],
+                    "original": ["https://x.com/alice"],
+                    "source": "multiple",
+                    "source_method": "MIXED",
+                    "observed_at": _STAMP,
+                }
+            }
+        )
+
+    # A row over genuinely heterogeneous items still uses it.
+    assert truthful["source_method"] == "MIXED"
+    assert all(i["source_method"] in {"JSON_API", "HTML"} for i in truthful["items"])
+    assert EXTRACTION_METHODS == {
+        SourceMethod.INPUT,
+        SourceMethod.JSON_API,
+        SourceMethod.HTML,
+        SourceMethod.AUTHENTICATED_PUBLIC,
+        SourceMethod.DERIVED,
+    }
+    assert SourceMethod.MIXED not in EXTRACTION_METHODS

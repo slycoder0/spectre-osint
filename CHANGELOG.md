@@ -31,6 +31,9 @@ The format is based on Keep a Changelog.
 - uma linha que carrega `items` é rejeitada na validação se contradisser a projeção que
   esses itens produzem, para que a leitura legada (`value` / `source`) e a leitura exata
   (`items`) nunca divirjam;
+- `MIXED` é recusado em um item e em uma linha sem `items`: só `INPUT`, `JSON_API`,
+  `HTML`, `AUTHENTICATED_PUBLIC` e `DERIVED` (`EXTRACTION_METHODS`) descrevem uma
+  aquisição real;
 - `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
   possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
   tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;

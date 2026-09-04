@@ -26,6 +26,7 @@ from pydantic import (
     ConfigDict,
     RootModel,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
@@ -60,9 +61,24 @@ class SourceMethod(StrEnum):
     HTML = "HTML"
     AUTHENTICATED_PUBLIC = "AUTHENTICATED_PUBLIC"
     DERIVED = "DERIVED"
-    # Not an extraction origin. Row-level marker meaning "this list's items reached
-    # SPECTRE through more than one method"; `items` is then authoritative.
+    # Not an extraction origin, and therefore not valid on an ObservedItem. Row-level
+    # marker meaning "this list's items reached SPECTRE through more than one method";
+    # `items` is then authoritative. See EXTRACTION_METHODS.
     MIXED = "MIXED"
+
+
+# The methods an individual observation can actually have been acquired through. MIXED
+# is deliberately absent: an item claiming it would be an authoritative record with no
+# real acquisition method, and a row claiming it would point at nothing.
+EXTRACTION_METHODS = frozenset(
+    {
+        SourceMethod.INPUT,
+        SourceMethod.JSON_API,
+        SourceMethod.HTML,
+        SourceMethod.AUTHENTICATED_PUBLIC,
+        SourceMethod.DERIVED,
+    }
+)
 
 
 class ObservedItem(BaseModel):
@@ -89,6 +105,16 @@ class ObservedItem(BaseModel):
     source_url: str | None = None
     derived_from: str | None = None
     rejected_by: str | None = None
+
+    @field_validator("source_method")
+    @classmethod
+    def _reject_row_only_marker(cls, value: SourceMethod | None) -> SourceMethod | None:
+        if value is not None and value not in EXTRACTION_METHODS:
+            raise ValueError(
+                f"{value.value} is a row-level marker, not an acquisition method; "
+                "an item must name how it was actually observed"
+            )
+        return value
 
     @field_serializer("observed_at")
     def _serialize_observed_at(self, value: datetime) -> str:
@@ -162,6 +188,11 @@ class ObservedField(BaseModel):
         the projection.
         """
         if self.items is None:
+            if self.source_method is not None and self.source_method not in EXTRACTION_METHODS:
+                raise ValueError(
+                    f"{self.source_method.value} needs items to point at; a row without "
+                    "them must name how it was actually observed"
+                )
             return self
         expected = project_items(self.items)
         mismatched = [
