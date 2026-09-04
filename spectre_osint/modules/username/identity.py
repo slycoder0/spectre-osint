@@ -18,6 +18,7 @@ from spectre_osint.core.types import (
     RelationType,
     UsernameCheckStatus,
 )
+from spectre_osint.modules.username.matching import username_in_url_identity
 
 logger = get_logger("spectre.username")
 
@@ -372,8 +373,9 @@ def _link_points_at(record: IdentityRecord, other: IdentityRecord) -> bool:
         host = normalize_domain(raw)
         other_host = urlparse(other.profile_n).hostname or ""
         if host and other_host and host == other_host.removeprefix("www."):
-            path = urlparse(canon or "").path.lower()
-            if other.username and other.username in path:
+            # Substring containment is not an identity claim: /users/alicebob and
+            # /news/alice-in-wonderland both contain "alice" and point at neither.
+            if username_in_url_identity(canon or "", other.username):
                 return True
     return False
 
