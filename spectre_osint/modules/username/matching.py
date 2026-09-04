@@ -3,17 +3,42 @@
 Classifies comparison between requested (operator lead) and observed usernames
 into EXACT_MATCH, SIMILAR_CANDIDATE, or UNRELATED.
 No fuzzy distance. No identity promotion.
+
+Also home to the strict username-in-URL identity test, which several modules need
+and none of them owns: substring containment is never an identity claim.
 """
 
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qs, urlparse
 
 EXACT_MATCH = "EXACT_MATCH"
 SIMILAR_CANDIDATE = "SIMILAR_CANDIDATE"
 UNRELATED = "UNRELATED"
 
 _SEP_PATTERN = re.compile(r"[-_.]+")
+
+
+def username_needle(username: str) -> str:
+    return (username or "").lower().lstrip("@").strip()
+
+
+def username_in_url_identity(url: str, username: str) -> bool:
+    """True when a path segment or query value *is* the username (not a substring)."""
+    needle = username_needle(username)
+    if not needle or not url:
+        return False
+    parsed = urlparse(url)
+    parts = [p.lstrip("@") for p in (parsed.path or "").lower().strip("/").split("/") if p]
+    if needle in parts or f"@{needle}" in parts:
+        return True
+    for values in parse_qs(parsed.query, keep_blank_values=False).values():
+        for raw in values:
+            val = raw.lower().lstrip("@")
+            if val == needle:
+                return True
+    return False
 
 
 def normalize_username_for_matching(value: str | None) -> str:

@@ -6,18 +6,21 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
 from spectre_osint.core.logger import get_logger
 from spectre_osint.core.types import Confidence, UsernameCheckStatus
 
+# Both helpers live in matching.py so identity.py can reuse the strict URL identity
+# test without importing this module's HTML stack.
+from spectre_osint.modules.username.matching import (
+    username_in_url_identity,
+    username_needle,
+)
+
 logger = get_logger("spectre.username")
-
-
-def username_needle(username: str) -> str:
-    return (username or "").lower().lstrip("@").strip()
 
 
 def username_token_in_text(text: str, username: str) -> bool:
@@ -28,23 +31,6 @@ def username_token_in_text(text: str, username: str) -> bool:
     if f"@{needle}" in hay:
         return True
     return re.search(rf"(?<![a-z0-9_.-]){re.escape(needle)}(?![a-z0-9_.-])", hay) is not None
-
-
-def username_in_url_identity(url: str, username: str) -> bool:
-    """True when a path segment or query value *is* the username (not a substring)."""
-    needle = username_needle(username)
-    if not needle or not url:
-        return False
-    parsed = urlparse(url)
-    parts = [p.lstrip("@") for p in (parsed.path or "").lower().strip("/").split("/") if p]
-    if needle in parts or f"@{needle}" in parts:
-        return True
-    for values in parse_qs(parsed.query, keep_blank_values=False).values():
-        for raw in values:
-            val = raw.lower().lstrip("@")
-            if val == needle:
-                return True
-    return False
 
 
 def classify_redirect(requested_url: str, final_url: str, username: str) -> str:
