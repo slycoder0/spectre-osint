@@ -412,6 +412,12 @@ def parse_observed(raw: Any) -> ObservedFields:
     existed cannot be re-stamped and must stay readable. Newly built observations go
     through `ObservedField` directly, where an aware timestamp is required.
 
+    Every `observed_at` string, on the row and on each item, is read once by
+    `datetime.fromisoformat()` before Pydantic sees it — see `_as_aware()`. That makes
+    the parser total over the offsets this contract's own serializer can emit, without
+    normalizing any of them to UTC. A string the standard library cannot read is passed
+    through unchanged and still fails validation.
+
     This parser is deliberately not wired into any read path in B2-03A: consumers
     still read the plain mapping. B2-03B makes the model authoritative.
     """
@@ -433,7 +439,14 @@ def parse_observed(raw: Any) -> ObservedFields:
 
 
 def _coerce_stamp(row: dict[str, Any]) -> dict[str, Any]:
-    """Copy a row with a naive `observed_at` read as UTC. Anything else untouched."""
+    """Copy a row with its `observed_at` read once by the standard library.
+
+    A naive stamp — string or `datetime` — is read as UTC, the pre-B2-03A
+    compatibility rule. An aware ISO string is replaced by the `datetime` it names so
+    that Pydantic validates an object rather than re-parsing a spelling it may refuse;
+    see `_as_aware()`. The instant and the offset are untouched either way, and a
+    non-string, non-datetime value is passed through for Pydantic to reject.
+    """
     out = dict(row)
     stamp = out.get("observed_at")
     if isinstance(stamp, str) and stamp:
@@ -576,11 +589,36 @@ def _shared(values: Iterable[Any]) -> Any:
 
 
 def _as_aware(stamp: str) -> str | datetime:
-    """Attach UTC to a naive legacy timestamp; leave anything else untouched."""
+    """Read an ISO timestamp once, with the standard library, and hand on the result.
+
+    A naive stamp keeps the legacy compatibility rule and is read as UTC. An aware one
+    is now handed on as the parsed `datetime` **object** rather than as its original
+    string, because the two parsers do not accept the same offset spellings.
+
+    `datetime.fromisoformat()` accepts an offset carrying seconds or fractional seconds
+    — `+00:00:30`, `+00:00:30.123456` — and `datetime.isoformat()`, this contract's
+    serializer, emits exactly those spellings back. Pydantic's *string* parser refuses
+    them ("unexpected extra characters at the end of the input") while its
+    `AwareDatetime` field accepts the equivalent `datetime` object. Returning the
+    string therefore let a valid `ObservedField` serialize to transport its own parser
+    would reject: construct -> `to_transport()` -> `parse_observed()` failed. Returning
+    the object closes that hole, and does so for the whole ISO aware-offset domain
+    rather than for one offset.
+
+    The instant is carried across unchanged: the parsed object keeps its own `tzinfo`,
+    so nothing is converted to UTC, no `astimezone()` is involved, the offset value and
+    microsecond precision survive, and a timestamp whose UTC equivalent would fall
+    outside years 1..9999 stays representable — `_instant_key()` compares such rows
+    without ever naming them on a calendar.
+
+    Unparseable text is returned untouched, on purpose: Pydantic still owns the final
+    validation error, and a malformed timestamp is never repaired, re-stamped as "now",
+    or given a UTC offset it was not observed with.
+    """
     try:
         parsed = datetime.fromisoformat(stamp)
     except ValueError:
         return stamp
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
-    return stamp
+    return parsed

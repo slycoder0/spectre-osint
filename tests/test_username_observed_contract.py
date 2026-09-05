@@ -1807,3 +1807,232 @@ def test_instant_comparison_is_safe_across_the_whole_aware_range() -> None:
         for items in ([earlier, later], [later, earlier]):
             assert project_items(items)["observed_at"].isoformat() == later.observed_at.isoformat()
             assert ObservedField.from_items(items).observed_at.microsecond == 1
+
+
+# ---------------------------------------------------------------------------
+# B2-03B preflight: the parser is total over the offsets this contract emits.
+#
+# `datetime.isoformat()` is the serializer, and it spells a sub-minute UTC offset as
+# `+00:00:30` or `+00:00:30.123456`. `datetime.fromisoformat()` reads those back, and
+# `AwareDatetime` accepts the resulting object, but Pydantic's *string* parser refuses
+# the spelling — so a valid row used to serialize transport its own parser rejected.
+# These tests pin that round trip closed without moving anything else.
+# ---------------------------------------------------------------------------
+
+# Offsets carrying seconds or fractional seconds. The last two are local calendar
+# boundaries whose instants land in year 0 and year 10000: `astimezone(UTC)` overflows
+# on both, so only `_instant_key()` can compare them, and nothing here may convert.
+_SUB_MINUTE_STAMPS = (
+    "2026-01-01T00:00:00+00:00:30",
+    "2026-01-01T00:00:00-00:00:30",
+    "2026-01-01T12:34:56+05:30:45",
+    "2026-01-01T12:34:56-03:15:20",
+    "2026-01-01T00:00:00+00:00:30.123456",
+    "2026-01-01T00:00:00-00:00:30.123456",
+    "2026-01-01T00:00:00.654321+00:00:30.123456",
+    "0001-01-01T00:00:00+00:00:30",
+    "9999-12-31T23:59:59-00:00:30",
+)
+
+# Offsets that already round-tripped before this pass. They are here so the widening
+# cannot quietly change an established transport spelling.
+_ORDINARY_STAMPS = (
+    "2026-01-01T00:00:00+00:00",
+    "2026-01-01T05:30:00+05:30",
+    "2026-01-01T05:45:00+05:45",
+    "2026-01-01T12:00:00-05:00",
+    "2026-01-01T00:00:00.654321+00:00",
+    "0001-01-01T00:00:00+01:00",
+    "9999-12-31T23:59:59-01:00",
+)
+
+
+@pytest.mark.parametrize("spelling", _SUB_MINUTE_STAMPS + _ORDINARY_STAMPS)
+def test_a_scalar_row_round_trips_its_own_serialized_timestamp(spelling: str) -> None:
+    """Transport a row emits must survive the parser that reads that transport.
+
+    Byte equality on the second transport is the assertion that matters: it proves the
+    offset was neither normalized to UTC nor respelled on the way through.
+    """
+    stamp = datetime.fromisoformat(spelling)
+    row = ObservedField(
+        value="Alice",
+        original="Alice",
+        source="github_api.name",
+        observed_at=stamp,
+    )
+    transport = row.to_transport()
+    assert transport["observed_at"] == spelling
+
+    parsed = parse_observed({"display_name": transport})
+    read_back = parsed["display_name"].observed_at
+    assert read_back.utcoffset() == stamp.utcoffset()
+    assert read_back.isoformat() == spelling
+    assert read_back == stamp
+    assert parsed.to_transport()["display_name"] == transport
+
+
+@pytest.mark.parametrize("spelling", _SUB_MINUTE_STAMPS)
+def test_item_provenance_round_trips_a_sub_minute_offset(spelling: str) -> None:
+    """The same helper reads every item stamp, and item provenance is unweakened."""
+    stamp = datetime.fromisoformat(spelling)
+    row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+    transport = {"social_links": row.to_transport()}
+    assert transport["social_links"]["observed_at"] == spelling
+    assert transport["social_links"]["items"][0]["observed_at"] == spelling
+
+    parsed = parse_observed(transport)
+    assert parsed.to_transport() == transport
+    members = parsed["social_links"].items
+    assert members is not None
+    assert members[0].observed_at.utcoffset() == stamp.utcoffset()
+    assert members[0].observed_at.isoformat() == spelling
+    assert members[0].source == "html_rel_me"
+    assert members[0].source_method is SourceMethod.HTML
+    assert members[0].value == "https://x.com/alice"
+
+
+def test_row_and_item_agree_on_one_instant_across_a_sub_minute_offset() -> None:
+    """Instant comparison still decides row/items agreement, spelling still does not.
+
+    `00:00:30+00:00:30` and `00:00:00+00:00` are one moment written two ways, and one
+    of the two spellings is the one Pydantic's string parser refuses. Reading both as
+    objects is what lets the existing instant rule see that they agree.
+    """
+    item_stamp = datetime.fromisoformat("2026-01-01T00:00:30+00:00:30")
+    row_stamp = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+    assert item_stamp == row_stamp
+    assert item_stamp.isoformat() != row_stamp.isoformat()
+
+    equivalent = {
+        "social_links": {
+            "value": ["https://x.com/alice"],
+            "original": ["https://x.com/alice"],
+            "source": "html_rel_me",
+            "observed_at": row_stamp.isoformat(),
+            "source_method": "HTML",
+            "items": [
+                {
+                    "value": "https://x.com/alice",
+                    "original": "https://x.com/alice",
+                    "source": "html_rel_me",
+                    "observed_at": item_stamp.isoformat(),
+                    "source_method": "HTML",
+                }
+            ],
+        }
+    }
+    assert parse_observed(equivalent).to_transport() == equivalent
+
+    # Same digits on the row, one real minute later than the item's instant. The
+    # contradiction is still caught, so the wider offset domain did not blunt the rule.
+    poisoned = json.loads(json.dumps(equivalent))
+    poisoned["social_links"]["observed_at"] = "2026-01-01T00:00:00+00:01:30"
+    with pytest.raises(ValidationError) as exc:
+        parse_observed(poisoned)
+    assert "row contradicts its items on observed_at" in str(exc.value)
+
+
+def test_legacy_naive_and_ordinary_aware_stamps_are_unchanged() -> None:
+    """Reading every stamp through the standard library changes no legacy rule."""
+    naive = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00")}
+    parsed = parse_observed(naive)
+    assert parsed["display_name"].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert parsed.to_transport()["display_name"]["observed_at"] == "2026-01-01T12:00:00+00:00"
+
+    aware = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00-05:00")}
+    parsed = parse_observed(aware)
+    assert parsed["display_name"].observed_at.utcoffset() == timedelta(hours=-5)
+    assert parsed.to_transport()["display_name"]["observed_at"] == "2026-01-01T12:00:00-05:00"
+
+    # `Z` keeps the behavior the contract already had: the serializer spells the offset
+    # `+00:00`, and this pass introduces no lexical-preservation guarantee.
+    zulu = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00Z")}
+    parsed = parse_observed(zulu)
+    assert parsed["display_name"].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert parsed.to_transport()["display_name"]["observed_at"] == "2026-01-01T12:00:00+00:00"
+
+    # An item stamp goes through the same door.
+    naive_item = parse_observed(
+        {
+            "social_links": {
+                "value": ["https://x.com/alice"],
+                "original": ["https://x.com/alice"],
+                "source": "html_rel_me",
+                "observed_at": "2026-01-01T12:00:00",
+                "items": [
+                    {
+                        "value": "https://x.com/alice",
+                        "original": "https://x.com/alice",
+                        "source": "html_rel_me",
+                        "observed_at": "2026-01-01T12:00:00",
+                    }
+                ],
+            }
+        }
+    )
+    members = naive_item["social_links"].items
+    assert members is not None
+    assert members[0].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    (
+        "not-a-date",
+        "",
+        "2026-01-01T00:00:00+",
+        "+00:00:30",
+        # Malformed offsets: outside the ISO offset domain entirely.
+        "2026-01-01T00:00:00+99:00",
+        "2026-01-01T00:00:00+24:00",
+        # Malformed calendar fields, offset spelled correctly.
+        "2026-13-01T00:00:00+00:00",
+        "2026-01-01T25:00:00+00:00",
+    ),
+)
+def test_malformed_timestamps_are_still_rejected(spelling: str) -> None:
+    """Unparseable text stays text, so Pydantic still owns the validation error.
+
+    Nothing is repaired: a malformed stamp is never re-read as "now" and never handed
+    an offset it was not observed with. It fails on the row and inside items alike.
+    """
+    with pytest.raises(ValidationError):
+        parse_observed({"display_name": dict(_legacy_row(), observed_at=spelling)})
+
+    with pytest.raises(ValidationError):
+        parse_observed(
+            {
+                "social_links": {
+                    "value": ["https://x.com/alice"],
+                    "original": ["https://x.com/alice"],
+                    "source": "html_rel_me",
+                    "observed_at": _STAMP,
+                    "items": [
+                        {
+                            "value": "https://x.com/alice",
+                            "original": "https://x.com/alice",
+                            "source": "html_rel_me",
+                            "observed_at": spelling,
+                        }
+                    ],
+                }
+            }
+        )
+
+
+def test_parser_totality_does_not_reach_for_utc_or_a_timezone_database() -> None:
+    """The widened door stays a pure ISO read: no conversion, no tzdb, no float clock.
+
+    A boundary stamp is the proof. `astimezone(UTC)` raises on it, so if the parser had
+    materialized a UTC datetime anywhere on this path the round trip could not complete.
+    """
+    spelling = "9999-12-31T23:59:59-00:00:30"
+    stamp = datetime.fromisoformat(spelling)
+    with pytest.raises(OverflowError):
+        stamp.astimezone(UTC)
+
+    row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+    transport = {"social_links": row.to_transport()}
+    assert parse_observed(transport).to_transport() == transport
+    assert type(parse_observed(transport)["social_links"].observed_at.tzinfo) is timezone

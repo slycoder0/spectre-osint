@@ -85,6 +85,39 @@ The format is based on Keep a Changelog.
   ou pontuados — as strings de `source` existentes seguem byte a byte idênticas, e a
   correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B).
 
+### Fixed
+- **`parse_observed()` agora é total sobre o domínio ISO de deslocamentos com fuso
+  (preflight de B2-03B):** todo `observed_at` em formato de texto — na linha e em cada
+  item — é lido **uma vez** por `datetime.fromisoformat()` antes da validação Pydantic, e
+  um valor com fuso segue adiante como o objeto `datetime` já interpretado em vez da
+  string original. `datetime.isoformat()`, o serializador deste contrato, escreve um
+  deslocamento com segundos ou fração de segundo como `+00:00:30` /
+  `+00:00:30.123456`; a biblioteca padrão relê essas grafias e o campo `AwareDatetime`
+  aceita o objeto equivalente, mas o parser de **string** do Pydantic as recusa
+  (`unexpected extra characters at the end of the input`). Um `ObservedField` válido
+  podia então serializar um transporte que o seu próprio parser rejeitava —
+  construir → `to_transport()` → `parse_observed()` falhava. O buraco de ida e volta
+  está fechado, incluindo pelo caminho de `items`, e o transporte é estável byte a byte
+  (`to_transport()` → `parse_observed()` → `to_transport()` devolve a mesma grafia).
+  **Nenhuma normalização para UTC acontece:** o objeto conserva o próprio `tzinfo`, o
+  valor do deslocamento e a precisão de microssegundos, não há `astimezone()` no
+  caminho, e por isso um timestamp cujo instante equivalente em UTC cairia fora dos anos
+  1–9999 (`0001-01-01T00:00:00+00:00:30`, `9999-12-31T23:59:59-00:00:30`) continua
+  representável — a comparação por instante (`_instant_key()`) não mudou. Timestamps
+  legados sem fuso continuam interpretados como UTC, `Z` continua serializado como
+  `+00:00`, e uma string de timestamp inválida continua **recusada**: texto ilegível
+  segue texto, o Pydantic continua dono do erro de validação, e nada é reparado,
+  re-estampado como "agora" ou presenteado com um fuso que não foi observado. Como a
+  porta agora delega o domínio de grafias à biblioteca padrão, ela é um pouco mais
+  tolerante na **entrada** do que o parser de string do Pydantic — grafias como `+00`
+  ou segundos de deslocamento acima de 59 passam a ser aceitas e reescritas na forma
+  canônica pelo serializador. Nenhuma delas é emitida por `isoformat()`, portanto nenhum
+  transporte escrito pelo SPECTRE muda. Isto é **endurecimento de compatibilidade antes
+  de B2-03B tornar o parser autoritativo** nos caminhos de leitura: **a autoridade de
+  consumo de B2-03B não foi implementada**, a correlação de identidades não mudou, e
+  nenhum peso, limiar, política de extração ou emissão de rejeição pelo produtor foi
+  tocado;
+
 ### Changed
 - **Correção de `observed_at` (B2-03A):** a ordenação temporal de uma linha com `items` passa a
   usar o **instante absoluto**, não o relógio de parede. `project_items()` escolhe o item mais
