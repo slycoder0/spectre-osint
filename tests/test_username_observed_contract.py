@@ -7,9 +7,8 @@ serialized contract, not the meaning of the values.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -1582,7 +1581,40 @@ def test_the_row_marker_is_not_an_item_source() -> None:
 
 # A row's `observed_at` is the newest item by absolute instant, and row/items agreement
 # is temporal rather than textual. Repeated wall-clock times make the two differ.
-_FOLD_ZONE = ZoneInfo("America/New_York")
+
+
+class _FoldAwareTimezone(tzinfo):
+    """One repeated wall-clock hour, modelled without an IANA timezone database.
+
+    This is the America/New_York fall-back of 2026-11-01 and nothing else: 01:30 occurs
+    twice, at `-04:00` before the fold and at `-05:00` an hour later. `fold` is the only
+    discriminator, which is what `ZoneInfo` would answer for the same two datetimes.
+
+    Hand-rolling it keeps the test suite portable. `zoneinfo` resolves IANA names from
+    the system zone database or the first-party `tzdata` package, and a native Windows
+    install normally has neither — `ZoneInfo("America/New_York")` at import time made
+    collection fail with `ZoneInfoNotFoundError` on a platform this project supports and
+    for a dependency it does not declare. Deliberately not a general timezone: it is
+    truthful for this one transition only.
+    """
+
+    def utcoffset(self, value: datetime | None) -> timedelta:
+        if value is not None and value.fold:
+            return timedelta(hours=-5)
+        return timedelta(hours=-4)
+
+    def dst(self, value: datetime | None) -> timedelta:
+        if value is not None and value.fold:
+            return timedelta(0)
+        return timedelta(hours=1)
+
+    def tzname(self, value: datetime | None) -> str:
+        return "EST" if value is not None and value.fold else "EDT"
+
+
+# Both stamps share this one object, so CPython compares them by their wall-clock fields
+# alone and calls two instants an hour apart equal. That is the trap under test.
+_FOLD_ZONE = _FoldAwareTimezone()
 # 01:30 happens twice on this date: once at -04:00, again an hour later at -05:00.
 _BEFORE_FOLD = datetime(2026, 11, 1, 1, 30, tzinfo=_FOLD_ZONE, fold=0)
 _AFTER_FOLD = datetime(2026, 11, 1, 1, 30, tzinfo=_FOLD_ZONE, fold=1)
@@ -1600,10 +1632,20 @@ def _stamped_item(value: str, stamp: datetime) -> ObservedItem:
 
 
 def test_row_timestamp_is_the_newest_item_by_absolute_instant() -> None:
-    # Same local wall clock, one real hour apart. This is the whole premise.
+    # Same local wall clock, one real hour apart. This is the whole premise, so with a
+    # hand-rolled zone it is also the fixture's own correctness check.
+    assert _BEFORE_FOLD.tzinfo is _AFTER_FOLD.tzinfo
+    assert _BEFORE_FOLD.fold == 0
+    assert _AFTER_FOLD.fold == 1
+    assert _BEFORE_FOLD.utcoffset() == timedelta(hours=-4)
+    assert _AFTER_FOLD.utcoffset() == timedelta(hours=-5)
     assert _BEFORE_FOLD.astimezone(UTC) == datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
     assert _AFTER_FOLD.astimezone(UTC) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
-    assert _BEFORE_FOLD.isoformat() != _AFTER_FOLD.isoformat()
+    assert _BEFORE_FOLD.isoformat() == "2026-11-01T01:30:00-04:00"
+    assert _AFTER_FOLD.isoformat() == "2026-11-01T01:30:00-05:00"
+    # And raw comparison is still blind to that hour, which is what makes the rest of
+    # this test load-bearing rather than decorative.
+    assert _BEFORE_FOLD == _AFTER_FOLD
 
     older = _stamped_item("https://x.com/alice", _BEFORE_FOLD)
     newer = _stamped_item("https://github.com/alice", _AFTER_FOLD)
