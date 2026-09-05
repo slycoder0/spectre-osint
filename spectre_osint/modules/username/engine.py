@@ -778,6 +778,8 @@ async def _check_site(
                     "title": str(auth_meta.get("title") or ""),
                     "og_image": "",
                 },
+                access_mode=access_mode,
+                source_url=str(effective_url),
             )
         else:
             json_blob = data if method == "json_api" and isinstance(data, (dict, list)) else None
@@ -795,6 +797,8 @@ async def _check_site(
                     "title": str(title or ""),
                     "og_image": str(avatar or ""),
                 },
+                access_mode=access_mode,
+                source_url=str(effective_url),
             )
     flat = flatten_observed(observed)
 

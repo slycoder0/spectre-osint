@@ -6,6 +6,85 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+- **Contrato validado de campo observado (B2-03A):** `spectre_osint/modules/username/observed.py`
+  introduz `ObservedField`, o container `ObservedFields` e o parser `parse_observed()`,
+  validando com Pydantic (`extra="forbid"`) o que o enriquecimento de perfis escreve em
+  `Finding.data["observed"]`;
+- `enrich_profile()` passa a construir e validar cada observação como `ObservedField`
+  internamente e serializa para o mesmo mapeamento JSON de sempre — `Finding.data["observed"]`
+  continua sendo o transporte, e consumidores que leem apenas `value`, `original`, `source`
+  e `observed_at` não mudam;
+- chaves aditivas de proveniência, omitidas quando desconhecidas: `provider_slug` (o `slug`
+  declarado pelo catálogo, nunca re-derivado do nome de exibição), `source_method`
+  (`INPUT` / `JSON_API` / `HTML` / `AUTHENTICATED_PUBLIC` / `DERIVED`), `source_url` (a URL
+  efetivamente lida, **proibida em `INPUT`**), `derived_from` (`personal_domain` a partir de
+  `website`) e `rejected_by` — metadado **de campo** (`ObservedField`), reservado para
+  B2-03B e **nunca emitido** em B2-03A;
+- **proveniência exata por item em campos de lista:** `ObservedItem` e a chave `items`
+  registram qual extrator observou cada membro de `social_links` / `external_links`. Um
+  extrator posterior acrescenta itens e nunca reescreve a proveniência dos anteriores, e o
+  mesmo valor observado por duas origens aparece uma vez em `value` e duas em `items`;
+- quando os itens de uma lista têm origens diferentes, o nível da linha passa a declarar
+  `source: "multiple"` e `source_method: "MIXED"` em vez de nomear o último extrator —
+  **a única alteração de string de `source` neste marco**. Observações escalares e listas
+  de origem única mantêm suas strings byte a byte idênticas;
+- uma linha que carrega `items` é rejeitada na validação se contradisser a projeção que
+  esses itens produzem, para que a leitura legada (`value` / `source`) e a leitura exata
+  (`items`) nunca divirjam;
+- `MIXED` é recusado em um item e em uma linha sem `items`: só `INPUT`, `JSON_API`,
+  `HTML`, `AUTHENTICATED_PUBLIC` e `DERIVED` (`EXTRACTION_METHODS`) descrevem uma
+  aquisição real;
+- `MIXED` fica reservado para **dois ou mais métodos conhecidos e distintos** entre os
+  itens. Se o método de qualquer item for desconhecido, a linha **omite** o método em vez
+  de declarar `MIXED`: proveniência desconhecida não prova uma segunda origem de
+  aquisição;
+- `value` e `original` precisam usar a **mesma forma** — ambos escalares ou ambos listas —
+  e, quando são listas, a **mesma cardinalidade**. As duas uniões eram validadas de forma
+  independente, e nem um `value` escalar com `original` em lista nem duas listas de
+  tamanhos diferentes (`["a", "b"]` com `["raw-a"]`) permitem associar cada valor
+  normalizado ao seu texto de origem. Linhas legadas seguem válidas em qualquer uma das
+  duas formas, desde que suas próprias listas casem; ordem, deduplicação e normalização
+  não mudam;
+- `derived_from` e `DERIVED` passam a concordar nos dois sentidos, na linha e no item:
+  uma observação derivada precisa nomear sua origem, e só uma observação derivada pode
+  nomear uma. O token não é interpretado, apenas exigido não vazio — uma origem presente
+  vazia ou só com espaços em branco é **recusada**, nunca aparada, e um token válido nunca
+  é reescrito;
+- uma linha **agregada** cujos itens são todos `DERIVED` mas nomeiam origens **diferentes**
+  mantém `source_method: DERIVED` e **omite** `derived_from`, deferindo as origens exatas
+  a `items`: cada item prova o método, nenhuma origem única descreve a lista, e nomear a de
+  um item para todos seria falso. A exceção vale só para a linha com `items` e só quando a
+  projeção dos próprios itens também omite a origem; item, linha escalar e linha sem
+  `items` seguem obrigados a nomear a sua;
+- `source: "multiple"` exige `items`, como já valia para `MIXED` sem itens: o marcador diz
+  que a proveniência autoritativa está nos itens, e sem eles não aponta para nada. Apenas
+  o marcador reservado participa da regra;
+- `source: "multiple"` é **de linha, e só de linha**: um `ObservedItem` não pode declará-lo,
+  como já não pode declarar `source_method: MIXED`. Um item é um dos membros que o marcador
+  manda inspecionar, e um único item marcado assim fazia a projeção declarar uma linha
+  `"multiple"` sem heterogeneidade de extrator alguma provada. Só a string reservada exata
+  é recusada;
+- `rejected_by` é metadado **de campo**, e apenas de campo: `ObservedItem` não tem a
+  chave, e um item serializado que a traga é recusado na validação (`extra="forbid"`),
+  para que a lista de compatibilidade `value` não possa expor um item como aceito
+  enquanto a proveniência desse mesmo item se diz rejeitada. **B2-03A não passa a
+  registrar rejeições** e não introduz semântica de rejeição por item;
+- uma observação `INPUT` não pode declarar `source_url`, nem na linha nem em um item:
+  entrada do operador não veio de página alguma, e `source_method` / `source_url` eram
+  tipados de forma independente, o que permitia registrar **proveniência de rede
+  fabricada** dentro do contrato validado. O invariante passa a ser validado no modelo,
+  em `ObservedField` e em `ObservedItem`. As origens reais de rede seguem carregando a
+  URL, e **a extração não mudou**: `enrich_profile()` já emitia `INPUT` sem URL;
+- `spectre_osint/modules/username/engine.py` passa o `AccessMode` e a `effective_url` que já
+  possuía, para que uma observação vinda de sessão autenticada-pública seja atribuída como
+  tal em vez de indistinguível de HTML anônimo — sem alterar comportamento de autenticação;
+- linhas gravadas antes do contrato continuam legíveis: as quatro chaves originais bastam e
+  um `observed_at` sem fuso é interpretado como UTC. **Sem migração de banco**
+  (`Finding.data` já é coluna JSON) e sem alteração de quais valores são aceitos, rejeitados
+  ou pontuados — as strings de `source` existentes seguem byte a byte idênticas, e a
+  correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B).
+
 ### Changed
 - **Site Catalog identity is now explicit (B2-02B):** all 57 production entries in
   `spectre_osint/data/sites.yaml` declare a stable `slug`, and loading the bundled

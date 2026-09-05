@@ -46,7 +46,7 @@ A proveniência no SPECTRE existe em dois níveis distintos. **Eles não têm o 
 
 ### Nível de campo (convenção de enriquecimento de perfis)
 
-Proveniência **por campo** não é um contrato universal de `Finding.data` e **não existe um modelo `ObservedField`** no código. Hoje ela é uma convenção do enriquecimento de perfis de username (`spectre_osint/modules/username/enrichment.py`), exposta exclusivamente sob a chave `data["observed"]` dos achados do módulo `username`:
+Proveniência **por campo** não é um contrato universal de `Finding.data`. Desde B2-03A ela é um contrato *validado* — `ObservedField`, em `spectre_osint/modules/username/observed.py` — mas com alcance restrito ao enriquecimento de perfis de username (`spectre_osint/modules/username/enrichment.py`), exposto exclusivamente sob a chave `data["observed"]` dos achados do módulo `username`. O modelo valida o que é escrito; o **transporte permanece** um mapeamento JSON comum:
 
 ```json
 {
@@ -55,11 +55,16 @@ Proveniência **por campo** não é um contrato universal de `Finding.data` e **
       "value": "Alice Developer",
       "original": "Alice Developer (@alice_osint) - GitHub",
       "source": "github_api.name",
-      "observed_at": "2026-09-01T12:00:00.000000+00:00"
+      "observed_at": "2026-09-01T12:00:00.000000+00:00",
+      "provider_slug": "github",
+      "source_method": "JSON_API",
+      "source_url": "https://api.github.com/users/alice_osint"
     }
   }
 }
 ```
+
+`provider_slug`, `source_method`, `source_url`, `derived_from`, `rejected_by` e `items` são **aditivos** e omitidos quando desconhecidos. Em campos com valor de lista (`social_links`, `external_links`), `items` guarda a proveniência exata de cada membro, e o nível da linha declara `source: "multiple"` / `source_method: "MIXED"` quando os membros vêm de extratores diferentes, em vez de atribuir todos ao último. Uma linha gravada antes de B2-03A, com apenas as quatro chaves originais, continua válida e legível. Não houve migração de banco. Veja [Regras de Enriquecimento](technical/enrichment.md#3-estrutura-de-proveniencia-de-campo-observado-b2-03a) para a semântica de cada chave.
 
 Limites que o consumidor precisa respeitar:
 
@@ -67,3 +72,4 @@ Limites que o consumidor precisa respeitar:
 - **Outros analisadores gravam valores diretos.** O módulo `email`, por exemplo, coloca `mx`, `txt`, `spf`, `dmarc` e `mail_providers` diretamente em `Finding.data`, sem invólucro de `value`/`source`.
 - **Campos ausentes de `observed` não recebem proveniência sintética.** A correlação de identidades trata proveniência como melhor-esforço e cai para `source: ""` quando o campo não foi observado com etiqueta.
 - O valor de `source` é uma string concreta do ponto de extração (ex.: `github_api.name`, `html_og.title`, `html_jsonld.sameAs`), não um identificador genérico. Consulte [Modelo de Evidências](concepts/evidence.md) para a semântica desses identificadores.
+- **`ObservedField` modela a distinção `atributo observado != atributo civil verificado`; ele não garante que todo consumidor a imponha.** B2-03A introduz o contrato; a correlação de identidades ainda lê o mapeamento simples e só passa a usar o modelo como autoridade em B2-03B.
