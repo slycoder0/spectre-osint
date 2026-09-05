@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus
 from spectre_osint.modules.username.identity import (
@@ -599,3 +603,431 @@ def test_repeated_cross_profile_link_scores_once() -> None:
     )
     assert pair["evidence"].count("cross_profile_link") == 1
     assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["cross_profile_link"]
+
+
+# ---------------------------------------------------------------------------
+# B2-03B1: validated `observed` is authoritative for observed profile attributes.
+#
+# Authority is decided by KEY PRESENCE. A finding with no `observed` key at all is a
+# true pre-B2-03A row and keeps the top-level compatibility fallback; a finding that
+# carries the key — valid, empty, `None`, `[]` or malformed — has an authoritative
+# channel, and the top-level attributes stop being evidence for anything it covers.
+# ---------------------------------------------------------------------------
+
+_OBSERVED_STAMP = "2026-01-01T12:00:00+00:00"
+
+# Top-level compatibility values no record with an `observed` key may ever surface. Every
+# spelling the legacy reader accepts is poisoned, including both alternates per attribute,
+# so a fallback anywhere is visible rather than merely possible.
+_POISON = {
+    "display_name": "Mallory Poison",
+    "bio": "Poisoned biography long enough to be a comparable public field",
+    "avatar_url": "https://poison.example/avatar.png",
+    "website": "https://poison.example/",
+    "public_location": "Poisonville",
+    "location": "Poisonville",
+    "organization": "Poison Corp",
+    "company": "Poison Corp",
+    "public_email": "poison@poison.example",
+    "email": "poison@poison.example",
+    "public_id": "poison-999",
+    "id": "poison-999",
+    "public_links": ["https://poison.example/link"],
+}
+
+
+def _row(value: object, **extra: object) -> dict:
+    """One observed field as real transport: all four required keys, like the producer."""
+    original = list(value) if isinstance(value, list) else value
+    return {
+        "value": value,
+        "original": original,
+        "source": "github_api.field",
+        "observed_at": _OBSERVED_STAMP,
+        **extra,
+    }
+
+
+def _observed_record(observed: object, **top_level: object) -> object:
+    """The single record built from one CONFIRMED finding carrying `observed`."""
+    records = records_from_findings(
+        [_finding("GitHub", status="CONFIRMED", observed=observed, **top_level)]
+    )
+    assert len(records) == 1
+    return records[0]
+
+
+# A. no observed key at all -> true legacy, fallback intact
+def test_a_finding_without_observed_keeps_the_legacy_top_level_mapping() -> None:
+    """The compatibility sentinel. Rows written before the contract cannot be re-enriched."""
+    finding = _finding(
+        "GitHub",
+        status="CONFIRMED",
+        display_name="Alice Legacy",
+        bio="Legacy biography long enough to compare",
+        avatar_url="https://legacy.example/a.png",
+        website="https://legacy.example/",
+        public_location="Lisbon",
+        organization="Legacy Labs",
+        public_email="alice@legacy.example",
+        public_id="42",
+        public_links=["https://x.com/alice"],
+        created_at="2020-01-01",
+    )
+    assert "observed" not in finding.data
+    record = records_from_findings([finding])[0]
+    assert record.display_name == "Alice Legacy"
+    assert record.bio == "Legacy biography long enough to compare"
+    assert record.avatar_url == "https://legacy.example/a.png"
+    assert record.website == "https://legacy.example/"
+    assert record.location == "Lisbon"
+    assert record.organization == "Legacy Labs"
+    assert record.public_email == "alice@legacy.example"
+    assert record.public_id == "42"
+    # Legacy links keep the compatibility website append.
+    assert record.links == ["https://x.com/alice", "https://legacy.example/"]
+    assert record.created == "2020-01-01"
+    # No provenance is fabricated for a top-level attribute.
+    assert record.provenance == {}
+
+
+# B. observed present and empty -> authoritative emptiness, never a fallback
+def test_an_empty_observed_mapping_is_authoritative_emptiness() -> None:
+    """`{}` says "enrichment ran and found nothing", not "look somewhere else"."""
+    record = _observed_record({}, **_POISON)
+    assert record.display_name == ""
+    assert record.bio == ""
+    assert record.avatar_url == ""
+    assert record.website == ""
+    assert record.location == ""
+    assert record.organization == ""
+    assert record.public_email == ""
+    assert record.public_id == ""
+    assert record.links == []
+    assert record.provenance == {}
+    # The checked profile itself is untouched by an empty enrichment payload.
+    assert record.platform == "GitHub"
+    assert record.username == "alice"
+    assert record.profile_url == "https://github.example/alice"
+    assert record.check_status == "CONFIRMED"
+    assert record.entity_id
+
+
+# C + D + §16. Every attribute, both channels, one parametrized proof.
+#
+# `_row()` supplies only the four contract-required keys, so the "legacy four-key" and
+# "modern" transports are the same shape here — additive B2-03A metadata is optional and
+# its absence must not cost a row its authority. The `observed_*` variants below add it.
+@pytest.mark.parametrize(
+    ("field", "observed_value", "attribute", "expected"),
+    (
+        ("display_name", "Alice Observed", "display_name", "Alice Observed"),
+        ("bio", "Observed biography long enough to compare", "bio", "Observed biography long enough to compare"),
+        ("avatar_url", "https://observed.example/a.png", "avatar_url", "https://observed.example/a.png"),
+        ("website", "https://observed.example/", "website", "https://observed.example/"),
+        ("location", "Porto", "location", "Porto"),
+        ("organization", "Observed Labs", "organization", "Observed Labs"),
+        ("public_email", "alice@observed.example", "public_email", "alice@observed.example"),
+        ("public_id", "observed-1", "public_id", "observed-1"),
+    ),
+)
+def test_top_level_compatibility_cannot_override_observed(
+    field: str, observed_value: str, attribute: str, expected: str
+) -> None:
+    """One observed field wins its attribute, and poisons none of the others.
+
+    Poisoning every top-level spelling at once means the assertion is not just "the
+    observed value arrived" but "no attribute was filled from the compatibility channel":
+    the eight attributes this record could have are the observed one plus seven blanks.
+    """
+    record = _observed_record({field: _row(observed_value)}, **_POISON)
+    assert getattr(record, attribute) == expected
+    blanks = {
+        "display_name",
+        "bio",
+        "avatar_url",
+        "website",
+        "location",
+        "organization",
+        "public_email",
+        "public_id",
+    } - {attribute}
+    assert {name: getattr(record, name) for name in sorted(blanks)} == dict.fromkeys(sorted(blanks), "")
+    # Top-level public_links never leaks in either.
+    assert record.links == []
+    assert record.provenance == {field: _row(observed_value)}
+
+
+def test_top_level_public_links_cannot_override_observed_link_fields() -> None:
+    """The list channel gets the same treatment as the scalars."""
+    observed = {
+        "external_links": _row(["https://alice.dev/"]),
+        "social_links": _row(["https://x.com/alice"]),
+    }
+    record = _observed_record(observed, **_POISON)
+    # Deterministic order: external_links before social_links, matching the producer.
+    assert record.links == ["https://alice.dev/", "https://x.com/alice"]
+    assert "https://poison.example/link" not in record.links
+    assert record.website == ""
+
+
+# E. present but invalid -> fail closed for enrichment, keep the checked profile
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    (
+        ("row missing observed_at", {"website": {"value": "https://o.example/", "original": "x", "source": "s"}}),
+        ("row missing original", {"website": {"value": "https://o.example/", "source": "s", "observed_at": _OBSERVED_STAMP}}),
+        ("observed is None", None),
+        ("observed is a list", []),
+        ("observed is a non-empty list", [{"value": "x"}]),
+        ("observed is a string", "malformed"),
+        ("forbidden extra key", {"website": {**_row("https://o.example/"), "bogus": "x"}}),
+        ("naive-hostile timestamp", {"website": {**_row("https://o.example/"), "observed_at": "not-a-date"}}),
+        ("row is not a mapping", {"website": "https://o.example/"}),
+        ("item claims the row-only marker", {"social_links": {**_row(["https://x.com/a"]), "source_method": "MIXED"}}),
+    ),
+)
+def test_invalid_observed_fails_closed_without_a_top_level_fallback(
+    label: str, payload: object
+) -> None:
+    """Malformed modern enrichment blanks the enrichment, not the profile.
+
+    PROFILE EXISTS != SAME PERSON. A broken enrichment payload says nothing about whether
+    the public profile was found, so the record stays in the inventory with its platform,
+    handle, URL, check status and entity id intact — and with every optional observed
+    attribute empty, because the only channel authorized to fill them did not validate.
+    """
+    record = _observed_record(payload, **_POISON)
+    assert record.platform == "GitHub"
+    assert record.username == "alice"
+    assert record.profile_url == "https://github.example/alice"
+    assert record.check_status == "CONFIRMED"
+    assert record.entity_id
+    assert record.display_name == ""
+    assert record.bio == ""
+    assert record.avatar_url == ""
+    assert record.website == ""
+    assert record.location == ""
+    assert record.organization == ""
+    assert record.public_email == ""
+    assert record.public_id == ""
+    assert record.links == []
+    # Malformed transport is never stored as active provenance; the raw payload still
+    # survives untouched in Finding.data, which is the persisted audit source.
+    assert record.provenance == {}
+
+
+def test_an_invalid_payload_never_reaches_the_legacy_branch() -> None:
+    """A parse failure is not the same state as an absent key, and must not become one."""
+    poisoned = _observed_record({"website": {"value": "https://o.example/"}}, **_POISON)
+    legacy = records_from_findings([_finding("GitHub", status="CONFIRMED", **_POISON)])[0]
+    # The legacy record does read the compatibility channel — that is the contrast.
+    assert legacy.website == "https://poison.example/"
+    assert legacy.display_name == "Mallory Poison"
+    assert poisoned.website == ""
+    assert poisoned.display_name == ""
+
+
+def test_a_malformed_payload_leaves_the_original_finding_untouched() -> None:
+    """Authority is a read-time decision; nothing repairs or rewrites the transport."""
+    payload = {"website": {"value": "https://o.example/", "source": "s"}}
+    finding = _finding("GitHub", status="CONFIRMED", observed=payload)
+    snapshot = json.loads(json.dumps(finding.data))
+    records_from_findings([finding])
+    assert finding.data == snapshot
+
+
+# F. rejected_by is authoritative downstream
+def test_a_rejected_scalar_is_not_an_active_attribute() -> None:
+    """A rejected value is absent from evidence, not a value that happens to score zero."""
+    observed = {
+        "display_name": _row("Rejected Name", rejected_by="test_rule"),
+        "organization": _row("Observed Labs"),
+    }
+    record = _observed_record(observed, **_POISON)
+    assert record.display_name == ""
+    assert record.organization == "Observed Labs"
+    # Rejection stays visible in the audit view: it was observed, and then rejected.
+    assert record.provenance["display_name"]["rejected_by"] == "test_rule"
+    assert record.provenance["display_name"]["value"] == "Rejected Name"
+
+
+def test_a_rejected_list_field_contributes_no_links() -> None:
+    observed = {
+        "external_links": _row(["https://rejected.example/"], rejected_by="test_rule"),
+        "social_links": _row(["https://x.com/alice"]),
+    }
+    record = _observed_record(observed, **_POISON)
+    assert record.links == ["https://x.com/alice"]
+    assert record.provenance["external_links"]["rejected_by"] == "test_rule"
+
+
+def test_an_empty_rejection_token_still_rejects() -> None:
+    """`is not None`, never truthiness: a blank token names a rejection all the same."""
+    record = _observed_record({"display_name": _row("Rejected Name", rejected_by="")}, **_POISON)
+    assert record.display_name == ""
+    assert record.provenance["display_name"]["rejected_by"] == ""
+
+
+def test_rejection_removes_positive_evidence() -> None:
+    """Two profiles agreeing on an organization stop agreeing when one side is rejected."""
+    def profile(platform: str, *, rejected: bool) -> Finding:
+        row = _row("Observed Labs", rejected_by="test_rule") if rejected else _row("Observed Labs")
+        return _finding(platform, status="CONFIRMED", observed={"organization": row})
+
+    agreeing = _pair(profile("GitHub", rejected=False), profile("Instagram", rejected=False))
+    assert "same_organization" in agreeing["evidence"]
+
+    rejected = _pair(profile("GitHub", rejected=True), profile("Instagram", rejected=False))
+    assert "same_organization" not in rejected["evidence"]
+    assert rejected["score"] == agreeing["score"] - WEIGHTS["same_organization"]
+
+
+def test_rejection_removes_negative_conflict() -> None:
+    """A rejected value cannot contradict anything either. It is not in the comparison."""
+    def profile(platform: str, name: str, *, rejected: bool) -> Finding:
+        row = _row(name, rejected_by="test_rule") if rejected else _row(name)
+        return _finding(platform, status="CONFIRMED", observed={"display_name": row})
+
+    conflicting = _pair(
+        profile("GitHub", "Alice Observed", rejected=False),
+        profile("Instagram", "Bob Different", rejected=False),
+    )
+    assert "distinct_display_name" in conflicting["conflicts"]
+
+    rejected = _pair(
+        profile("GitHub", "Alice Observed", rejected=True),
+        profile("Instagram", "Bob Different", rejected=False),
+    )
+    assert "distinct_display_name" not in rejected["conflicts"]
+    assert rejected["score"] > conflicting["score"]
+
+
+def test_a_rejected_value_never_appears_in_a_pair_explanation() -> None:
+    """The explanation boundary too: no rejected text reaches evidence_detail.
+
+    Both sides carry the *same* rejected website on purpose. Were rejection ignored, that
+    agreement would be the strongest pair of signals this engine has — 42 + 40 — and the
+    rejected URL would be quoted back in the evidence detail of both sides. Rejecting it
+    on one side only would prove much less: a one-sided value cannot agree with anything.
+    """
+    def profile(platform: str) -> Finding:
+        return _finding(
+            platform,
+            status="CONFIRMED",
+            observed={
+                "display_name": _row("Alice Observed"),
+                "website": _row("https://rejected-secret.example/", rejected_by="test_rule"),
+            },
+        )
+
+    pair = _pair(profile("GitHub"), profile("Instagram"))
+    assert "same_display_name" in pair["evidence"]
+    assert "same_personal_domain" not in pair["evidence"]
+    assert "same_personal_url" not in pair["evidence"]
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["same_display_name"]
+    # Neither the value nor its host is quoted anywhere in the explanation.
+    assert "rejected-secret" not in json.dumps(pair)
+
+
+# G + H. list authority, with and without items
+def test_item_backed_link_values_are_authoritative_and_items_survive() -> None:
+    """The row value is the contract's truthful projection of its items, so it is safe.
+
+    B2-03B1 uses that projection for link membership and keeps the items in provenance for
+    B2-03B3 to explain. It deliberately does not claim the row-level `source` describes
+    every member — `"multiple"` names no extractor, and inventing per-link provenance here
+    would be a false attribution.
+    """
+    items = [
+        {
+            "value": "https://alice.dev/",
+            "original": "https://alice.dev/",
+            "source": "github_api.blog",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "JSON_API",
+        },
+        {
+            "value": "https://x.com/alice",
+            "original": "https://x.com/alice",
+            "source": "html_rel_me",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "HTML",
+        },
+    ]
+    observed = {
+        "social_links": {
+            "value": ["https://alice.dev/", "https://x.com/alice"],
+            "original": ["https://alice.dev/", "https://x.com/alice"],
+            "source": "multiple",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "MIXED",
+            "items": items,
+        }
+    }
+    record = _observed_record(observed, **_POISON)
+    assert record.links == ["https://alice.dev/", "https://x.com/alice"]
+    assert "https://poison.example/link" not in record.links
+    stored = record.provenance["social_links"]["items"]
+    assert [item["source"] for item in stored] == ["github_api.blog", "html_rel_me"]
+    # Row-level aggregation marker preserved as itself, never copied onto a member.
+    assert record.provenance["social_links"]["source"] == "multiple"
+
+
+def test_a_legacy_list_row_without_items_is_still_authoritative() -> None:
+    """Items are not retroactively required of a row written before they existed."""
+    observed = {
+        "external_links": {
+            "value": ["https://alice.dev/", "https://alice.dev/blog"],
+            "original": ["https://alice.dev/", "https://alice.dev/blog"],
+            "source": "html_rel_me",
+            "observed_at": _OBSERVED_STAMP,
+        }
+    }
+    record = _observed_record(observed, **_POISON)
+    assert record.links == ["https://alice.dev/", "https://alice.dev/blog"]
+    assert "items" not in record.provenance["external_links"]
+
+
+def test_duplicate_link_values_are_deduplicated_without_respelling() -> None:
+    observed = {
+        "external_links": _row(["https://alice.dev/", "https://ALICE.dev/"]),
+        "social_links": _row(["https://alice.dev/", "https://x.com/alice"]),
+    }
+    record = _observed_record(observed)
+    # Exact repeats collapse; two different spellings of one host stay two entries,
+    # because normalizing a URL here would rewrite what the observer actually published.
+    assert record.links == ["https://alice.dev/", "https://ALICE.dev/", "https://x.com/alice"]
+
+
+# §9. consumer-incompatible shapes are suppressed, one field at a time
+def test_a_scalar_field_carrying_a_list_is_suppressed_not_stringified() -> None:
+    observed = {
+        "display_name": _row(["Alice Observed"]),
+        "organization": _row("Observed Labs"),
+    }
+    record = _observed_record(observed, **_POISON)
+    assert record.display_name == ""
+    assert "['Alice Observed']" not in record.display_name
+    # The valid neighbour survives: one incompatible field is not a whole-mapping failure.
+    assert record.organization == "Observed Labs"
+    assert "display_name" in record.provenance
+
+
+def test_a_list_field_carrying_a_scalar_is_not_wrapped_into_a_link() -> None:
+    observed = {
+        "social_links": _row("https://x.com/alice"),
+        "external_links": _row(["https://alice.dev/"]),
+    }
+    record = _observed_record(observed, **_POISON)
+    assert record.links == ["https://alice.dev/"]
+    assert "https://x.com/alice" not in record.links
+    assert "social_links" in record.provenance
+
+
+def test_an_unknown_observed_field_name_is_not_rejected() -> None:
+    """Forward compatibility: this slice constrains known shapes, not the name space."""
+    observed = {"display_name": _row("Alice Observed"), "future_field": _row("whatever")}
+    record = _observed_record(observed, **_POISON)
+    assert record.display_name == "Alice Observed"
+    assert record.provenance["future_field"]["value"] == "whatever"

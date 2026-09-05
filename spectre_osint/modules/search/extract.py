@@ -101,7 +101,11 @@ def extract_indicators(
                         original_finding=fid,
                         extraction_rule="profile_host",
                     )
-            for item in observed_profile_fields(data):
+            # Parsed once per finding and reused. The helper now validates the observed
+            # transport, so calling it twice would re-parse the same payload and, worse,
+            # invite the two reads to disagree about what is authoritative.
+            observed_rows = observed_profile_fields(data)
+            for item in observed_rows:
                 field = str(item.get("field") or "")
                 value = item.get("value")
                 src = str(item.get("source") or field)
@@ -160,7 +164,7 @@ def extract_indicators(
                                 extraction_rule=field,
                             )
             bio = ""
-            for item in observed_profile_fields(data):
+            for item in observed_rows:
                 if item.get("field") == "bio":
                     bio = str(item.get("value") or "")
             for handle in _HANDLE_RE.findall(bio):

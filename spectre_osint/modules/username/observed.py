@@ -16,7 +16,8 @@ repeated inside the observation itself.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any
@@ -26,6 +27,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     RootModel,
+    ValidationError,
     field_serializer,
     field_validator,
     model_validator,
@@ -455,6 +457,152 @@ def _coerce_stamp(row: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(stamp, datetime) and stamp.tzinfo is None:
         out["observed_at"] = stamp.replace(tzinfo=UTC)
     return out
+
+
+OBSERVED_KEY = "observed"
+
+# The semantic shape each known profile field carries. `ObservedField.value` is
+# deliberately generic — the B2-03A model serves scalars and lists alike — but a consumer
+# knows what a display name looks like, and a field of the wrong shape is suppressed
+# rather than coerced: `["Alice"]` must never reach evidence as the string "['Alice']",
+# and a scalar `social_links` must not become a link just because it can be wrapped in a
+# list. Names in neither set are unconstrained; forward compatibility for observed field
+# names is not this milestone's business to forbid.
+SCALAR_OBSERVED_FIELDS = frozenset(
+    {
+        "display_name",
+        "username",
+        "bio",
+        "location",
+        "organization",
+        "website",
+        "personal_domain",
+        "public_email",
+        "avatar_url",
+        "public_id",
+    }
+)
+LIST_OBSERVED_FIELDS = frozenset({"external_links", "social_links"})
+
+
+def _is_active(name: str, value: Any, rejected_by: Any) -> bool:
+    """Whether one observed field may act as evidence. The single rule, one place.
+
+    `rejected_by is not None` — never truthiness. A model-valid but odd empty rejection
+    token still names a rejection, and reading it as falsy would turn *rejected* into
+    *accepted* by accident. A REJECTED VALUE STAYS REJECTED.
+    """
+    if rejected_by is not None:
+        return False
+    if name in SCALAR_OBSERVED_FIELDS:
+        return not isinstance(value, list)
+    if name in LIST_OBSERVED_FIELDS:
+        return isinstance(value, list)
+    return True
+
+
+def field_is_active(name: str, field: ObservedField) -> bool:
+    """Whether a validated field is active evidence for the attribute `name`."""
+    return _is_active(name, field.value, field.rejected_by)
+
+
+def transport_row_is_active(name: str, row: Mapping[str, Any]) -> bool:
+    """The same rule read off canonical validated transport.
+
+    `to_transport()` excludes `None`, so a row carrying a `rejected_by` key carries a
+    real rejection and an accepted row has no such key at all — `row.get()` returning
+    `None` therefore means exactly `field.rejected_by is None`.
+    """
+    return _is_active(name, row.get("value"), row.get("rejected_by"))
+
+
+def _validation_summary(exc: Exception) -> str:
+    """A short reason for a log line, carrying no observed values.
+
+    A Pydantic error message embeds `input_value=...`, which for this transport *is*
+    profile data, so the message itself is never propagated. Error locations and types
+    name the shape problem using schema keys alone.
+    """
+    if isinstance(exc, ValidationError):
+        errors = exc.errors()
+        parts = [
+            f"{'.'.join(str(item) for item in error['loc']) or OBSERVED_KEY}: {error['type']}"
+            for error in errors[:3]
+        ]
+        remaining = len(errors) - len(parts)
+        if remaining > 0:
+            parts.append(f"and {remaining} more")
+        return "; ".join(parts)[:200]
+    return str(exc)[:200]
+
+
+@dataclass(frozen=True)
+class ObservedAuthority:
+    """What a finding's `observed` channel is allowed to decide, for one consumer.
+
+    Authority is decided by **key presence**, never by truthiness and never by type.
+    `observed` absent means no observed transport was ever written, and only then may a
+    consumer read the top-level compatibility attributes. `observed` present means the
+    authoritative channel exists — including when it is `{}`, `None`, `[]` or malformed —
+    and the top-level attributes are no longer evidence for anything it covers.
+
+    Three states, and every consumer needs the same three:
+
+    - absent: `present` false, `fields` None. Legacy fallback path.
+    - present and valid: `fields` is the validated model, `{}` included. An empty mapping
+      is authoritative emptiness, not an invitation to fall back.
+    - present and invalid: `present` true, `fields` None, `error` a short reason. Fail
+      closed for enrichment — but only for enrichment. PROFILE EXISTS != SAME PERSON, so
+      a malformed enrichment payload does not un-check the public profile it was attached
+      to, and the record itself survives with its optional attributes blank.
+    """
+
+    present: bool
+    fields: ObservedFields | None = None
+    error: str = ""
+
+    @property
+    def failed(self) -> bool:
+        """Transport exists and does not validate. Never a reason to read top level."""
+        return self.present and self.fields is None
+
+    def active(self) -> dict[str, ObservedField]:
+        """The validated fields a consumer may treat as evidence, in transport order.
+
+        Empty when the channel is absent or invalid, so a caller that only wants active
+        evidence needs no state machine of its own.
+        """
+        if self.fields is None:
+            return {}
+        return {
+            name: field
+            for name, field in self.fields.root.items()
+            if field_is_active(name, field)
+        }
+
+
+def read_observed(data: Mapping[str, Any] | None) -> ObservedAuthority:
+    """Decide what a finding's `observed` channel may authorize, and validate it once.
+
+    This is the consumer-side parse boundary B2-03B1 introduces: identity correlation,
+    presentation and pivot extraction all read observed profile attributes through here,
+    so "is this transport trustworthy" is answered in exactly one place.
+
+    Only validation failures are caught. `parse_observed()` raises `ValueError` for a
+    non-mapping payload and Pydantic's `ValidationError` — itself a `ValueError` — for a
+    malformed one; `TypeError` covers a payload whose shape breaks the walk before
+    validation starts. Nothing broader is swallowed, and the original
+    `Finding.data[OBSERVED_KEY]` is left exactly as persisted: this decides what may be
+    *read* as evidence, never what was written.
+    """
+    payload = data or {}
+    if OBSERVED_KEY not in payload:
+        return ObservedAuthority(present=False)
+    try:
+        fields = parse_observed(payload[OBSERVED_KEY])
+    except (ValueError, TypeError) as exc:
+        return ObservedAuthority(present=True, error=_validation_summary(exc))
+    return ObservedAuthority(present=True, fields=fields)
 
 
 def project_items(items: list[ObservedItem]) -> dict[str, Any]:

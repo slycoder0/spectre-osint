@@ -26,6 +26,10 @@ from spectre_osint.modules.username.identity import (
 )
 from spectre_osint.reporting.html import write_html_report
 
+# Hand-written `observed` fixtures are real transport: `value`, `original`, `source` and
+# `observed_at` are all required by the contract, and consumers validate before trusting.
+_STAMP = "2026-01-01T12:00:00+00:00"
+
 
 def _settings(tmp_path) -> Settings:
     settings = Settings(
@@ -226,13 +230,27 @@ def test_same_personal_domain_two_profiles() -> None:
         "GitHub",
         display_name="Alice Example",
         website="https://alice.dev",
-        observed={"website": {"value": "https://alice.dev", "source": "github_api.blog"}},
+        observed={
+            "website": {
+                "value": "https://alice.dev",
+                "original": "https://alice.dev",
+                "source": "github_api.blog",
+                "observed_at": _STAMP,
+            }
+        },
     )
     right = _finding(
         "Instagram",
         display_name="Alice Example",
         website="http://www.alice.dev/",
-        observed={"website": {"value": "https://alice.dev", "source": "html_rel_me"}},
+        observed={
+            "website": {
+                "value": "https://alice.dev",
+                "original": "https://alice.dev",
+                "source": "html_rel_me",
+                "observed_at": _STAMP,
+            }
+        },
     )
     pair = compare_records(records_from_findings([left])[0], records_from_findings([right])[0])
     assert "same_personal_domain" in pair["evidence"]
@@ -295,6 +313,7 @@ def test_provenance_persists_in_report_and_gui(tmp_path) -> None:
     observed = {
         "display_name": {
             "value": "Alice Example",
+            "original": "Alice Example",
             "source": "github_api.name",
             "observed_at": "2026-01-01T00:00:00+00:00",
         }
@@ -318,7 +337,14 @@ def test_provenance_persists_in_report_and_gui(tmp_path) -> None:
                     "Instagram",
                     display_name="Alice Example",
                     website="https://alice.dev",
-                    observed={"display_name": {"value": "Alice Example", "source": "instagram_og.title"}},
+                    observed={
+                        "display_name": {
+                            "value": "Alice Example",
+                            "original": "Alice Example",
+                            "source": "instagram_og.title",
+                            "observed_at": _STAMP,
+                        }
+                    },
                 ),
             ]
         ),

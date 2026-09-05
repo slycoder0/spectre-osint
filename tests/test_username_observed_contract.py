@@ -2367,3 +2367,171 @@ def test_a_subsecond_looking_suffix_does_not_repair_a_malformed_stamp(spelling: 
                 }
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# B2-03B1: presentation validates the observed transport before showing it.
+#
+# `observed_profile_fields()` used to read the raw mapping, so a malformed or rejected
+# observation could be rendered — and, through `extract_indicators()`, become a pivot.
+# It now parses through the same authority boundary the identity consumer uses.
+# ---------------------------------------------------------------------------
+
+
+def _presentation_row(value: object, **extra: object) -> dict:
+    original = list(value) if isinstance(value, list) else value
+    return {
+        "value": value,
+        "original": original,
+        "source": "github_api.field",
+        "observed_at": _STAMP,
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    (
+        ("absent", None),
+        ("empty mapping", {}),
+        ("observed is None", None),
+        ("observed is a list", []),
+        ("row missing observed_at", {"website": {"value": "https://o.example/", "original": "x", "source": "s"}}),
+        ("row missing original", {"website": {"value": "https://o.example/", "source": "s", "observed_at": _STAMP}}),
+        ("forbidden extra key", {"website": {**_presentation_row("https://o.example/"), "bogus": "x"}}),
+        ("row is not a mapping", {"website": "https://o.example/"}),
+    ),
+)
+def test_presentation_returns_nothing_without_valid_observed_transport(
+    label: str, payload: object
+) -> None:
+    """Absent, empty and invalid all render no observed rows, and none falls back.
+
+    The three states differ for the identity consumer, which has a legacy channel to
+    choose between; for presentation they converge, because there was never a top-level
+    fallback to render in the first place. Failing closed here is what stops one malformed
+    persisted finding from putting unvalidated text into a report.
+    """
+    data = {"platform": "GitHub"} if label == "absent" else {"platform": "GitHub", "observed": payload}
+    assert observed_profile_fields(data) == []
+
+
+def test_presentation_excludes_a_rejected_field() -> None:
+    """A rejected observation is not an active observed row, however valid its transport."""
+    observed = {
+        "display_name": _presentation_row("Alice Observed"),
+        "website": _presentation_row("https://rejected.example/", rejected_by="test_rule"),
+    }
+    rows = observed_profile_fields({"observed": observed})
+    assert [row["field"] for row in rows] == ["display_name"]
+    assert "rejected.example" not in json.dumps(rows)
+
+
+def test_presentation_excludes_a_consumer_incompatible_shape() -> None:
+    """A wrong-shaped field is dropped, and only that field."""
+    observed = {
+        "display_name": _presentation_row(["Alice Observed"]),
+        "social_links": _presentation_row("https://x.com/alice"),
+        "organization": _presentation_row("Observed Labs"),
+    }
+    rows = observed_profile_fields({"observed": observed})
+    assert [row["field"] for row in rows] == ["organization"]
+    assert "['Alice Observed']" not in json.dumps(rows)
+
+
+def test_presentation_keeps_the_output_api_unchanged() -> None:
+    observed = {"display_name": _presentation_row("Alice Observed")}
+    assert observed_profile_fields({"observed": observed}) == [
+        {
+            "field": "display_name",
+            "value": "Alice Observed",
+            "source": "github_api.field",
+            "observed_at": _STAMP,
+            "kind": "observed",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    (
+        "2026-01-01T12:00:00+00:00",
+        "2026-01-01T12:00:00-05:00",
+        # The two spellings B2-03B0 fought for. `str(datetime)` renders a space instead of
+        # `T`, so either one is a byte-exact witness that the row came from transport
+        # serialization and not from stringifying the parsed object.
+        "2026-01-01T00:00:00+00:00:30.123456",
+        "2026-01-01T00:00:00+00:00:00.000001",
+        "2026-01-01T00:00:00-00:00:00.999999",
+    ),
+)
+def test_presentation_keeps_the_canonical_timestamp_spelling(spelling: str) -> None:
+    """A displayed `observed_at` is the contract's ISO spelling, not a datetime repr."""
+    observed = {"display_name": dict(_presentation_row("Alice Observed"), observed_at=spelling)}
+    row = observed_profile_fields({"observed": observed})[0]
+    assert row["observed_at"] == spelling
+    assert " " not in row["observed_at"]
+    # And the transport a report shows still round-trips as the transport it came from.
+    assert parse_observed(observed)["display_name"].to_transport()["observed_at"] == spelling
+
+
+def test_presentation_validates_transport_loaded_back_from_the_database(settings) -> None:
+    """A cached or persisted finding gets the same read authority as a live one.
+
+    Nothing is validated at write time in this slice — the durable JSON stays exactly as
+    produced — so the guarantee has to hold when the transport comes back off disk. Both
+    halves are checked from one stored result: the valid row still presents, the malformed
+    row beside it still presents nothing.
+    """
+    init_db(settings)
+    try:
+        good = {"display_name": _presentation_row("Alice Observed")}
+        bad = {"website": {"value": "https://malformed.example/", "source": "s"}}
+        manager = CaseManager()
+        case = manager.create("b2-03b1-replay")
+        run = manager.start_run(case.id, "alice", "USERNAME")
+        entity = Entity.create(EntityType.USERNAME, "alice", "user", Confidence.CONFIRMED)
+        manager.persist_result(
+            InvestigationResult(
+                case_id=case.id,
+                case_name=case.name,
+                target="alice",
+                target_type=EntityType.USERNAME,
+                mode="PASSIVE_OSINT",
+                started_at=utcnow(),
+                finished_at=utcnow(),
+                run_id=run.id,
+                entities=[entity],
+                findings=[
+                    Finding(
+                        module="username",
+                        title=title,
+                        status=FindingStatus.FOUND,
+                        summary=f"{title}: CONFIRMED",
+                        data={
+                            "platform": title,
+                            "username": "alice",
+                            "check_status": "CONFIRMED",
+                            "profile_url": f"https://{title.lower()}.example/alice",
+                            "observed": payload,
+                        },
+                        confidence=Confidence.CONFIRMED,
+                        entity_id=entity.id,
+                    )
+                    for title, payload in (("GitHub", good), ("Instagram", bad))
+                ],
+            )
+        )
+        manager.finish_run(run.id, status="completed")
+        loaded = manager.load_result("b2-03b1-replay")
+        assert loaded is not None
+        by_title = {finding.title: finding for finding in loaded.findings}
+        # The durable transport is unchanged in both cases, malformed included.
+        assert by_title["Instagram"].data["observed"] == bad
+        assert observed_profile_fields(by_title["GitHub"].data)[0]["value"] == "Alice Observed"
+        assert observed_profile_fields(by_title["Instagram"].data) == []
+        records = records_from_findings(loaded.findings)
+        assert {record.platform for record in records} == {"GitHub", "Instagram"}
+        assert next(r for r in records if r.platform == "Instagram").website == ""
+    finally:
+        reset_engine()
