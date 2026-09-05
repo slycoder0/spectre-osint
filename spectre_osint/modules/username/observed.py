@@ -34,6 +34,9 @@ LEGACY_KEYS = ("value", "original", "source", "observed_at")
 
 # Row-level `source` for a list whose items do not share one source string. A single
 # source path here would be a false attribution, so the marker says "read `items`".
+# Row-level *only*: it names no extractor, so an ObservedItem may not claim it, exactly
+# as SourceMethod.MIXED names no acquisition method. Reserved as this exact string; any
+# other source containing the word is an ordinary extractor path.
 MULTIPLE_SOURCES = "multiple"
 
 
@@ -85,6 +88,8 @@ def _check_acquisition_metadata(
     source_method: SourceMethod | None,
     source_url: str | None,
     derived_from: str | None,
+    *,
+    origin_deferred_to_items: bool = False,
 ) -> None:
     """How an observation was acquired constrains what else it may claim.
 
@@ -100,16 +105,31 @@ def _check_acquisition_metadata(
     DERIVED and `derived_from` are two halves of one statement: a derived observation
     must name what it was derived from, and only a derived observation may name it.
     The token itself is not interpreted — no origin vocabulary is hardcoded here — but
-    it must be non-empty to say anything at all.
+    it must say something: a present origin that is empty or only whitespace names no
+    field. Such a token is refused, never trimmed, and an accepted one is never
+    rewritten — this contract validates provenance, it does not edit it.
+
+    `origin_deferred_to_items` is the single exception, and only an item-backed
+    aggregate row may claim it. When every item is DERIVED but they name different
+    origins there is no shared row-level origin to state, and `items` already carries
+    each one exactly. The caller must prove that from the items themselves — see
+    `ObservedField._derivation_origin_is_deferred_to_items()`. A *missing* origin stays
+    refused everywhere else; a *blank* one stays refused everywhere.
     """
     if source_method == SourceMethod.INPUT and source_url is not None:
         raise ValueError(
             "INPUT is operator input, not a network read, so it cannot name a source_url"
         )
     if source_method == SourceMethod.DERIVED:
-        if not derived_from:
+        if derived_from is None:
+            if not origin_deferred_to_items:
+                raise ValueError(
+                    "a DERIVED observation must name the field it was derived from"
+                )
+        elif not derived_from.strip():
             raise ValueError(
-                "a DERIVED observation must name the field it was derived from"
+                "a DERIVED observation must name the field it was derived from; a blank "
+                "origin names nothing"
             )
     elif derived_from is not None:
         named = source_method.value if source_method is not None else "an unknown method"
@@ -145,6 +165,29 @@ class ObservedItem(BaseModel):
     # carrying it would describe a state this contract does not define, and would let a
     # row present that item as accepted in the compatibility `value` list while the
     # item's own provenance said otherwise. `extra="forbid"` refuses it.
+
+    @field_validator("source")
+    @classmethod
+    def _reject_row_only_source_marker(cls, value: str) -> str:
+        """MULTIPLE_SOURCES is an aggregation marker, and an item aggregates nothing.
+
+        The row-level marker means "no single source string describes all members, read
+        `items`". An item *is* one of those members, so claiming it would be an
+        authoritative record naming no extractor — the same contradiction
+        `_reject_row_only_marker` refuses for SourceMethod.MIXED one field over. Left
+        unchecked, a single item claiming it also made `project_items()` report a row
+        `source` of "multiple" with no extractor heterogeneity proven at all.
+
+        Only the exact reserved string participates: `"multiple_source_test"` and any
+        other path containing the word stay valid, and no other source string is
+        constrained.
+        """
+        if value == MULTIPLE_SOURCES:
+            raise ValueError(
+                f"{MULTIPLE_SOURCES!r} is a row-level aggregation marker, not an "
+                "extractor; an item must name the extractor that observed it"
+            )
+        return value
 
     @field_validator("source_method")
     @classmethod
@@ -217,12 +260,28 @@ class ObservedField(BaseModel):
         shape enrichment emits, and a consumer could not tell which original belongs to
         which normalized value. A legacy row is unaffected in either shape: the rule is
         only that the two agree.
+
+        Agreeing on the shape is not enough for two lists. `["a", "b"]` beside
+        `["raw-a"]` is the same unreadable pairing one level down — the second value has
+        no original, or the first original belongs to nobody — so the two lists must
+        also be the same length. `project_items()` appends to both in one step and
+        already satisfies this; the rule closes the serialized door.
+
+        Nothing here compares *contents*: `original` is the raw observed text and need
+        not equal `value`, order is untouched, and no normalization or deduplication is
+        added. A legacy list row stays valid whenever its own two lists pair up.
         """
         if isinstance(self.value, list) != isinstance(self.original, list):
             raise ValueError(
                 "value and original must both be scalar or both be lists; got value "
                 f"{type(self.value).__name__} with original {type(self.original).__name__}"
             )
+        if isinstance(self.value, list) and isinstance(self.original, list):
+            if len(self.value) != len(self.original):
+                raise ValueError(
+                    "value and original must pair up one to one; value has "
+                    f"{len(self.value)} entries, original has {len(self.original)}"
+                )
         return self
 
     def to_transport(self) -> dict[str, Any]:
@@ -238,7 +297,9 @@ class ObservedField(BaseModel):
         item agrees; otherwise `source` becomes MULTIPLE_SOURCES, `source_method`
         becomes SourceMethod.MIXED when the items prove several known methods, and the
         remaining keys are dropped rather than guessed. An unknown item method leaves
-        the row's method unknown too. `items` stays authoritative either way.
+        the row's method unknown too. `items` stays authoritative either way — including
+        for a list whose items all derive from different fields, where the row keeps
+        DERIVED and drops `derived_from` rather than naming one item's origin for all.
         """
         return cls(**project_items(items), items=items)
 
@@ -279,10 +340,42 @@ class ObservedField(BaseModel):
             )
         return self
 
+    def _derivation_origin_is_deferred_to_items(self) -> bool:
+        """Do this row's own items prove DERIVED while disagreeing on the origin?
+
+        Derived from `items` through `project_items()` — the same single source of truth
+        `_row_must_not_contradict_its_items()` uses — rather than trusting that
+        validator to have run first. Pydantic runs `mode="after"` validators in
+        definition order, so in practice it has; the exception must still justify itself
+        from the items instead of depending on that, because an ordering change would
+        otherwise silently turn it into a way to omit a DERIVED origin. A row may drop
+        the origin only when the projection of its own items drops it too, and
+        `_row_must_not_contradict_its_items()` independently pins every other key.
+        """
+        if not self.items:
+            return False
+        projected = project_items(self.items)
+        return (
+            projected["source_method"] == SourceMethod.DERIVED
+            and projected["derived_from"] is None
+        )
+
     @model_validator(mode="after")
     def _acquisition_metadata_must_agree(self) -> ObservedField:
-        """The same invariants at the row level, on the row's own projected metadata."""
-        _check_acquisition_metadata(self.source_method, self.source_url, self.derived_from)
+        """The same invariants at the row level, on the row's own projected metadata.
+
+        One row-level relaxation: an aggregate whose items all derive from *different*
+        fields keeps `source_method=DERIVED` — every item proves it, so the row is
+        truthful — while omitting `derived_from`, because no single origin describes the
+        list and `items` holds each exact one. A scalar or item-less DERIVED row has
+        nowhere to defer to and must still name its origin.
+        """
+        _check_acquisition_metadata(
+            self.source_method,
+            self.source_url,
+            self.derived_from,
+            origin_deferred_to_items=self._derivation_origin_is_deferred_to_items(),
+        )
         return self
 
 

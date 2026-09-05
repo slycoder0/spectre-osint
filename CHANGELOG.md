@@ -39,16 +39,32 @@ The format is based on Keep a Changelog.
   itens. Se o método de qualquer item for desconhecido, a linha **omite** o método em vez
   de declarar `MIXED`: proveniência desconhecida não prova uma segunda origem de
   aquisição;
-- `value` e `original` precisam usar a **mesma forma** — ambos escalares ou ambos listas.
-  As duas uniões eram validadas de forma independente, e um `value` escalar com
-  `original` em lista (ou o inverso) não é nenhuma das duas formas emitidas pelo
-  enriquecimento. Linhas legadas seguem válidas em qualquer uma das duas formas;
+- `value` e `original` precisam usar a **mesma forma** — ambos escalares ou ambos listas —
+  e, quando são listas, a **mesma cardinalidade**. As duas uniões eram validadas de forma
+  independente, e nem um `value` escalar com `original` em lista nem duas listas de
+  tamanhos diferentes (`["a", "b"]` com `["raw-a"]`) permitem associar cada valor
+  normalizado ao seu texto de origem. Linhas legadas seguem válidas em qualquer uma das
+  duas formas, desde que suas próprias listas casem; ordem, deduplicação e normalização
+  não mudam;
 - `derived_from` e `DERIVED` passam a concordar nos dois sentidos, na linha e no item:
   uma observação derivada precisa nomear sua origem, e só uma observação derivada pode
-  nomear uma. O token não é interpretado, apenas exigido não vazio;
+  nomear uma. O token não é interpretado, apenas exigido não vazio — uma origem presente
+  vazia ou só com espaços em branco é **recusada**, nunca aparada, e um token válido nunca
+  é reescrito;
+- uma linha **agregada** cujos itens são todos `DERIVED` mas nomeiam origens **diferentes**
+  mantém `source_method: DERIVED` e **omite** `derived_from`, deferindo as origens exatas
+  a `items`: cada item prova o método, nenhuma origem única descreve a lista, e nomear a de
+  um item para todos seria falso. A exceção vale só para a linha com `items` e só quando a
+  projeção dos próprios itens também omite a origem; item, linha escalar e linha sem
+  `items` seguem obrigados a nomear a sua;
 - `source: "multiple"` exige `items`, como já valia para `MIXED` sem itens: o marcador diz
   que a proveniência autoritativa está nos itens, e sem eles não aponta para nada. Apenas
   o marcador reservado participa da regra;
+- `source: "multiple"` é **de linha, e só de linha**: um `ObservedItem` não pode declará-lo,
+  como já não pode declarar `source_method: MIXED`. Um item é um dos membros que o marcador
+  manda inspecionar, e um único item marcado assim fazia a projeção declarar uma linha
+  `"multiple"` sem heterogeneidade de extrator alguma provada. Só a string reservada exata
+  é recusada;
 - `rejected_by` é metadado **de campo**, e apenas de campo: `ObservedItem` não tem a
   chave, e um item serializado que a traga é recusado na validação (`extra="forbid"`),
   para que a lista de compatibilidade `value` não possa expor um item como aceito

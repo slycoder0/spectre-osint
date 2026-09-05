@@ -1272,5 +1272,308 @@ def test_multiple_source_marker_requires_items() -> None:
     assert row.source == MULTIPLE_SOURCES
     assert row.items is not None
     assert parse_observed({"f": row.to_transport()}).to_transport() == {"f": row.to_transport()}
-    # The marker is a row-level projection; an item names its own extractor either way.
-    assert _plain_item("a", MULTIPLE_SOURCES, SourceMethod.HTML).source == MULTIPLE_SOURCES
+    # The marker is a row-level projection, and an item may not claim it either: that is
+    # its own invariant, proved in test_the_row_marker_is_not_an_item_source below. This
+    # line asserted the opposite until that rule landed.
+    with pytest.raises(ValidationError):
+        _plain_item("a", MULTIPLE_SOURCES, SourceMethod.HTML)
+
+
+# Codex P2 (comment 3935572410). An aggregate row may defer heterogeneous derivation
+# origins to its items; every other DERIVED observation still names its own.
+def _derived_item(value: str, origin: str, source: str = "derived.rule") -> ObservedItem:
+    return ObservedItem(
+        value=value,
+        original=value,
+        source=source,
+        observed_at=_STAMP,
+        source_method=SourceMethod.DERIVED,
+        derived_from=origin,
+    )
+
+
+def _derived_row(items: list[ObservedItem], **overrides: object) -> dict:
+    """A serialized row over `items`, truthful unless an override makes it lie."""
+    row: dict = {
+        "value": [item.value for item in items],
+        "original": [item.original for item in items],
+        "source": "derived.rule",
+        "observed_at": _STAMP,
+        "source_method": "DERIVED",
+        "items": [item.to_transport() for item in items],
+    }
+    row.update(overrides)
+    return row
+
+
+def test_derived_items_with_different_origins_still_form_a_row() -> None:
+    website = _derived_item("alice.dev", "website")
+    avatar = _derived_item("alice.example", "avatar_url")
+    # Both items are individually valid: each knows its own origin.
+    assert (website.derived_from, avatar.derived_from) == ("website", "avatar_url")
+
+    projected = project_items([website, avatar])
+    assert projected["source_method"] == SourceMethod.DERIVED
+    assert projected["derived_from"] is None
+
+    row = ObservedField.from_items([website, avatar])
+    assert row.source_method == SourceMethod.DERIVED
+    assert row.derived_from is None
+    assert row.items is not None
+    # The exact origins survive where they are true: on the items.
+    assert [item.derived_from for item in row.items] == ["website", "avatar_url"]
+    assert "derived_from" not in row.to_transport()
+    transport = {"f": row.to_transport()}
+    assert parse_observed(transport).to_transport() == transport
+    # And through the serialized door, not only the constructor.
+    assert parse_observed({"f": _derived_row([website, avatar])}).to_transport() == transport
+
+    # Same-origin control: the shared origin is projected, so the row must carry it.
+    shared = ObservedField.from_items([website, _derived_item("alice.test", "website")])
+    assert shared.derived_from == "website"
+    with pytest.raises(ValidationError) as deleted:
+        parse_observed({"f": _derived_row([website, _derived_item("alice.test", "website")])})
+    assert "row contradicts its items on derived_from" in str(deleted.value)
+    # One item is the same case: there is a shared origin, so it may not be dropped.
+    with pytest.raises(ValidationError):
+        parse_observed({"f": _derived_row([website])})
+
+    # Malicious control: an origin no item supports is not deferral, it is invention.
+    with pytest.raises(ValidationError) as invented:
+        parse_observed({"f": _derived_row([website, avatar], derived_from="profile")})
+    assert "row contradicts its items on derived_from" in str(invented.value)
+
+    # And the method itself may not be borrowed: items that never derived anything.
+    api = _plain_item("a", "github_api.x", SourceMethod.JSON_API)
+    other = _plain_item("b", "github_api.y", SourceMethod.JSON_API)
+    with pytest.raises(ValidationError) as borrowed:
+        parse_observed(
+            {
+                "f": {
+                    "value": ["a", "b"],
+                    "original": ["a", "b"],
+                    "source": MULTIPLE_SOURCES,
+                    "observed_at": _STAMP,
+                    "source_method": "DERIVED",
+                    "items": [api.to_transport(), other.to_transport()],
+                }
+            }
+        )
+    assert "row contradicts its items on source_method" in str(borrowed.value)
+
+    # The relaxation is aggregate-only. A standalone derived row has nowhere to defer to.
+    with pytest.raises(ValidationError) as standalone:
+        ObservedField(
+            value="alice.dev",
+            original="alice.dev",
+            source="github_api.blog",
+            observed_at=_STAMP,
+            source_method=SourceMethod.DERIVED,
+        )
+    assert "must name the field it was derived from" in str(standalone.value)
+    # Nor may an item defer: it is the authoritative record of one derivation.
+    with pytest.raises(ValidationError):
+        _plain_item("alice.dev", "github_api.blog", SourceMethod.DERIVED)
+
+    # Heterogeneous acquisition methods are unchanged: MIXED, and no row origin.
+    mixed = ObservedField.from_items([website, api])
+    assert mixed.source_method == SourceMethod.MIXED
+    assert mixed.derived_from is None
+    assert mixed.source == MULTIPLE_SOURCES
+
+
+# Codex P2 (comment 3935572418). A derivation origin must say something.
+def test_whitespace_only_derivation_origins_are_rejected() -> None:
+    blank = ("", " ", "   ", "\t", "\n", " \t ")
+
+    for origin in blank:
+        with pytest.raises(ValidationError) as row:
+            ObservedField(
+                value="alice.dev",
+                original="alice.dev",
+                source="github_api.blog",
+                observed_at=_STAMP,
+                source_method=SourceMethod.DERIVED,
+                derived_from=origin,
+            )
+        # Attributable to this rule, not to some unrelated one.
+        assert [e["loc"] for e in row.value.errors()] == [()], origin
+        assert "must name the field it was derived from" in str(row.value), origin
+
+        with pytest.raises(ValidationError) as item:
+            ObservedItem(
+                value="alice.dev",
+                original="alice.dev",
+                source="derived.rule",
+                observed_at=_STAMP,
+                source_method=SourceMethod.DERIVED,
+                derived_from=origin,
+            )
+        assert "must name the field it was derived from" in str(item.value), origin
+
+    # Through the serialized contract, on the row and on a nested item.
+    with pytest.raises(ValidationError) as serialized:
+        parse_observed(
+            {
+                "personal_domain": {
+                    "value": "alice.dev",
+                    "original": "alice.dev",
+                    "source": "github_api.blog",
+                    "observed_at": _STAMP,
+                    "source_method": "DERIVED",
+                    "derived_from": "   ",
+                }
+            }
+        )
+    assert [e["loc"] for e in serialized.value.errors()] == [("personal_domain",)]
+    assert "a blank origin names nothing" in str(serialized.value)
+
+    with pytest.raises(ValidationError) as nested:
+        parse_observed(
+            {
+                "f": {
+                    "value": ["alice.dev"],
+                    "original": ["alice.dev"],
+                    "source": "derived.rule",
+                    "observed_at": _STAMP,
+                    "source_method": "DERIVED",
+                    "derived_from": "website",
+                    "items": [
+                        {
+                            "value": "alice.dev",
+                            "original": "alice.dev",
+                            "source": "derived.rule",
+                            "observed_at": _STAMP,
+                            "source_method": "DERIVED",
+                            "derived_from": "  ",
+                        }
+                    ],
+                }
+            }
+        )
+    assert [e["loc"] for e in nested.value.errors()] == [("f", "items", 0)]
+    assert "a blank origin names nothing" in str(nested.value)
+
+    # A real token stays valid and is never rewritten: no trimming, no normalization.
+    kept = _derived_item("alice.dev", "website")
+    assert kept.to_transport()["derived_from"] == "website"
+    padded = _derived_item("alice.dev", " website ")
+    assert padded.to_transport()["derived_from"] == " website "
+    # And the row-level aggregate absence stays legal — see the P2 above.
+    row = ObservedField.from_items([kept, _derived_item("alice.example", "avatar_url")])
+    assert row.derived_from is None
+
+
+# Codex P2 (comment 3935572425). Two lists that pair up, or they pair up with nothing.
+def test_list_value_and_original_must_have_equal_cardinality() -> None:
+    def row(value: object, original: object) -> dict:
+        return {
+            "value": value,
+            "original": original,
+            "source": "html_rel_me",
+            "observed_at": _STAMP,
+        }
+
+    # A legacy item-less list row pairs up and stays valid, `original` differing freely.
+    paired = {"social_links": row(["a", "b"], ["raw-a", "raw-b"])}
+    assert parse_observed(paired).to_transport() == paired
+    assert parse_observed(paired)["social_links"].original == ["raw-a", "raw-b"]
+    # Order is untouched, and equal values are not deduplicated by this rule.
+    repeated = {"social_links": row(["a", "a"], ["raw-b", "raw-a"])}
+    assert parse_observed(repeated).to_transport() == repeated
+
+    # Unequal lists cannot be paired, in either direction, through either door.
+    for value, original in ((["a", "b"], ["raw-a"]), (["a"], ["raw-a", "raw-b"])):
+        with pytest.raises(ValidationError) as exc:
+            parse_observed({"social_links": row(value, original)})
+        assert [e["loc"] for e in exc.value.errors()] == [("social_links",)]
+        assert "must pair up one to one" in str(exc.value)
+        with pytest.raises(ValidationError) as direct:
+            ObservedField(**row(value, original))
+        assert "must pair up one to one" in str(direct.value)
+
+    # The shape rule is unchanged and still fires first for a mismatch of kind.
+    for value, original in (("a", ["a"]), (["a"], "a")):
+        with pytest.raises(ValidationError) as shape:
+            ObservedField(**row(value, original))
+        assert "both be scalar or both be lists" in str(shape.value)
+    # Scalars are unaffected, and a legacy scalar row still round-trips.
+    legacy = {"display_name": _legacy_row()}
+    assert parse_observed(legacy).to_transport() == legacy
+
+    # `project_items()` builds the two lists in step, so every projected row pairs up.
+    projected = ObservedField.from_items(
+        [
+            _plain_item("https://x.com/alice", "github_api.twitter_username", SourceMethod.JSON_API),
+            _plain_item("https://x.com/alice", "html_rel_me", SourceMethod.HTML),
+            _plain_item("https://github.com/alice", "html_jsonld.sameAs", SourceMethod.HTML),
+        ]
+    )
+    assert isinstance(projected.value, list) and isinstance(projected.original, list)
+    assert len(projected.value) == len(projected.original) == 2
+    assert len(projected.items or []) == 3
+
+
+# Independent final-gate correction. "multiple" is an aggregate row marker, not an
+# extractor, so an individual item may not claim it — the `source` half of the rule
+# `_reject_row_only_marker` already applies to `source_method`.
+def test_the_row_marker_is_not_an_item_source() -> None:
+    with pytest.raises(ValidationError) as direct:
+        ObservedItem(
+            value="https://x.com/alice",
+            original="https://x.com/alice",
+            source=MULTIPLE_SOURCES,
+            observed_at=_STAMP,
+            source_method=SourceMethod.HTML,
+        )
+    assert [e["loc"] for e in direct.value.errors()] == [("source",)]
+    assert "row-level aggregation marker" in str(direct.value)
+
+    # Serialized, inside a row that is otherwise entirely truthful: the item's method is
+    # a real extraction method, it names no URL, carries no rejection metadata, and the
+    # row *is* the exact projection of that item — `sources` has one member, so the row
+    # legitimately reads "multiple" too. Only the item-level rule can reject this, which
+    # is the impersonation: one item, one extractor, and a row claiming aggregation.
+    payload = {
+        "social_links": {
+            "value": ["https://x.com/alice"],
+            "original": ["https://x.com/alice"],
+            "source": MULTIPLE_SOURCES,
+            "observed_at": _STAMP,
+            "source_method": "HTML",
+            "items": [
+                {
+                    "value": "https://x.com/alice",
+                    "original": "https://x.com/alice",
+                    "source": MULTIPLE_SOURCES,
+                    "observed_at": _STAMP,
+                    "source_method": "HTML",
+                }
+            ],
+        }
+    }
+    with pytest.raises(ValidationError) as nested:
+        parse_observed(payload)
+    assert [e["loc"] for e in nested.value.errors()] == [
+        ("social_links", "items", 0, "source")
+    ]
+    assert "row-level aggregation marker" in str(nested.value)
+    assert "row contradicts its items" not in str(nested.value)
+
+    # Only the exact reserved string is reserved. Nothing else about `source` changes.
+    for source in ("html_rel_me", "github_api.name", "multiple_source_test", "Multiple"):
+        assert _plain_item("a", source, SourceMethod.HTML).source == source
+
+    # Real heterogeneous extractors still project the marker at the row level.
+    row = ObservedField.from_items(
+        [
+            _plain_item("https://x.com/alice", "html_jsonld.sameAs", SourceMethod.HTML),
+            _plain_item("https://github.com/alice", "html_rel_me", SourceMethod.HTML),
+        ]
+    )
+    assert row.source == MULTIPLE_SOURCES
+    assert row.source_method == SourceMethod.HTML
+    assert parse_observed({"f": row.to_transport()}).to_transport() == {"f": row.to_transport()}
+    # And the item-less marker rule is unchanged.
+    with pytest.raises(ValidationError):
+        ObservedField(value="a", original="a", source=MULTIPLE_SOURCES, observed_at=_STAMP)
