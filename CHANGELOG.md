@@ -85,6 +85,75 @@ The format is based on Keep a Changelog.
   ou pontuados — as strings de `source` existentes seguem byte a byte idênticas, e a
   correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B).
 
+### Fixed
+- **`parse_observed()` agora é total sobre o transporte canônico que este contrato emite
+  (preflight de B2-03B):** todo `observed_at` em formato de texto — na linha e em cada
+  item — é lido **uma vez** por `datetime.fromisoformat()` antes da validação Pydantic, e
+  um valor com fuso segue adiante como o objeto `datetime` já interpretado em vez da
+  string original. `datetime.isoformat()`, o serializador deste contrato, escreve um
+  deslocamento com segundos ou fração de segundo como `+00:00:30` /
+  `+00:00:30.123456`; a biblioteca padrão relê essas grafias e o campo `AwareDatetime`
+  aceita o objeto equivalente, mas o parser de **string** do Pydantic as recusa
+  (`unexpected extra characters at the end of the input`). Um `ObservedField` válido
+  podia então serializar um transporte que o seu próprio parser rejeitava —
+  construir → `to_transport()` → `parse_observed()` falhava. O buraco de ida e volta
+  está fechado, incluindo pelo caminho de `items`, e o transporte é estável byte a byte
+  (`to_transport()` → `parse_observed()` → `to_transport()` devolve a mesma grafia) — um
+  deslocamento puramente subsegundo depende também da restauração descrita na entrada
+  seguinte.
+  **Nenhuma normalização para UTC acontece:** o objeto conserva o próprio `tzinfo`, o
+  valor do deslocamento e a precisão de microssegundos, não há `astimezone()` no
+  caminho, e por isso um timestamp cujo instante equivalente em UTC cairia fora dos anos
+  1–9999 (`0001-01-01T00:00:00+00:00:30`, `9999-12-31T23:59:59-00:00:30`) continua
+  representável — a comparação por instante (`_instant_key()`) não mudou. Timestamps
+  legados sem fuso continuam interpretados como UTC, `Z` continua serializado como
+  `+00:00`, e uma string de timestamp inválida continua **recusada**: texto ilegível
+  segue texto, o Pydantic continua dono do erro de validação, e nada é reparado,
+  re-estampado como "agora" ou presenteado com um fuso que não foi observado. Como a
+  porta agora delega o domínio de grafias à biblioteca padrão, ela é um pouco mais
+  tolerante na **entrada** do que o parser de string do Pydantic — grafias como `+00`
+  ou segundos de deslocamento acima de 59 passam a ser aceitas e reescritas na forma
+  canônica pelo serializador. Nenhuma delas é emitida por `isoformat()`, portanto nenhum
+  transporte escrito pelo SPECTRE muda. Isto é **endurecimento de compatibilidade antes
+  de B2-03B tornar o parser autoritativo** nos caminhos de leitura: **a autoridade de
+  consumo de B2-03B não foi implementada**, a correlação de identidades não mudou, e
+  nenhum peso, limiar, política de extração ou emissão de rejeição pelo produtor foi
+  tocado;
+- **Deslocamento UTC puramente subsegundo preservado num runtime Python 3.12 afetado:**
+  `datetime.isoformat()` escreve um deslocamento sem horas, minutos nem segundos inteiros
+  como `+00:00:00.ffffff`, e o acelerador em C de `datetime.fromisoformat()` no Python
+  3.12 decide pelo UTC olhando apenas a parte de segundos inteiros — o deslocamento é
+  descartado em silêncio ([CPython
+  gh-152079](https://github.com/python/cpython/issues/152079), corrigido no 3.13 e
+  posteriores; o 3.12 é suportado aqui e segue afetado). `2026-01-01T00:00:00+00:00:00.000001`
+  voltava como `2026-01-01T00:00:00+00:00`: **um instante diferente**, a um microssegundo
+  de distância. Isso podia igualar instantes distintos, diferenciar instantes
+  equivalentes, inverter qual item é o mais recente, fazer um transporte válido de
+  `ObservedField.from_items()` ser **recusado** na leitura e quebrar o round-trip byte a
+  byte — ou seja, falsear proveniência temporal. `_as_aware()` agora recupera o
+  deslocamento assinado que o próprio transporte declara, em microssegundos inteiros
+  lidos dos seus caracteres (sem float, sem epoch, sem base de dados de fusos, sem nova
+  dependência), e o repõe **antes da validação Pydantic** quando a interpretação não o
+  preservou. Só o rótulo `tzinfo` é trocado, com `replace(tzinfo=...)`: a interpretação
+  afetada lê corretamente os campos do relógio local e apenas os rotula mal como UTC, de
+  modo que repor o rótulo devolve o instante que o transporte nomeou — `astimezone()`
+  converteria o instante já errado e propagaria a corrupção. **Nenhuma conversão de
+  instante e nenhuma normalização para UTC acontecem**; num runtime corrigido a
+  interpretação já concorda com a grafia e nada é substituído. A aceitação não é
+  ampliada: a restauração fica atrás de uma leitura bem-sucedida da biblioteca padrão
+  sobre um valor já com fuso, então um timestamp inválido cuja cauda apenas *se parece*
+  com um deslocamento canônico continua recusado; uma fração zero
+  (`+00:00:00.000000`, que `isoformat()` não emite) declara deslocamento zero e não
+  inventa nenhum; e um deslocamento com segundos inteiros não nulos (`+00:00:30.123456`)
+  não é este defeito e segue inteiramente com a biblioteca padrão. Regressões construídas
+  **diretamente** com `timezone(timedelta(microseconds=...))` — nunca obtidas via
+  `fromisoformat()`, que apagaria o deslocamento antes do teste começar — cobrem ±1,
+  ±500000 e ±999999 microssegundos, microssegundos de timestamp ao lado de
+  microssegundos de deslocamento, as duas fronteiras de calendário (ano 1 e ano 9999),
+  equivalência de instante entre linha e `items`, a contradição de um microssegundo e a
+  seleção do item mais recente. `_instant_key()`, a correlação de identidades e a
+  autoridade de consumo de B2-03B seguem intocados;
+
 ### Changed
 - **Correção de `observed_at` (B2-03A):** a ordenação temporal de uma linha com `items` passa a
   usar o **instante absoluto**, não o relógio de parede. `project_items()` escolhe o item mais

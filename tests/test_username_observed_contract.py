@@ -1807,3 +1807,563 @@ def test_instant_comparison_is_safe_across_the_whole_aware_range() -> None:
         for items in ([earlier, later], [later, earlier]):
             assert project_items(items)["observed_at"].isoformat() == later.observed_at.isoformat()
             assert ObservedField.from_items(items).observed_at.microsecond == 1
+
+
+# ---------------------------------------------------------------------------
+# B2-03B preflight: the parser is total over the offsets this contract emits.
+#
+# `datetime.isoformat()` is the serializer, and it spells a sub-minute UTC offset as
+# `+00:00:30` or `+00:00:30.123456`. `datetime.fromisoformat()` reads those back, and
+# `AwareDatetime` accepts the resulting object, but Pydantic's *string* parser refuses
+# the spelling — so a valid row used to serialize transport its own parser rejected.
+# These tests pin that round trip closed without moving anything else.
+# ---------------------------------------------------------------------------
+
+# Offsets carrying seconds or fractional seconds. The last two are local calendar
+# boundaries whose instants land in year 0 and year 10000: `astimezone(UTC)` overflows
+# on both, so only `_instant_key()` can compare them, and nothing here may convert.
+_SUB_MINUTE_STAMPS = (
+    "2026-01-01T00:00:00+00:00:30",
+    "2026-01-01T00:00:00-00:00:30",
+    "2026-01-01T12:34:56+05:30:45",
+    "2026-01-01T12:34:56-03:15:20",
+    "2026-01-01T00:00:00+00:00:30.123456",
+    "2026-01-01T00:00:00-00:00:30.123456",
+    "2026-01-01T00:00:00.654321+00:00:30.123456",
+    "0001-01-01T00:00:00+00:00:30",
+    "9999-12-31T23:59:59-00:00:30",
+)
+
+# Offsets that already round-tripped before this pass. They are here so the widening
+# cannot quietly change an established transport spelling.
+_ORDINARY_STAMPS = (
+    "2026-01-01T00:00:00+00:00",
+    "2026-01-01T05:30:00+05:30",
+    "2026-01-01T05:45:00+05:45",
+    "2026-01-01T12:00:00-05:00",
+    "2026-01-01T00:00:00.654321+00:00",
+    "0001-01-01T00:00:00+01:00",
+    "9999-12-31T23:59:59-01:00",
+)
+
+
+@pytest.mark.parametrize("spelling", _SUB_MINUTE_STAMPS + _ORDINARY_STAMPS)
+def test_a_scalar_row_round_trips_its_own_serialized_timestamp(spelling: str) -> None:
+    """Transport a row emits must survive the parser that reads that transport.
+
+    Byte equality on the second transport is the assertion that matters: it proves the
+    offset was neither normalized to UTC nor respelled on the way through.
+    """
+    stamp = datetime.fromisoformat(spelling)
+    row = ObservedField(
+        value="Alice",
+        original="Alice",
+        source="github_api.name",
+        observed_at=stamp,
+    )
+    transport = row.to_transport()
+    assert transport["observed_at"] == spelling
+
+    parsed = parse_observed({"display_name": transport})
+    read_back = parsed["display_name"].observed_at
+    assert read_back.utcoffset() == stamp.utcoffset()
+    assert read_back.isoformat() == spelling
+    assert read_back == stamp
+    assert parsed.to_transport()["display_name"] == transport
+
+
+@pytest.mark.parametrize("spelling", _SUB_MINUTE_STAMPS)
+def test_item_provenance_round_trips_a_sub_minute_offset(spelling: str) -> None:
+    """The same helper reads every item stamp, and item provenance is unweakened."""
+    stamp = datetime.fromisoformat(spelling)
+    row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+    transport = {"social_links": row.to_transport()}
+    assert transport["social_links"]["observed_at"] == spelling
+    assert transport["social_links"]["items"][0]["observed_at"] == spelling
+
+    parsed = parse_observed(transport)
+    assert parsed.to_transport() == transport
+    members = parsed["social_links"].items
+    assert members is not None
+    assert members[0].observed_at.utcoffset() == stamp.utcoffset()
+    assert members[0].observed_at.isoformat() == spelling
+    assert members[0].source == "html_rel_me"
+    assert members[0].source_method is SourceMethod.HTML
+    assert members[0].value == "https://x.com/alice"
+
+
+def test_row_and_item_agree_on_one_instant_across_a_sub_minute_offset() -> None:
+    """Instant comparison still decides row/items agreement, spelling still does not.
+
+    `00:00:30+00:00:30` and `00:00:00+00:00` are one moment written two ways, and one
+    of the two spellings is the one Pydantic's string parser refuses. Reading both as
+    objects is what lets the existing instant rule see that they agree.
+    """
+    item_stamp = datetime.fromisoformat("2026-01-01T00:00:30+00:00:30")
+    row_stamp = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+    assert item_stamp == row_stamp
+    assert item_stamp.isoformat() != row_stamp.isoformat()
+
+    equivalent = {
+        "social_links": {
+            "value": ["https://x.com/alice"],
+            "original": ["https://x.com/alice"],
+            "source": "html_rel_me",
+            "observed_at": row_stamp.isoformat(),
+            "source_method": "HTML",
+            "items": [
+                {
+                    "value": "https://x.com/alice",
+                    "original": "https://x.com/alice",
+                    "source": "html_rel_me",
+                    "observed_at": item_stamp.isoformat(),
+                    "source_method": "HTML",
+                }
+            ],
+        }
+    }
+    assert parse_observed(equivalent).to_transport() == equivalent
+
+    # Same digits on the row, one real minute later than the item's instant. The
+    # contradiction is still caught, so the wider offset domain did not blunt the rule.
+    poisoned = json.loads(json.dumps(equivalent))
+    poisoned["social_links"]["observed_at"] = "2026-01-01T00:00:00+00:01:30"
+    with pytest.raises(ValidationError) as exc:
+        parse_observed(poisoned)
+    assert "row contradicts its items on observed_at" in str(exc.value)
+
+
+def test_legacy_naive_and_ordinary_aware_stamps_are_unchanged() -> None:
+    """Reading every stamp through the standard library changes no legacy rule."""
+    naive = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00")}
+    parsed = parse_observed(naive)
+    assert parsed["display_name"].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert parsed.to_transport()["display_name"]["observed_at"] == "2026-01-01T12:00:00+00:00"
+
+    aware = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00-05:00")}
+    parsed = parse_observed(aware)
+    assert parsed["display_name"].observed_at.utcoffset() == timedelta(hours=-5)
+    assert parsed.to_transport()["display_name"]["observed_at"] == "2026-01-01T12:00:00-05:00"
+
+    # `Z` keeps the behavior the contract already had: the serializer spells the offset
+    # `+00:00`, and this pass introduces no lexical-preservation guarantee.
+    zulu = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00Z")}
+    parsed = parse_observed(zulu)
+    assert parsed["display_name"].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert parsed.to_transport()["display_name"]["observed_at"] == "2026-01-01T12:00:00+00:00"
+
+    # An item stamp goes through the same door.
+    naive_item = parse_observed(
+        {
+            "social_links": {
+                "value": ["https://x.com/alice"],
+                "original": ["https://x.com/alice"],
+                "source": "html_rel_me",
+                "observed_at": "2026-01-01T12:00:00",
+                "items": [
+                    {
+                        "value": "https://x.com/alice",
+                        "original": "https://x.com/alice",
+                        "source": "html_rel_me",
+                        "observed_at": "2026-01-01T12:00:00",
+                    }
+                ],
+            }
+        }
+    )
+    members = naive_item["social_links"].items
+    assert members is not None
+    assert members[0].observed_at == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    (
+        "not-a-date",
+        "",
+        "2026-01-01T00:00:00+",
+        "+00:00:30",
+        # Malformed offsets: outside the ISO offset domain entirely.
+        "2026-01-01T00:00:00+99:00",
+        "2026-01-01T00:00:00+24:00",
+        # Malformed calendar fields, offset spelled correctly.
+        "2026-13-01T00:00:00+00:00",
+        "2026-01-01T25:00:00+00:00",
+    ),
+)
+def test_malformed_timestamps_are_still_rejected(spelling: str) -> None:
+    """Unparseable text stays text, so Pydantic still owns the validation error.
+
+    Nothing is repaired: a malformed stamp is never re-read as "now" and never handed
+    an offset it was not observed with. It fails on the row and inside items alike.
+    """
+    with pytest.raises(ValidationError):
+        parse_observed({"display_name": dict(_legacy_row(), observed_at=spelling)})
+
+    with pytest.raises(ValidationError):
+        parse_observed(
+            {
+                "social_links": {
+                    "value": ["https://x.com/alice"],
+                    "original": ["https://x.com/alice"],
+                    "source": "html_rel_me",
+                    "observed_at": _STAMP,
+                    "items": [
+                        {
+                            "value": "https://x.com/alice",
+                            "original": "https://x.com/alice",
+                            "source": "html_rel_me",
+                            "observed_at": spelling,
+                        }
+                    ],
+                }
+            }
+        )
+
+
+def test_parser_totality_does_not_reach_for_utc_or_a_timezone_database() -> None:
+    """The widened door stays a pure ISO read: no conversion, no tzdb, no float clock.
+
+    A boundary stamp is the proof. `astimezone(UTC)` raises on it, so if the parser had
+    materialized a UTC datetime anywhere on this path the round trip could not complete.
+    """
+    spelling = "9999-12-31T23:59:59-00:00:30"
+    stamp = datetime.fromisoformat(spelling)
+    with pytest.raises(OverflowError):
+        stamp.astimezone(UTC)
+
+    row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+    transport = {"social_links": row.to_transport()}
+    assert parse_observed(transport).to_transport() == transport
+    assert type(parse_observed(transport)["social_links"].observed_at.tzinfo) is timezone
+
+
+# ---------------------------------------------------------------------------
+# Astra P2: a pure sub-second UTC offset survives an affected CPython runtime.
+#
+# The C `fromisoformat()` accelerator shipped in Python 3.12 short-circuits to UTC on
+# the whole-second part of an offset alone, so a canonical `+00:00:00.ffffff` — the
+# spelling `datetime.isoformat()` writes for a sub-second offset — came back with its
+# offset discarded and named an instant one sub-second step away (CPython gh-152079,
+# fixed on 3.13 and later). `_as_aware()` now restores the offset the transport states.
+#
+# Every stamp below is built by constructing `timezone(timedelta(microseconds=...))`
+# directly. The sub-minute fixtures above build theirs with `datetime.fromisoformat()`,
+# and for these spellings that idiom runs the audited parser *before* the assertions and
+# destroys the offset first — the fixture, not the contract, would have decided the
+# result. That is precisely how the earlier pass missed this, so these tests may never
+# obtain the timestamp under test from a parser.
+# ---------------------------------------------------------------------------
+
+# Whole seconds zero, sub-second part not: the offsets the accelerator discarded, from
+# one microsecond to the largest sub-second offset there is, in both signs. The spelling
+# beside each one is what `datetime.isoformat()` emits, checked as transport bytes.
+_SUBSECOND_OFFSETS = (
+    (1, "2026-01-01T00:00:00+00:00:00.000001"),
+    (-1, "2026-01-01T00:00:00-00:00:00.000001"),
+    (500_000, "2026-01-01T00:00:00+00:00:00.500000"),
+    (-500_000, "2026-01-01T00:00:00-00:00:00.500000"),
+    (999_999, "2026-01-01T00:00:00+00:00:00.999999"),
+    (-999_999, "2026-01-01T00:00:00-00:00:00.999999"),
+)
+
+
+@pytest.mark.parametrize(("microseconds", "spelling"), _SUBSECOND_OFFSETS)
+def test_a_scalar_row_round_trips_a_pure_subsecond_offset(
+    microseconds: int, spelling: str
+) -> None:
+    """The offset a row serializes is the offset its own parser reads back.
+
+    Three separate claims, because the runtime defect broke all three: the offset value,
+    the absolute instant, and byte equality of the second transport.
+    """
+    offset = timedelta(microseconds=microseconds)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone(offset))
+    # The fixture's own correctness check: the offset is real before any parser runs.
+    assert stamp.utcoffset() == offset
+
+    row = ObservedField(
+        value="Alice",
+        original="Alice",
+        source="github_api.name",
+        observed_at=stamp,
+    )
+    transport = row.to_transport()
+    assert transport["observed_at"] == spelling
+
+    parsed = parse_observed({"display_name": transport})
+    read_back = parsed["display_name"].observed_at
+    assert read_back.utcoffset() == offset
+    assert read_back == stamp
+    assert read_back.isoformat() == spelling
+    assert parsed.to_transport()["display_name"] == transport
+
+
+@pytest.mark.parametrize(("microseconds", "spelling"), _SUBSECOND_OFFSETS)
+def test_item_provenance_round_trips_a_pure_subsecond_offset(
+    microseconds: int, spelling: str
+) -> None:
+    """Item stamps go through the same door, and item provenance is unweakened."""
+    stamp = datetime(2026, 1, 1, tzinfo=timezone(timedelta(microseconds=microseconds)))
+    row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+    transport = {"social_links": row.to_transport()}
+    assert transport["social_links"]["observed_at"] == spelling
+    assert transport["social_links"]["items"][0]["observed_at"] == spelling
+
+    parsed = parse_observed(transport)
+    assert parsed.to_transport() == transport
+    members = parsed["social_links"].items
+    assert members is not None
+    assert members[0].observed_at.utcoffset() == stamp.utcoffset()
+    assert members[0].observed_at == stamp
+    assert members[0].source_method is SourceMethod.HTML
+
+
+def test_offset_microseconds_are_not_read_as_timestamp_microseconds() -> None:
+    """Two independent sub-second quantities in one stamp, kept apart.
+
+    `2026-01-01T00:00:00.654321+00:00:00.000001` states a timestamp 654321 microseconds
+    into the second and an offset of one microsecond. Recovering the offset from the
+    transport's characters must not reach for the wrong fraction, in either direction.
+    """
+    offset = timedelta(microseconds=1)
+    stamp = datetime(2026, 1, 1, 0, 0, 0, 654_321, tzinfo=timezone(offset))
+    assert stamp.utcoffset() == offset
+    assert stamp.microsecond == 654_321
+
+    row = ObservedField(
+        value="Alice",
+        original="Alice",
+        source="github_api.name",
+        observed_at=stamp,
+    )
+    transport = row.to_transport()
+    assert transport["observed_at"] == "2026-01-01T00:00:00.654321+00:00:00.000001"
+
+    parsed = parse_observed({"display_name": transport})
+    read_back = parsed["display_name"].observed_at
+    assert read_back.microsecond == 654_321
+    assert read_back.utcoffset() == offset
+    assert read_back == stamp
+    assert parsed.to_transport()["display_name"] == transport
+
+
+def test_a_subsecond_offset_and_its_utc_equivalent_are_one_instant() -> None:
+    """Row and items still agree on the instant when only one of them spells it oddly.
+
+    `2026-01-01T00:00:00+00:00:00.000001` and `2025-12-31T23:59:59.999999+00:00` are one
+    moment written two ways, across a calendar day. Discarding the item's offset moved
+    its instant a microsecond, and the row/items rule then rejected a transport this
+    contract had itself emitted — the defect made valid data unreadable, not just
+    misspelled.
+    """
+    item_stamp = datetime(2026, 1, 1, tzinfo=timezone(timedelta(microseconds=1)))
+    row_stamp = datetime(2025, 12, 31, 23, 59, 59, 999_999, tzinfo=UTC)
+    assert item_stamp == row_stamp
+    assert item_stamp.isoformat() != row_stamp.isoformat()
+
+    equivalent = {
+        "social_links": {
+            "value": ["https://x.com/alice"],
+            "original": ["https://x.com/alice"],
+            "source": "html_rel_me",
+            "observed_at": row_stamp.isoformat(),
+            "source_method": "HTML",
+            "items": [
+                {
+                    "value": "https://x.com/alice",
+                    "original": "https://x.com/alice",
+                    "source": "html_rel_me",
+                    "observed_at": item_stamp.isoformat(),
+                    "source_method": "HTML",
+                }
+            ],
+        }
+    }
+    parsed = parse_observed(equivalent)
+    assert parsed.to_transport() == equivalent
+    members = parsed["social_links"].items
+    assert members is not None
+    assert members[0].observed_at == row_stamp
+
+
+def test_a_row_one_microsecond_off_its_item_is_still_a_contradiction() -> None:
+    """The collapse trap: two instants a microsecond apart must not read as one.
+
+    Same wall-clock digits, one spelled `+00:00:00.000001` and one `+00:00`, so the row
+    claims an instant a microsecond before its only item — and a row must carry the
+    newest item's instant. Discarding the offset made both read as UTC and the
+    contradiction disappeared, which is the more dangerous half of the defect: invalid
+    provenance silently accepted.
+    """
+    row_stamp = datetime(2026, 1, 1, tzinfo=timezone(timedelta(microseconds=1)))
+    item_stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    assert row_stamp != item_stamp
+    assert item_stamp - row_stamp == timedelta(microseconds=1)
+
+    poisoned = {
+        "social_links": {
+            "value": ["https://x.com/alice"],
+            "original": ["https://x.com/alice"],
+            "source": "html_rel_me",
+            "observed_at": row_stamp.isoformat(),
+            "source_method": "HTML",
+            "items": [
+                {
+                    "value": "https://x.com/alice",
+                    "original": "https://x.com/alice",
+                    "source": "html_rel_me",
+                    "observed_at": item_stamp.isoformat(),
+                    "source_method": "HTML",
+                }
+            ],
+        }
+    }
+    with pytest.raises(ValidationError) as exc:
+        parse_observed(poisoned)
+    assert "row contradicts its items on observed_at" in str(exc.value)
+
+
+def test_newest_item_selection_survives_a_pure_subsecond_offset() -> None:
+    """Which item is newest is decided by the instant, and the offset states it.
+
+    Both items carry the same wall-clock digits, so the offset is the only thing that
+    orders them: `-00:00:00.999999` is the later instant and `+00:00:00.999999` the
+    earlier, just under two microseconds apart. Discarding both offsets made the two
+    stamps read as one identical UTC instant, `max()` then returned whichever came first
+    in the list, and the row claimed the wrong observation as its "as of" — the pre-fix
+    reparse selected the earlier item on Python 3.12 regardless of order.
+    """
+    earlier_stamp = datetime(2026, 1, 1, tzinfo=timezone(timedelta(microseconds=999_999)))
+    later_stamp = datetime(2026, 1, 1, tzinfo=timezone(timedelta(microseconds=-999_999)))
+    assert later_stamp > earlier_stamp
+    assert later_stamp - earlier_stamp == timedelta(microseconds=1_999_998)
+
+    earlier = _stamped_item("https://x.com/earlier", earlier_stamp)
+    later = _stamped_item("https://x.com/later", later_stamp)
+
+    # Both list orders, because order-dependence was the symptom.
+    for items in ([earlier, later], [later, earlier]):
+        row = ObservedField.from_items(items)
+        assert row.observed_at == later_stamp
+        assert row.observed_at.isoformat() == "2026-01-01T00:00:00-00:00:00.999999"
+
+        transport = {"social_links": row.to_transport()}
+        parsed = parse_observed(transport)
+        assert parsed.to_transport() == transport
+
+        members = parsed["social_links"].items
+        assert members is not None
+        # Two distinct instants after the round trip, not one collapsed pair.
+        assert len({member.observed_at for member in members}) == 2
+        # The production selector, re-run on what came back off the wire.
+        assert project_items(members)["observed_at"] == later_stamp
+        assert parsed["social_links"].observed_at == later_stamp
+
+
+@pytest.mark.parametrize(
+    ("stamp", "spelling"),
+    (
+        (
+            datetime(1, 1, 1, tzinfo=timezone(timedelta(microseconds=1))),
+            "0001-01-01T00:00:00+00:00:00.000001",
+        ),
+        (
+            datetime(9999, 12, 31, 23, 59, 59, 999_999, tzinfo=timezone(timedelta(microseconds=-1))),
+            "9999-12-31T23:59:59.999999-00:00:00.000001",
+        ),
+    ),
+)
+def test_a_pure_subsecond_offset_round_trips_at_the_calendar_boundaries(
+    stamp: datetime, spelling: str
+) -> None:
+    """Restoring an offset is a relabelling, so the calendar boundaries stay reachable.
+
+    Both instants fall outside years 1..9999 — year 0 and year 10000 — so `astimezone(UTC)`
+    raises on them. That raise is the proof, not the expectation: it says no step on this
+    path may materialize a UTC datetime, and the round trip completing says none does.
+    """
+    assert stamp.utcoffset() == timedelta(microseconds=1 if stamp.year == 1 else -1)
+    with pytest.raises(OverflowError):
+        stamp.astimezone(UTC)
+
+    row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+    transport = {"social_links": row.to_transport()}
+    assert transport["social_links"]["observed_at"] == spelling
+
+    parsed = parse_observed(transport)
+    assert parsed.to_transport() == transport
+    read_back = parsed["social_links"].observed_at
+    assert read_back.utcoffset() == stamp.utcoffset()
+    assert read_back == stamp
+    assert type(read_back.tzinfo) is timezone
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    (
+        # Not this defect: the whole-second part is nonzero, so the standard library
+        # already keeps the offset and the restoration must stay out of the way.
+        "2026-01-01T00:00:00+00:00:30.123456",
+        "2026-01-01T00:00:00-00:00:30.123456",
+        "2026-01-01T00:00:00.654321+00:00:30.123456",
+        # A zero fraction states a zero offset. `datetime.isoformat()` never writes it —
+        # a zero offset is spelled `+00:00` — and nothing may invent an offset from it.
+        "2026-01-01T00:00:00+00:00:00.000000",
+        "2026-01-01T00:00:00-00:00:00.000000",
+    ),
+)
+def test_the_subsecond_restoration_leaves_every_other_offset_alone(spelling: str) -> None:
+    """The workaround corrects one spelling and widens acceptance by nothing.
+
+    Each stamp here is read by the standard library exactly as before this pass: the
+    offset it states is the offset that arrives, whether that is 30.123456 seconds or
+    zero. `datetime.fromisoformat()` is still the parser; the restoration only disagrees
+    with it about a canonical pure sub-second offset it demonstrably drops.
+    """
+    expected = datetime.fromisoformat(spelling).utcoffset()
+    parsed = parse_observed({"display_name": dict(_legacy_row(), observed_at=spelling)})
+    assert parsed["display_name"].observed_at.utcoffset() == expected
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    (
+        "not-a-date+00:00:00.000001",
+        "+00:00:00.000001",
+        "2026-13-01T00:00:00+00:00:00.000001",
+        "2026-01-01T25:00:00+00:00:00.000001",
+        "2026-01-01T00:00:00+24:00:00.000001",
+        "2026-01-01T00:00:00-24:00:00.000001",
+        "2026-01-01T00:00:00+99:00:00.000001",
+    ),
+)
+def test_a_subsecond_looking_suffix_does_not_repair_a_malformed_stamp(spelling: str) -> None:
+    """Resembling a canonical offset is not grounds for reading a broken stamp.
+
+    The restoration sits behind a successful standard-library read of an aware stamp, so
+    it can correct an offset that was parsed and never conjure a timestamp that was not.
+    A bad calendar field, a missing date, or an out-of-range offset hour still fails.
+    """
+    with pytest.raises(ValidationError):
+        parse_observed({"display_name": dict(_legacy_row(), observed_at=spelling)})
+
+    with pytest.raises(ValidationError):
+        parse_observed(
+            {
+                "social_links": {
+                    "value": ["https://x.com/alice"],
+                    "original": ["https://x.com/alice"],
+                    "source": "html_rel_me",
+                    "observed_at": _STAMP,
+                    "items": [
+                        {
+                            "value": "https://x.com/alice",
+                            "original": "https://x.com/alice",
+                            "source": "html_rel_me",
+                            "observed_at": spelling,
+                        }
+                    ],
+                }
+            }
+        )
