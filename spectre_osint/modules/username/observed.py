@@ -314,6 +314,10 @@ class ObservedField(BaseModel):
         `rejected_by` describes the field rather than the items, so it is not part of
         the projection.
 
+        Every key is compared literally except `observed_at`, which is compared as an
+        instant — see `_agrees_with_projection()`. Two offsets naming one moment are
+        the same provenance; two identical wall clocks naming two moments are not.
+
         A row without `items` may also not use either marker that exists to point at
         them: MIXED for acquisition-method heterogeneity, MULTIPLE_SOURCES for
         extractor heterogeneity. With no items, both point at nothing.
@@ -332,7 +336,9 @@ class ObservedField(BaseModel):
             return self
         expected = project_items(self.items)
         mismatched = [
-            name for name, value in expected.items() if getattr(self, name) != value
+            name
+            for name, value in expected.items()
+            if not _agrees_with_projection(name, getattr(self, name), value)
         ]
         if mismatched:
             raise ValueError(
@@ -457,7 +463,9 @@ def project_items(items: list[ObservedItem]) -> dict[str, Any]:
         "original": originals,
         "source": sources.pop() if len(sources) == 1 else MULTIPLE_SOURCES,
         # The row is "as of" its most recent observation; each item keeps its own.
-        "observed_at": max(item.observed_at for item in items),
+        # Newest by absolute instant, and the selected item's own representation is
+        # what the row carries — see _newest_observed_at().
+        "observed_at": _newest_observed_at(items),
         "provider_slug": _shared(item.provider_slug for item in items),
         "source_method": _project_source_method(items),
         "source_url": _shared(item.source_url for item in items),
@@ -479,6 +487,86 @@ def _project_source_method(items: list[ObservedItem]) -> SourceMethod | None:
         return None
     distinct = set(methods)
     return distinct.pop() if len(distinct) == 1 else SourceMethod.MIXED
+
+
+# `_instant_key()` counts whole microseconds, the finest unit `datetime` records.
+_MICROSECONDS_PER_SECOND = 1_000_000
+_SECONDS_PER_DAY = 86_400
+
+
+def _newest_observed_at(items: list[ObservedItem]) -> datetime:
+    """The timestamp of the item observed latest in absolute time.
+
+    Ordering is by absolute instant, but the value returned is the selected item's own
+    aware datetime, unchanged. Comparing by instant and storing the original keeps the
+    row honest about *when* without rewriting *how the observer spelled it*: a row
+    projected from an item stamped `-05:00` still serializes `-05:00`.
+
+    Raw `max()` over the datetimes is not the same thing. CPython compares two aware
+    datetimes that share one `tzinfo` object by their wall-clock fields alone, so
+    across a DST fold — 01:30 `fold=0` and 01:30 `fold=1` in America/New_York, an
+    hour apart in real time — it reports them equal and returns whichever came first
+    in the list. The row then claimed the older observation as its "as of", and the
+    result depended on item order. `_instant_key()` resolves the fold, so the
+    comparison sees the two instants the observations actually name.
+    """
+    return max(items, key=lambda item: _instant_key(item.observed_at)).observed_at
+
+
+def _instant_key(value: datetime) -> int:
+    """The instant an aware timestamp names, in microseconds. For comparison only.
+
+    Local calendar position minus UTC offset, in integer microseconds — the quantity
+    `astimezone(UTC)` would have computed, kept as an unbounded `int` instead of a
+    `datetime`. Ordering and equality over these keys are exactly ordering and equality
+    over instants, which is how CPython already compares two aware datetimes whose
+    offsets differ; the key just declines to name the result on a calendar.
+
+    It has to decline, because `datetime` spans only years 1 through 9999 while an
+    offset can push a valid timestamp's instant outside that span.
+    `0001-01-01T00:00:00+01:00` names an instant in year 0 and
+    `9999-12-31T23:59:59-01:00` one in year 10000. Both are accepted `AwareDatetime`
+    values that serialize and reparse unchanged, and `astimezone(UTC)` raised
+    `OverflowError` on both — so did shifting the datetime by its own offset, and
+    `datetime.timestamp()` answers a different, epoch-bound and platform-bounded
+    question. Integers have no boundary to fall off.
+
+    Awareness is the caller's invariant, not this helper's business to repair: both
+    models type `observed_at` as `AwareDatetime`, and `parse_observed()` has already
+    read a legacy naive stamp as UTC, so every timestamp arriving here carries an
+    offset. A naive one is refused rather than read as UTC a second time here, where
+    the field that owns that rule has no say.
+    """
+    offset = value.utcoffset()
+    if offset is None:
+        raise ValueError("observed_at must be aware to name an instant")
+    local_microseconds = (
+        (value.toordinal() - 1) * _SECONDS_PER_DAY
+        + value.hour * 3600
+        + value.minute * 60
+        + value.second
+    ) * _MICROSECONDS_PER_SECOND + value.microsecond
+    offset_microseconds = (
+        offset.days * _SECONDS_PER_DAY + offset.seconds
+    ) * _MICROSECONDS_PER_SECOND + offset.microseconds
+    return local_microseconds - offset_microseconds
+
+
+def _agrees_with_projection(name: str, actual: Any, expected: Any) -> bool:
+    """Whether one row field matches what the row's items project.
+
+    `observed_at` is compared as an instant, because two aware datetimes can spell
+    one moment with different offsets — `01:30-05:00` and `06:30+00:00` are the same
+    observation — while two that share a `tzinfo` object can spell two moments
+    identically across a DST fold. Offset spelling is not provenance; the instant is.
+
+    Every other key keeps exact equality: `value`, `original`, `source`,
+    `provider_slug`, `source_method`, `source_url` and `derived_from` must match the
+    projection literally, as before.
+    """
+    if name == "observed_at":
+        return _instant_key(actual) == _instant_key(expected)
+    return actual == expected
 
 
 def _shared(values: Iterable[Any]) -> Any:

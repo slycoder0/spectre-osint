@@ -86,6 +86,24 @@ The format is based on Keep a Changelog.
   correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B).
 
 ### Changed
+- **Correção de `observed_at` (B2-03A):** a ordenação temporal de uma linha com `items` passa a
+  usar o **instante absoluto**, não o relógio de parede. `project_items()` escolhe o item mais
+  novo comparando instantes absolutos, e a validação linha/itens compara `observed_at` por
+  instante. Dois timestamps com fuso podem ter os mesmos dígitos locais e representar momentos
+  diferentes — na volta do horário de verão, 01:30 ocorre duas vezes e a segunda é uma hora mais
+  nova; a comparação bruta de `datetime` tratava as duas como iguais e a linha podia declarar a
+  observação **mais antiga** como sua, com o resultado dependendo da ordem dos itens. Uma linha
+  construída assim também podia ser recusada pelo próprio contrato depois de serializada. Agora
+  deslocamentos diferentes que nomeiam o mesmo instante são aceitos como equivalentes, e o mesmo
+  relógio local nomeando instantes diferentes é recusado.
+  A comparação usa uma chave numérica de instante — posição no calendário local menos o
+  deslocamento UTC — em vez de converter o timestamp para um `datetime` em UTC, e por isso
+  vale em todo o intervalo com fuso que o contrato aceita, **inclusive** para deslocamentos
+  cujo instante equivalente em UTC cairia fora dos anos 1–9999 (`0001-01-01T00:00:00+01:00`,
+  `9999-12-31T23:59:59-01:00`). A chave é **só de comparação**: a linha preserva o timestamp
+  do item selecionado com seu deslocamento original, e **o formato de serialização não mudou**
+  (`datetime.isoformat()`, `+00:00`). As demais chaves da projeção seguem com igualdade exata,
+  e a leitura de um `observed_at` legado sem fuso como UTC não mudou;
 - **Site Catalog identity is now explicit (B2-02B):** all 57 production entries in
   `spectre_osint/data/sites.yaml` declare a stable `slug`, and loading the bundled
   production catalog rejects an entry that omits or blanks it instead of deriving one
