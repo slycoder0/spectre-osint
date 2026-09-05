@@ -1031,3 +1031,61 @@ def test_an_unknown_observed_field_name_is_not_rejected() -> None:
     record = _observed_record(observed, **_POISON)
     assert record.display_name == "Alice Observed"
     assert record.provenance["future_field"]["value"] == "whatever"
+
+
+def test_a_cross_profile_link_is_still_explained_coarsely() -> None:
+    """B2-03B1 makes link *values* authoritative; it does not make the explanation exact.
+
+    The row's `source` for a heterogeneous list is `"multiple"`, which names no extractor.
+    Presenting it as the source of the link that matched would be a false attribution, so
+    the explanation stays the coarse joined view with a blank source — and the items stay
+    in provenance for B2-03B3 to name the extractor that actually observed the match.
+    """
+    target = "https://beta.example/alice"
+    items = [
+        {
+            "value": target,
+            "original": target,
+            "source": "html_rel_me",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "HTML",
+        },
+        {
+            "value": "https://alice.dev/",
+            "original": "https://alice.dev/",
+            "source": "github_api.blog",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "JSON_API",
+        },
+    ]
+    linking = _finding(
+        "AlphaSite",
+        status="CONFIRMED",
+        profile_url="https://alphasite.example/alice",
+        observed={
+            "social_links": {
+                "value": [target, "https://alice.dev/"],
+                "original": [target, "https://alice.dev/"],
+                "source": "multiple",
+                "observed_at": _OBSERVED_STAMP,
+                "source_method": "MIXED",
+                "items": items,
+            }
+        },
+    )
+    linked = _finding("Beta", status="CONFIRMED", profile_url=target, observed={})
+    left = records_from_findings([linking])[0]
+    pair = compare_records(left, records_from_findings([linked])[0])
+
+    assert "cross_profile_link" in pair["evidence"]
+    detail = next(row for row in pair["evidence_detail"] if row["code"] == "cross_profile_link")
+    assert detail["left"]["value"] == f"{target}, https://alice.dev/"
+    # Coarse on purpose: no extractor is named, and "multiple" is never presented as one.
+    assert detail["left"]["source"] == ""
+    assert detail["left"]["observed_at"] == ""
+    # The per-member provenance B2-03B3 needs is preserved, untouched.
+    assert [item["source"] for item in left.provenance["social_links"]["items"]] == [
+        "html_rel_me",
+        "github_api.blog",
+    ]
+    assert left.provenance["social_links"]["source"] == "multiple"
