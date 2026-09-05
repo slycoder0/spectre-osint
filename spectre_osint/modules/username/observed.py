@@ -489,11 +489,16 @@ def _project_source_method(items: list[ObservedItem]) -> SourceMethod | None:
     return distinct.pop() if len(distinct) == 1 else SourceMethod.MIXED
 
 
+# `_instant_key()` counts whole microseconds, the finest unit `datetime` records.
+_MICROSECONDS_PER_SECOND = 1_000_000
+_SECONDS_PER_DAY = 86_400
+
+
 def _newest_observed_at(items: list[ObservedItem]) -> datetime:
     """The timestamp of the item observed latest in absolute time.
 
-    Ordering is by UTC instant, but the value returned is the selected item's own
-    aware datetime, unchanged. Comparing in UTC and storing the original keeps the
+    Ordering is by absolute instant, but the value returned is the selected item's own
+    aware datetime, unchanged. Comparing by instant and storing the original keeps the
     row honest about *when* without rewriting *how the observer spelled it*: a row
     projected from an item stamped `-05:00` still serializes `-05:00`.
 
@@ -502,21 +507,49 @@ def _newest_observed_at(items: list[ObservedItem]) -> datetime:
     across a DST fold — 01:30 `fold=0` and 01:30 `fold=1` in America/New_York, an
     hour apart in real time — it reports them equal and returns whichever came first
     in the list. The row then claimed the older observation as its "as of", and the
-    result depended on item order. `astimezone(UTC)` resolves the fold, so the
+    result depended on item order. `_instant_key()` resolves the fold, so the
     comparison sees the two instants the observations actually name.
     """
-    return max(items, key=lambda item: _instant(item.observed_at)).observed_at
+    return max(items, key=lambda item: _instant_key(item.observed_at)).observed_at
 
 
-def _instant(value: datetime) -> datetime:
-    """The absolute instant an aware timestamp names. For comparison only.
+def _instant_key(value: datetime) -> int:
+    """The instant an aware timestamp names, in microseconds. For comparison only.
 
-    Never stored and never serialized: both models type `observed_at` as
-    `AwareDatetime`, and `parse_observed()` has already read a legacy naive stamp as
-    UTC, so every timestamp reaching here carries an offset and this conversion only
-    restates it.
+    Local calendar position minus UTC offset, in integer microseconds — the quantity
+    `astimezone(UTC)` would have computed, kept as an unbounded `int` instead of a
+    `datetime`. Ordering and equality over these keys are exactly ordering and equality
+    over instants, which is how CPython already compares two aware datetimes whose
+    offsets differ; the key just declines to name the result on a calendar.
+
+    It has to decline, because `datetime` spans only years 1 through 9999 while an
+    offset can push a valid timestamp's instant outside that span.
+    `0001-01-01T00:00:00+01:00` names an instant in year 0 and
+    `9999-12-31T23:59:59-01:00` one in year 10000. Both are accepted `AwareDatetime`
+    values that serialize and reparse unchanged, and `astimezone(UTC)` raised
+    `OverflowError` on both — so did shifting the datetime by its own offset, and
+    `datetime.timestamp()` answers a different, epoch-bound and platform-bounded
+    question. Integers have no boundary to fall off.
+
+    Awareness is the caller's invariant, not this helper's business to repair: both
+    models type `observed_at` as `AwareDatetime`, and `parse_observed()` has already
+    read a legacy naive stamp as UTC, so every timestamp arriving here carries an
+    offset. A naive one is refused rather than read as UTC a second time here, where
+    the field that owns that rule has no say.
     """
-    return value.astimezone(UTC)
+    offset = value.utcoffset()
+    if offset is None:
+        raise ValueError("observed_at must be aware to name an instant")
+    local_microseconds = (
+        (value.toordinal() - 1) * _SECONDS_PER_DAY
+        + value.hour * 3600
+        + value.minute * 60
+        + value.second
+    ) * _MICROSECONDS_PER_SECOND + value.microsecond
+    offset_microseconds = (
+        offset.days * _SECONDS_PER_DAY + offset.seconds
+    ) * _MICROSECONDS_PER_SECOND + offset.microseconds
+    return local_microseconds - offset_microseconds
 
 
 def _agrees_with_projection(name: str, actual: Any, expected: Any) -> bool:
@@ -532,7 +565,7 @@ def _agrees_with_projection(name: str, actual: Any, expected: Any) -> bool:
     projection literally, as before.
     """
     if name == "observed_at":
-        return _instant(actual) == _instant(expected)
+        return _instant_key(actual) == _instant_key(expected)
     return actual == expected
 
 

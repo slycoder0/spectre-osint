@@ -1700,3 +1700,68 @@ def test_row_and_items_agree_on_the_instant_not_the_spelling() -> None:
     assert parse_observed(legacy)["display_name"].observed_at == datetime(
         2026, 1, 1, 12, 0, tzinfo=UTC
     )
+
+
+# Both boundaries are ordinary aware datetimes the contract accepts, and neither names
+# an instant `datetime` can spell in UTC: converting them would need year 0 and year
+# 10000. `astimezone(UTC)` raises on both, so the instant they name has to be compared
+# as a number rather than as another datetime.
+_YEAR_ONE = datetime(1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=1)))
+_YEAR_ONE_RESPELLED = datetime(1, 1, 1, 1, 0, tzinfo=timezone(timedelta(hours=2)))
+_YEAR_9999 = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone(timedelta(hours=-1)))
+
+
+def test_instant_comparison_is_safe_across_the_whole_aware_range() -> None:
+    assert _YEAR_ONE.isoformat() == "0001-01-01T00:00:00+01:00"
+    assert _YEAR_9999.isoformat() == "9999-12-31T23:59:59-01:00"
+    for stamp in (_YEAR_ONE, _YEAR_9999):
+        with pytest.raises(OverflowError):
+            stamp.astimezone(UTC)
+
+    # Each still aggregates, keeps its own spelling, and survives transport unchanged.
+    for stamp in (_YEAR_ONE, _YEAR_9999):
+        row = ObservedField.from_items([_stamped_item("https://x.com/alice", stamp)])
+        assert row.observed_at.isoformat() == stamp.isoformat()
+        assert row.observed_at.utcoffset() == stamp.utcoffset()
+        payload = {"social_links": row.to_transport()}
+        assert payload["social_links"]["observed_at"] == stamp.isoformat()
+        assert parse_observed(payload).to_transport() == payload
+
+    # Row and item spell one year-0 instant two ways. No representable UTC datetime
+    # exists for that instant, so agreement can only be decided numerically.
+    assert _YEAR_ONE == _YEAR_ONE_RESPELLED
+    assert _YEAR_ONE.isoformat() != _YEAR_ONE_RESPELLED.isoformat()
+    equivalent = ObservedField(
+        value=["https://x.com/alice"],
+        original=["https://x.com/alice"],
+        source="html_rel_me",
+        observed_at=_YEAR_ONE,
+        source_method=SourceMethod.HTML,
+        items=[_stamped_item("https://x.com/alice", _YEAR_ONE_RESPELLED)],
+    )
+    payload = {"social_links": equivalent.to_transport()}
+    assert payload["social_links"]["observed_at"] == "0001-01-01T00:00:00+01:00"
+    assert payload["social_links"]["items"][0]["observed_at"] == "0001-01-01T01:00:00+02:00"
+    assert parse_observed(payload).to_transport() == payload
+
+    # A row an hour off its item is still a contradiction at the boundary, so the key
+    # discriminates rather than collapsing everything out there into one instant.
+    with pytest.raises(ValidationError) as exc:
+        ObservedField(
+            value=["https://x.com/alice"],
+            original=["https://x.com/alice"],
+            source="html_rel_me",
+            observed_at=_YEAR_ONE,
+            source_method=SourceMethod.HTML,
+            items=[_stamped_item("https://x.com/alice", _YEAR_ONE.replace(hour=1))],
+        )
+    assert "row contradicts its items on observed_at" in str(exc.value)
+
+    # Microsecond resolution is not rounded away by the integer key — in the ordinary
+    # range and at the boundary, where there is no UTC datetime to compare through.
+    for base in (datetime(2026, 6, 1, 12, 0, tzinfo=UTC), _YEAR_9999):
+        earlier = _stamped_item("a", base.replace(microsecond=0))
+        later = _stamped_item("b", base.replace(microsecond=1))
+        for items in ([earlier, later], [later, earlier]):
+            assert project_items(items)["observed_at"].isoformat() == later.observed_at.isoformat()
+            assert ObservedField.from_items(items).observed_at.microsecond == 1
