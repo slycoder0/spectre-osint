@@ -7,8 +7,9 @@ serialized contract, not the meaning of the values.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -1577,3 +1578,125 @@ def test_the_row_marker_is_not_an_item_source() -> None:
     # And the item-less marker rule is unchanged.
     with pytest.raises(ValidationError):
         ObservedField(value="a", original="a", source=MULTIPLE_SOURCES, observed_at=_STAMP)
+
+
+# A row's `observed_at` is the newest item by absolute instant, and row/items agreement
+# is temporal rather than textual. Repeated wall-clock times make the two differ.
+_FOLD_ZONE = ZoneInfo("America/New_York")
+# 01:30 happens twice on this date: once at -04:00, again an hour later at -05:00.
+_BEFORE_FOLD = datetime(2026, 11, 1, 1, 30, tzinfo=_FOLD_ZONE, fold=0)
+_AFTER_FOLD = datetime(2026, 11, 1, 1, 30, tzinfo=_FOLD_ZONE, fold=1)
+
+
+def _stamped_item(value: str, stamp: datetime) -> ObservedItem:
+    """An item that is truthful in every respect except the timestamp under test."""
+    return ObservedItem(
+        value=value,
+        original=value,
+        source="html_rel_me",
+        observed_at=stamp,
+        source_method=SourceMethod.HTML,
+    )
+
+
+def test_row_timestamp_is_the_newest_item_by_absolute_instant() -> None:
+    # Same local wall clock, one real hour apart. This is the whole premise.
+    assert _BEFORE_FOLD.astimezone(UTC) == datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
+    assert _AFTER_FOLD.astimezone(UTC) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+    assert _BEFORE_FOLD.isoformat() != _AFTER_FOLD.isoformat()
+
+    older = _stamped_item("https://x.com/alice", _BEFORE_FOLD)
+    newer = _stamped_item("https://github.com/alice", _AFTER_FOLD)
+
+    # Whichever order the items arrive in: the later instant is the row's "as of".
+    for items in ([older, newer], [newer, older]):
+        assert project_items(items)["observed_at"].astimezone(UTC) == datetime(
+            2026, 11, 1, 6, 30, tzinfo=UTC
+        )
+        row = ObservedField.from_items(items)
+        assert row.observed_at.astimezone(UTC) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+
+    row = ObservedField.from_items([older, newer])
+    # Compared in UTC, stored as observed: the selected item's own offset survives, and
+    # the row is not silently rewritten to +00:00.
+    assert row.observed_at.utcoffset() == timedelta(hours=-5)
+    assert row.observed_at.fold == 1
+    assert row.to_transport()["observed_at"] == "2026-11-01T01:30:00-05:00"
+    # Each item still carries its own stamp, including the earlier one.
+    assert [item.to_transport()["observed_at"] for item in row.items or []] == [
+        "2026-11-01T01:30:00-04:00",
+        "2026-11-01T01:30:00-05:00",
+    ]
+
+    # Construction -> serialization -> validation must not invalidate itself. ISO output
+    # turns each fold into an explicit offset, so the reparsed projection has to reach
+    # the same conclusion the constructor did.
+    payload = {"social_links": row.to_transport()}
+    assert parse_observed(payload).to_transport() == payload
+
+    # Ordinary UTC stamps are unaffected: still the later one, spelled as before.
+    plain = ObservedField.from_items(
+        [
+            _stamped_item("a", datetime(2026, 1, 1, 12, 0, tzinfo=UTC)),
+            _stamped_item("b", datetime(2026, 1, 2, 12, 0, tzinfo=UTC)),
+        ]
+    )
+    assert plain.to_transport()["observed_at"] == "2026-01-02T12:00:00+00:00"
+
+
+def test_row_and_items_agree_on_the_instant_not_the_spelling() -> None:
+    # Negative: the row names an hour earlier than its only item, in identical local
+    # wall-clock digits. Every other projected field is exactly truthful.
+    newer = _stamped_item("https://x.com/alice", _AFTER_FOLD)
+    assert project_items([newer])["observed_at"].astimezone(UTC) == datetime(
+        2026, 11, 1, 6, 30, tzinfo=UTC
+    )
+    with pytest.raises(ValidationError) as exc:
+        ObservedField(
+            value=["https://x.com/alice"],
+            original=["https://x.com/alice"],
+            source="html_rel_me",
+            observed_at=_BEFORE_FOLD,
+            source_method=SourceMethod.HTML,
+            items=[newer],
+        )
+    # Attributable to the timestamp alone — no other key is reported as mismatched.
+    assert "row contradicts its items on observed_at" in str(exc.value)
+    assert [e["loc"] for e in exc.value.errors()] == [()]
+
+    # The truthful control differs only in that key, so the failure above is the
+    # contradiction and not a malformed fixture.
+    truthful = ObservedField(
+        value=["https://x.com/alice"],
+        original=["https://x.com/alice"],
+        source="html_rel_me",
+        observed_at=_AFTER_FOLD,
+        source_method=SourceMethod.HTML,
+        items=[newer],
+    )
+    assert truthful.observed_at.astimezone(UTC) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+
+    # Positive: one instant, two spellings. `-05:00` on the item and `+00:00` on the row
+    # describe the same observation, so the provenance is consistent.
+    offset_item = _stamped_item(
+        "https://x.com/alice", datetime(2026, 11, 1, 1, 30, tzinfo=timezone(timedelta(hours=-5)))
+    )
+    equivalent = ObservedField(
+        value=["https://x.com/alice"],
+        original=["https://x.com/alice"],
+        source="html_rel_me",
+        observed_at=datetime(2026, 11, 1, 6, 30, tzinfo=UTC),
+        source_method=SourceMethod.HTML,
+        items=[offset_item],
+    )
+    # Neither representation was rewritten to make validation pass.
+    payload = {"social_links": equivalent.to_transport()}
+    assert payload["social_links"]["observed_at"] == "2026-11-01T06:30:00+00:00"
+    assert payload["social_links"]["items"][0]["observed_at"] == "2026-11-01T01:30:00-05:00"
+    assert parse_observed(payload).to_transport() == payload
+
+    # A legacy naive stamp is still read as UTC; this pass changes no compatibility rule.
+    legacy = {"display_name": dict(_legacy_row(), observed_at="2026-01-01T12:00:00")}
+    assert parse_observed(legacy)["display_name"].observed_at == datetime(
+        2026, 1, 1, 12, 0, tzinfo=UTC
+    )
