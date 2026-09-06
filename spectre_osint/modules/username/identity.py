@@ -20,6 +20,7 @@ from spectre_osint.core.types import (
 )
 from spectre_osint.modules.username.matching import username_in_url_identity
 from spectre_osint.modules.username.observed import (
+    KNOWN_OBSERVED_FIELDS,
     ObservedFields,
     field_is_active,
     read_observed,
@@ -418,7 +419,8 @@ def records_from_findings(findings: list[Finding]) -> list[IdentityRecord]:
             attributes = _observed_attributes(authority.fields)
         else:
             # Present and invalid: enrichment fails closed, the checked profile survives.
-            # No raw payload is logged — the reason names schema locations only.
+            # The reason is a bounded count plus pydantic type codes: no payload value and
+            # no payload-controlled mapping key reaches the log. See _validation_summary().
             logger.warning(
                 "observed enrichment failed validation for %s (finding %s); "
                 "enrichment suppressed, profile record kept: %s",
@@ -527,10 +529,25 @@ def _observed_side(record: IdentityRecord, field: str) -> dict[str, str]:
     to the raw attribute, which is blank for exactly the same reason.
 
     A legacy record has no provenance at all and keeps the raw fallback with blank source
-    and timestamp, unchanged. `links` stays the coarse joined view: which specific
-    `ObservedItem` supported a cross-profile link is B2-03B3.
+    and timestamp, unchanged.
+
+    Provenance is only consulted for a name that is a real observed field identity.
+    `_EVIDENCE_FIELDS` maps `cross_profile_link` onto `links`, which is a **synthetic**
+    `IdentityRecord` attribute and not a field this contract observes — while the contract
+    deliberately permits unknown observed field names for forward compatibility. Without
+    this guard a valid `observed["links"]` row would collide with that synthetic name and
+    be quoted as the provenance of a matched URL it had nothing to do with, down to
+    reporting its `source` — including the row-level `"multiple"` aggregation marker,
+    which names no extractor at all. That is false attribution, so `links` falls through
+    to the raw coarse view below, where `record.links` already holds only active validated
+    `external_links` / `social_links` values. The unknown row stays in provenance as audit
+    transport; it simply cannot borrow authority from a consumer attribute that happens to
+    share its spelling. Which specific `ObservedItem` supported a cross-profile link is
+    still B2-03B3.
     """
-    prov = record.provenance.get(field) if isinstance(record.provenance, dict) else None
+    prov = None
+    if field in KNOWN_OBSERVED_FIELDS and isinstance(record.provenance, dict):
+        prov = record.provenance.get(field)
     if isinstance(prov, dict):
         if not transport_row_is_active(field, prov):
             return {"value": "", "source": "", "observed_at": ""}

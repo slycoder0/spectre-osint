@@ -139,6 +139,33 @@ The format is based on Keep a Changelog.
   clusterização (B2-04). `engine.py` e `enrichment.py` seguem inalterados: as chaves de
   nível superior continuam sendo escritas para compatibilidade — o que mudou é **em qual
   canal o consumidor confia** quando `observed` existe;
+- **Correções Astra P2 dentro de B2-03B1 — explicação de evidência e privacidade do
+  diagnóstico:**
+  - **F1.** `links` é um atributo **sintético** do `IdentityRecord` — o alvo para o qual
+    `_EVIDENCE_FIELDS` mapeia `cross_profile_link` — e **não** uma identidade de campo
+    observado, enquanto o contrato permite nomes de campo desconhecidos de propósito. Uma
+    linha válida em `observed["links"]` colidia com esse nome sintético e era citada em
+    `evidence_detail` como a proveniência de uma URL que não sustentou, reportando o seu
+    `source` e o seu `observed_at` — inclusive o marcador de agregação `"multiple"`, que não
+    nomeia extrator algum. Isso é atribuição falsa. `_observed_side()` agora só consulta
+    proveniência para nomes que são identidades reais de campo observado
+    (`KNOWN_OBSERVED_FIELDS`); qualquer outro cai na visão grosseira de `record.links`, que
+    as regras de autoridade já filtraram — campos de link rejeitados, de forma incompatível,
+    de transporte malformado e `public_links` de nível superior continuam todos fora. O
+    **score nunca esteve errado** (a pertinência sempre veio de `record.links`) e não muda:
+    só o detalhe deixa de mentir. A linha desconhecida **continua preservada** em
+    `provenance` como auditoria, e nomes desconhecidos **não** passaram a ser proibidos.
+  - **F2.** O diagnóstico de validação serializava `error["loc"]` do pydantic, e essa
+    localização **não** é só de esquema: num `RootModel` sobre dicionário o nome do campo
+    observado é um componente dela, e `extra="forbid"` coloca ali a chave ofensora. Chaves de
+    mapeamento são **dados**, então uma linha malformada podia publicar no log uma chave
+    arbitrária do payload — por exemplo `website.private.person@example.test`. O aviso agora
+    reporta apenas a **contagem** de erros e os **códigos de tipo** do pydantic (`missing`,
+    `extra_forbidden`, …), deduplicados e limitados a três: sem `loc`, sem `msg` (que embute
+    `input_value=`), sem `input` e sem `ctx`. Uma falha que não seja de validação reporta
+    apenas a **classe** da exceção — `str(exc)` é recusado por princípio, não porque as
+    mensagens de hoje sejam seguras. O aviso segue existindo e sendo útil: falha fechada,
+    registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
 - **`parse_observed()` agora é total sobre o transporte canônico que este contrato emite

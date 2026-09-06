@@ -484,6 +484,15 @@ SCALAR_OBSERVED_FIELDS = frozenset(
 )
 LIST_OBSERVED_FIELDS = frozenset({"external_links", "social_links"})
 
+# Every name this contract gives a semantic shape to, and therefore the whole namespace of
+# real observed field identities. An *explanation* adapter has to respect it: a consumer
+# attribute that is not in here names no observation — `links`, the synthetic
+# `IdentityRecord` attribute `cross_profile_link` is explained through, is the case in
+# point — so an unknown observed field that merely shares its spelling must never be read
+# as its provenance. Unknown names stay valid transport; they just cannot borrow authority
+# from a consumer attribute that happens to be spelled the same way.
+KNOWN_OBSERVED_FIELDS = SCALAR_OBSERVED_FIELDS | LIST_OBSERVED_FIELDS
+
 
 def _is_active(name: str, value: Any, rejected_by: Any) -> bool:
     """Whether one observed field may act as evidence. The single rule, one place.
@@ -517,23 +526,37 @@ def transport_row_is_active(name: str, row: Mapping[str, Any]) -> bool:
 
 
 def _validation_summary(exc: Exception) -> str:
-    """A short reason for a log line, carrying no observed values.
+    """A bounded diagnostic built from nothing the payload controls.
 
-    A Pydantic error message embeds `input_value=...`, which for this transport *is*
-    profile data, so the message itself is never propagated. Error locations and types
-    name the shape problem using schema keys alone.
+    Enough to tell an operator that validation failed and roughly how; never enough to
+    quote the transport. Pydantic offers three tempting fields and all three are data:
+    `msg` embeds `input_value=...`, `input` *is* the payload, and `loc` carries **mapping
+    keys** — for a `RootModel` over a dict the observed field name is itself a loc
+    component, and `extra="forbid"` puts the offending key there too. A row spelled
+    `{"private.person@example.test": "extra"}` would have named that key in the log.
+
+    So only the error **count** and the machine-readable **type codes** are reported,
+    deduplicated and capped. Those codes come from a fixed pydantic-core vocabulary
+    (`missing`, `extra_forbidden`, `value_error`, ...), so the result is bounded and
+    deterministic no matter what the payload contains. `errors()` is asked to omit the
+    url, context and input outright, so the dicts in hand do not carry them at all.
+
+    A non-Pydantic failure gets its class name and nothing else. `str(exc)` is refused on
+    principle rather than because today's two messages happen to be safe: a `ValueError`
+    raised deeper in the walk could interpolate transport into its own message, and this
+    helper should not be the thing that has to be re-audited when one does.
     """
     if isinstance(exc, ValidationError):
-        errors = exc.errors()
-        parts = [
-            f"{'.'.join(str(item) for item in error['loc']) or OBSERVED_KEY}: {error['type']}"
-            for error in errors[:3]
-        ]
-        remaining = len(errors) - len(parts)
-        if remaining > 0:
-            parts.append(f"and {remaining} more")
-        return "; ".join(parts)[:200]
-    return str(exc)[:200]
+        codes: list[str] = []
+        for error in exc.errors(include_url=False, include_context=False, include_input=False):
+            code = str(error.get("type") or "validation_error")
+            if code not in codes:
+                codes.append(code)
+        shown = codes[:3]
+        if len(codes) > len(shown):
+            shown.append("...")
+        return f"{exc.error_count()} validation error(s): {', '.join(shown)}"[:200]
+    return f"invalid observed transport ({type(exc).__name__})"
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -1089,3 +1090,318 @@ def test_a_cross_profile_link_is_still_explained_coarsely() -> None:
         "github_api.blog",
     ]
     assert left.provenance["social_links"]["source"] == "multiple"
+
+
+# ---------------------------------------------------------------------------
+# Astra F1: the synthetic `links` explanation name must not read observed provenance.
+#
+# `_EVIDENCE_FIELDS` maps `cross_profile_link` onto `links`, an `IdentityRecord` attribute
+# that is not a field this contract observes — and B2-03B1 deliberately permits unknown
+# observed field names. A valid `observed["links"]` row therefore collided with that
+# synthetic name and was quoted as the provenance of a matched URL it had nothing to do
+# with. The score was always right; only the explanation lied.
+# ---------------------------------------------------------------------------
+
+_BETA_PROFILE = "https://beta.example/alice"
+_UNRELATED = "https://unrelated.example/private"
+
+
+def _linking_pair(alpha_observed: dict) -> tuple[object, dict]:
+    """Alpha publicly links to Beta's profile. Returns Alpha's record and the pair."""
+    alpha = _finding(
+        "AlphaSite",
+        status="CONFIRMED",
+        profile_url="https://alpha.example/alice",
+        observed=alpha_observed,
+    )
+    beta = _finding("Beta", status="CONFIRMED", profile_url=_BETA_PROFILE, observed={})
+    left = records_from_findings([alpha])[0]
+    return left, compare_records(left, records_from_findings([beta])[0])
+
+
+def _link_detail(pair: dict) -> dict:
+    return next(row for row in pair["evidence_detail"] if row["code"] == "cross_profile_link")
+
+
+# F1-A. an unknown scalar `links` row cannot hijack the detail
+def test_an_unknown_links_field_cannot_hijack_the_cross_profile_detail() -> None:
+    left, pair = _linking_pair(
+        {"social_links": _row([_BETA_PROFILE]), "links": _row(_UNRELATED)}
+    )
+    # The score was never wrong: membership comes from the real link fields.
+    assert left.links == [_BETA_PROFILE]
+    assert "cross_profile_link" in pair["evidence"]
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["cross_profile_link"]
+
+    detail = _link_detail(pair)
+    assert detail["left"]["value"] == ", ".join(left.links)
+    assert detail["left"]["source"] == ""
+    assert detail["left"]["observed_at"] == ""
+    assert _UNRELATED not in json.dumps(pair)
+
+    # Forward compatibility is untouched: the unknown row is still audit transport.
+    assert left.provenance["links"]["value"] == _UNRELATED
+    assert left.provenance["links"]["source"] == "github_api.field"
+
+
+# F1-B. an unknown heterogeneous `links` row cannot emit the row-only "multiple" marker
+def test_an_unknown_links_field_cannot_present_the_multiple_marker_as_a_source() -> None:
+    """`"multiple"` names no extractor, so quoting it as one is the worst version of F1."""
+    items = [
+        {
+            "value": _UNRELATED,
+            "original": _UNRELATED,
+            "source": "html_rel_me",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "HTML",
+        },
+        {
+            "value": "https://unrelated.example/other",
+            "original": "https://unrelated.example/other",
+            "source": "github_api.blog",
+            "observed_at": _OBSERVED_STAMP,
+            "source_method": "JSON_API",
+        },
+    ]
+    left, pair = _linking_pair(
+        {
+            "social_links": _row([_BETA_PROFILE]),
+            "links": {
+                "value": [_UNRELATED, "https://unrelated.example/other"],
+                "original": [_UNRELATED, "https://unrelated.example/other"],
+                "source": "multiple",
+                "observed_at": _OBSERVED_STAMP,
+                "source_method": "MIXED",
+                "items": items,
+            },
+        }
+    )
+    assert left.links == [_BETA_PROFILE]
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["cross_profile_link"]
+
+    detail = _link_detail(pair)
+    assert detail["left"]["value"] == ", ".join(left.links)
+    assert detail["left"]["source"] == ""
+    assert detail["left"]["observed_at"] == ""
+    assert "multiple" not in json.dumps(pair)
+    assert _UNRELATED not in json.dumps(pair)
+
+    # Preserved verbatim for audit, marker and items included.
+    assert left.provenance["links"]["source"] == "multiple"
+    assert [item["source"] for item in left.provenance["links"]["items"]] == [
+        "html_rel_me",
+        "github_api.blog",
+    ]
+
+
+# F1-C. the synthetic route does not become a way around the active-membership gate
+def test_the_synthetic_link_view_still_honours_the_active_membership_gate() -> None:
+    """Routing `links` to `record.links` is safe *because* that list is already filtered.
+
+    A rejected link field, a wrong-shaped one and an unknown one are all excluded from
+    membership, so the coarse view cannot resurrect any of them — the synthetic branch
+    reads a list the authority rules built, not the transport they filtered.
+    """
+    left, pair = _linking_pair(
+        {
+            "social_links": _row([_BETA_PROFILE]),
+            "external_links": _row(["https://rejected.example/"], rejected_by="test_rule"),
+            "links": _row(_UNRELATED),
+        }
+    )
+    assert left.links == [_BETA_PROFILE]
+    detail = _link_detail(pair)
+    assert detail["left"]["value"] == _BETA_PROFILE
+    assert "rejected.example" not in json.dumps(pair)
+    assert _UNRELATED not in json.dumps(pair)
+
+    # A wrong-shaped real link field is excluded the same way.
+    scalar_shaped, pair2 = _linking_pair(
+        {"social_links": _row([_BETA_PROFILE]), "external_links": _row("https://scalar.example/")}
+    )
+    assert scalar_shaped.links == [_BETA_PROFILE]
+    assert "scalar.example" not in json.dumps(pair2)
+
+
+def test_an_unknown_links_field_alone_supports_no_cross_profile_link() -> None:
+    """It cannot create the evidence either — membership never consulted it."""
+    left, pair = _linking_pair({"links": _row([_BETA_PROFILE])})
+    assert left.links == []
+    assert "cross_profile_link" not in pair["evidence"]
+    assert pair["evidence"] == ["same_username"]
+    assert left.provenance["links"]["value"] == [_BETA_PROFILE]
+
+
+# F1-D. true legacy coarse behaviour is unchanged
+def test_a_legacy_record_still_explains_its_joined_links_coarsely() -> None:
+    alpha = _finding(
+        "AlphaSite",
+        status="CONFIRMED",
+        profile_url="https://alpha.example/alice",
+        public_links=[_BETA_PROFILE],
+        website="https://alice.dev/",
+    )
+    assert "observed" not in alpha.data
+    beta = _finding("Beta", status="CONFIRMED", profile_url=_BETA_PROFILE)
+    left = records_from_findings([alpha])[0]
+    pair = compare_records(left, records_from_findings([beta])[0])
+
+    # Legacy links keep the compatibility website append, and the join reflects it.
+    assert left.links == [_BETA_PROFILE, "https://alice.dev/"]
+    assert "cross_profile_link" in pair["evidence"]
+    detail = _link_detail(pair)
+    assert detail["left"]["value"] == f"{_BETA_PROFILE}, https://alice.dev/"
+    assert detail["left"]["source"] == ""
+    assert detail["left"]["observed_at"] == ""
+    # No provenance is fabricated for a legacy attribute.
+    assert left.provenance == {}
+
+
+# ---------------------------------------------------------------------------
+# Astra F2: a validation diagnostic may not quote payload-controlled mapping keys.
+#
+# Pydantic's `loc` is not schema-only. For a `RootModel` over a dict the observed field
+# name *is* a loc component, and `extra="forbid"` puts the offending key there too — so
+# serializing locations published arbitrary transport keys into the operator's log. The
+# diagnostic now reports a bounded error count plus the fixed pydantic type codes.
+# ---------------------------------------------------------------------------
+
+_NESTED_SECRET = "PRIVATE_PROFILE_TOKEN_DO_NOT_LOG@example.test"
+_OUTER_SECRET = "OUTER_SECRET_FIELD_DO_NOT_LOG@example.test"
+_VALUE_SECRET = "VALUE_SECRET_DO_NOT_LOG"
+
+
+def _warn_on_invalid(observed: object, caplog: pytest.LogCaptureFixture) -> str:
+    """Every log line records_from_findings() emits for one malformed finding."""
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger="spectre.username")
+    finding = _finding("GitHub", status="CONFIRMED", observed=observed)
+    records = records_from_findings([finding])
+    # Fails closed, and the checked profile is still a record.
+    assert len(records) == 1
+    assert records[0].platform == "GitHub"
+    assert records[0].website == ""
+    assert records[0].provenance == {}
+    return "\n".join(record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("label", "observed", "secret"),
+    (
+        # F2-A: an arbitrary extra key nested inside a known field row.
+        (
+            "nested extra key",
+            {"website": {**_row("https://example.test"), _NESTED_SECRET: "extra"}},
+            _NESTED_SECRET,
+        ),
+        # F2-B: the observed field name itself, on a row missing required keys.
+        ("outer field name", {_OUTER_SECRET: {"value": "x"}}, _OUTER_SECRET),
+        # F2-C: a secret in a payload value rather than a key.
+        ("payload value", {"website": {"value": _VALUE_SECRET, "source": "s"}}, _VALUE_SECRET),
+        # Shapes a key can take: unicode, URL-like, and long enough to have survived only
+        # by being truncated rather than by policy.
+        (
+            "unicode key",
+            {"website": {**_row("https://example.test"), "ключ_СЕКРЕТ_нелогировать": "x"}},
+            "ключ_СЕКРЕТ_нелогировать",
+        ),
+        (
+            "url shaped key",
+            {"website": {**_row("https://example.test"), "https://secret.example/?tok=abc": "x"}},
+            "https://secret.example/?tok=abc",
+        ),
+        (
+            "long key",
+            {"website": {**_row("https://example.test"), "L" + "0123456789" * 30: "x"}},
+            "L" + "0123456789" * 30,
+        ),
+    ),
+)
+def test_a_validation_warning_never_quotes_the_transport(
+    label: str, observed: object, secret: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    text = _warn_on_invalid(observed, caplog)
+    assert text, "a malformed payload must still be diagnosed"
+    assert secret not in text
+    # Still useful: the operator learns that validation failed and in what way.
+    assert "observed enrichment failed validation" in text
+    assert "GitHub" in text
+    assert "validation error(s)" in text
+
+
+def test_a_validation_warning_stays_bounded_and_deterministic(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Many errors, many secret keys, one short line built from a fixed vocabulary."""
+    observed = {
+        _OUTER_SECRET: {"value": "x"},
+        "website": {**_row("https://example.test"), _NESTED_SECRET: "e"},
+        "bio": {},
+        "display_name": {"value": _VALUE_SECRET},
+    }
+    text = _warn_on_invalid(observed, caplog)
+    for secret in (_OUTER_SECRET, _NESTED_SECRET, _VALUE_SECRET):
+        assert secret not in text
+    diagnostic = text.rsplit("profile record kept: ", 1)[1]
+    assert diagnostic.startswith("11 validation error(s): ")
+    # Deduplicated pydantic type codes, capped at three, no locations and no message.
+    assert diagnostic == "11 validation error(s): missing, extra_forbidden"
+    # Same payload, same line: nothing here depends on dict iteration of the transport.
+    assert _warn_on_invalid(observed, caplog).rsplit("profile record kept: ", 1)[1] == diagnostic
+
+
+@pytest.mark.parametrize("payload", (None, [], "malformed", 7))
+def test_a_non_mapping_payload_is_diagnosed_by_exception_class_alone(
+    payload: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`str(exc)` is refused on principle, so this path names the class and nothing else."""
+    text = _warn_on_invalid(payload, caplog)
+    assert text.endswith("invalid observed transport (ValueError)")
+    # The type name the old message interpolated is gone with it.
+    assert "got NoneType" not in text
+    assert "got list" not in text
+
+
+# F1 + F2 interaction: forward compatibility survives both fixes.
+def test_unknown_fields_stay_auditable_while_neither_explaining_nor_leaking(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Neither fix was bought by banning unknown observed field names.
+
+    One finding keeps a valid unknown `links` row — available for audit, unable to reach
+    the synthetic explanation. A second finding is malformed with a payload-controlled key.
+    The valid unknown row survives; the malformed one's key never reaches the log.
+    """
+    left, pair = _linking_pair(
+        {"social_links": _row([_BETA_PROFILE]), "links": _row(_UNRELATED)}
+    )
+    assert left.provenance["links"]["value"] == _UNRELATED
+    assert _UNRELATED not in json.dumps(pair)
+
+    text = _warn_on_invalid({_OUTER_SECRET: {"value": _UNRELATED}}, caplog)
+    assert _OUTER_SECRET not in text
+    assert _UNRELATED not in text
+    assert "validation error(s)" in text
+
+
+def test_a_link_matched_through_website_still_gets_a_coarse_empty_detail() -> None:
+    """A pre-existing coarseness this pass documents rather than changes.
+
+    `_link_points_at()` considers `record.website` alongside `record.links`, so a modern
+    record whose observed website *is* the other profile scores `cross_profile_link` — and
+    the coarse detail is then empty, because the modern `links` list deliberately excludes
+    `website` (it is its own attribute). Nothing untrue is said: the explanation is silent,
+    not misattributed, which is the difference from F1. Naming which observation supported
+    the match is B2-03B3, so this is pinned as a known state rather than fixed here.
+    """
+    left, pair = _linking_pair({"website": _row(_BETA_PROFILE), "links": _row(_UNRELATED)})
+    assert left.links == []
+    assert left.website == _BETA_PROFILE
+    assert "cross_profile_link" in pair["evidence"]
+    assert pair["score"] == WEIGHTS["same_username"] + WEIGHTS["cross_profile_link"]
+
+    detail = _link_detail(pair)
+    assert detail["left"] == {"value": "", "source": "", "observed_at": ""}
+    # Silent, and still not borrowing the unknown row.
+    assert _UNRELATED not in json.dumps(pair)
+    assert left.provenance["links"]["value"] == _UNRELATED
