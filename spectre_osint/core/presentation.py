@@ -12,6 +12,7 @@ from markupsafe import Markup
 
 from spectre_osint.core.entities import Finding, InvestigationResult
 from spectre_osint.core.types import EntityType, FindingStatus, UsernameCheckStatus
+from spectre_osint.modules.username.observed import read_observed
 
 _USERNAME_SWEEP_TITLE = "Username sweep"
 _IDENTITY_TITLE = "Identity correlation"
@@ -121,9 +122,27 @@ def username_rows(result: InvestigationResult) -> list[dict[str, Any]]:
 
 
 def observed_profile_fields(data: dict[str, Any] | None) -> list[dict[str, Any]]:
-    payload = data or {}
-    raw_observed = payload.get("observed")
-    observed: dict[str, Any] = raw_observed if isinstance(raw_observed, dict) else {}
+    """Active observed profile attributes for display, validated before presenting.
+
+    The observed transport is parsed here rather than read raw, so what a report shows is
+    what passed the B2-03A contract. Three cases, decided by key presence:
+
+    - `observed` absent: no rows. Top-level compatibility attributes are never
+      synthesized into observations, exactly as before.
+    - present and valid: the fields that are active — not rejected, and carrying the
+      semantic shape the attribute is supposed to have.
+    - present and invalid: no rows. Fail closed rather than render unvalidated
+      observations, and never fall back to top level. One malformed persisted or cached
+      finding must not break the rest of a report.
+
+    Row values come from `to_transport()`, not from the model attributes, so `observed_at`
+    keeps the canonical `datetime.isoformat()` spelling the contract serializes. `str()`
+    on the parsed `datetime` would render the display form instead and silently change
+    every timestamp a report shows.
+    """
+    authority = read_observed(data)
+    if authority.fields is None:
+        return []
     order = (
         "display_name",
         "bio",
@@ -137,24 +156,24 @@ def observed_profile_fields(data: dict[str, Any] | None) -> list[dict[str, Any]]
         "external_links",
         "social_links",
     )
+    active = authority.active()
     rows: list[dict[str, Any]] = []
     for key in order:
-        item = observed.get(key)
-        if not isinstance(item, dict):
+        field = active.get(key)
+        if field is None:
             continue
-        value = item.get("value")
+        transport = field.to_transport()
+        value = transport.get("value")
+        if isinstance(value, list):
+            value = [entry for entry in value if entry]
         if not value:
             continue
-        if isinstance(value, list):
-            value = [str(entry) for entry in value if entry]
-            if not value:
-                continue
         rows.append(
             {
                 "field": key,
                 "value": value,
-                "source": str(item.get("source") or ""),
-                "observed_at": str(item.get("observed_at") or ""),
+                "source": str(transport.get("source") or ""),
+                "observed_at": str(transport.get("observed_at") or ""),
                 "kind": "observed",
             }
         )

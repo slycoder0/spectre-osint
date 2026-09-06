@@ -19,6 +19,13 @@ from spectre_osint.core.types import (
     UsernameCheckStatus,
 )
 from spectre_osint.modules.username.matching import username_in_url_identity
+from spectre_osint.modules.username.observed import (
+    KNOWN_OBSERVED_FIELDS,
+    ObservedFields,
+    field_is_active,
+    read_observed,
+    transport_row_is_active,
+)
 
 logger = get_logger("spectre.username")
 
@@ -282,7 +289,116 @@ class IdentityRecord:
         return f"{self.platform}::{self.username}"
 
 
+# The optional observed-profile attributes. Each one is an enrichment *claim* about a
+# public profile, so each one is governed by the observed channel when that channel
+# exists. `platform`, `username`, `profile_url`, `check_status` and `entity_id` are not
+# on this list on purpose: they record that a public profile was checked and found, which
+# is a different kind of statement and stays with the finding itself. PROFILE EXISTS !=
+# SAME PERSON, and a malformed enrichment payload must not un-check the profile.
+_OBSERVED_IDENTITY_ATTRS = (
+    "display_name",
+    "bio",
+    "avatar_url",
+    "website",
+    "location",
+    "organization",
+    "public_email",
+    "public_id",
+)
+# Deterministic link order, matching the producer's own field order.
+_OBSERVED_LINK_FIELDS = ("external_links", "social_links")
+_BIO_LIMIT = 300
+
+
+def _blank_observed_attributes() -> dict[str, Any]:
+    """Every optional observed attribute empty. A fresh mapping per record."""
+    attributes: dict[str, Any] = dict.fromkeys(_OBSERVED_IDENTITY_ATTRS, "")
+    attributes["links"] = []
+    attributes["provenance"] = {}
+    return attributes
+
+
+def _observed_attributes(fields: ObservedFields) -> dict[str, Any]:
+    """Optional attributes derived from validated observed transport, and nothing else.
+
+    Top-level compatibility keys are not consulted here at all — not as a default, not
+    when a field is missing, and not when a field is suppressed. That is the whole point
+    of the slice: when `observed` exists it is the authority, so a conflicting top-level
+    value has to lose rather than fill a gap.
+
+    `provenance` becomes the *validated* transport view rather than the raw input
+    mapping, so downstream explanation reads only what passed the contract. Rejected and
+    consumer-incompatible fields stay in that audit mapping — they were observed, and
+    erasing them would lose the record of the rejection — while never reaching an active
+    attribute.
+    """
+    attributes = _blank_observed_attributes()
+    attributes["provenance"] = fields.to_transport()
+    for name in _OBSERVED_IDENTITY_ATTRS:
+        if name not in fields:
+            continue
+        field_model = fields[name]
+        if not field_is_active(name, field_model):
+            continue
+        value = field_model.value
+        # The shape gate already refused a list here; re-checking is what makes "never
+        # stringify a wrong shape" structural rather than a consequence of that gate.
+        if isinstance(value, str):
+            attributes[name] = value[:_BIO_LIMIT] if name == "bio" else value
+    links: list[str] = []
+    for name in _OBSERVED_LINK_FIELDS:
+        if name not in fields:
+            continue
+        field_model = fields[name]
+        if not field_is_active(name, field_model):
+            continue
+        values = field_model.value
+        if not isinstance(values, list):
+            continue
+        # Deduplicated in first-seen order, and never respelled: the row value is the
+        # truthful projection of the field's items under the B2-03A contract, so it is
+        # safe as link membership. It is *not* per-item provenance — see B2-03B3.
+        for href in values:
+            if href and href not in links:
+                links.append(href)
+    attributes["links"] = links
+    return attributes
+
+
+def _legacy_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    """Pre-B2-03A compatibility, reached only when `observed` is absent entirely.
+
+    Byte-for-byte the mapping this consumer has always used, including appending the
+    compatibility `website` to `links`. Persisted findings written before the observed
+    transport existed cannot be re-enriched, so this path may not drift.
+    """
+    links = [str(x) for x in (data.get("public_links") or []) if x]
+    website = str(data.get("website") or "")
+    if website and website not in links:
+        links.append(website)
+    return {
+        "display_name": str(data.get("display_name") or ""),
+        "bio": str(data.get("bio") or "")[:_BIO_LIMIT],
+        "avatar_url": str(data.get("avatar_url") or ""),
+        "website": website,
+        "location": str(data.get("public_location") or data.get("location") or ""),
+        "organization": str(data.get("organization") or data.get("company") or ""),
+        "public_email": str(data.get("public_email") or data.get("email") or ""),
+        "public_id": str(data.get("public_id") or data.get("id") or ""),
+        "links": links,
+        "provenance": {},
+    }
+
+
 def records_from_findings(findings: list[Finding]) -> list[IdentityRecord]:
+    """Identity records for eligible username findings.
+
+    The observed channel is authoritative wherever it exists. `observed` present — valid,
+    empty, `None`, `[]` or malformed alike — means the top-level compatibility attributes
+    are no longer evidence; only a finding with no `observed` key at all keeps the legacy
+    fallback. See `read_observed()` for the three states and why presence, not
+    truthiness, decides.
+    """
     rows: list[IdentityRecord] = []
     for finding in findings:
         data = finding.data or {}
@@ -295,26 +411,29 @@ def records_from_findings(findings: list[Finding]) -> list[IdentityRecord]:
             continue
         if str(data.get("not_profile") or "") or str(data.get("kind") or "") in {"name", "email", "domain"}:
             continue
-        observed = data.get("observed") if isinstance(data.get("observed"), dict) else {}
-        links = [str(x) for x in (data.get("public_links") or []) if x]
-        website = str(data.get("website") or "")
-        if website and website not in links:
-            links.append(website)
+        platform = str(data.get("platform") or finding.title)
+        authority = read_observed(data)
+        if not authority.present:
+            attributes = _legacy_attributes(data)
+        elif authority.fields is not None:
+            attributes = _observed_attributes(authority.fields)
+        else:
+            # Present and invalid: enrichment fails closed, the checked profile survives.
+            # The reason is a bounded count plus pydantic type codes: no payload value and
+            # no payload-controlled mapping key reaches the log. See _validation_summary().
+            logger.warning(
+                "observed enrichment failed validation for %s (finding %s); "
+                "enrichment suppressed, profile record kept: %s",
+                platform,
+                finding.id,
+                authority.error,
+            )
+            attributes = _blank_observed_attributes()
         rows.append(
             IdentityRecord(
-                platform=str(data.get("platform") or finding.title),
+                platform=platform,
                 username=normalize_username(data.get("username")),
                 profile_url=str(data.get("profile_url") or data.get("final_url") or ""),
-                display_name=str(data.get("display_name") or ""),
-                bio=str(data.get("bio") or "")[:300],
-                avatar_url=str(data.get("avatar_url") or ""),
-                website=website,
-                location=str(data.get("public_location") or data.get("location") or ""),
-                organization=str(data.get("organization") or data.get("company") or ""),
-                public_email=str(data.get("public_email") or data.get("email") or ""),
-                public_id=str(data.get("public_id") or data.get("id") or ""),
-                links=links,
-                provenance=dict(observed or {}),
                 created=str(data.get("created_at") or data.get("created") or ""),
                 check_status=status,
                 entity_id=Entity.create(
@@ -323,6 +442,7 @@ def records_from_findings(findings: list[Finding]) -> list[IdentityRecord]:
                     str(data.get("platform") or finding.title),
                     Confidence.MEDIUM,
                 ).id,
+                **attributes,
             )
         )
     rows.sort(key=lambda r: (r.platform.lower(), r.profile_url))
@@ -401,16 +521,45 @@ _EVIDENCE_FIELDS = {
 
 
 def _observed_side(record: IdentityRecord, field: str) -> dict[str, str]:
-    prov = record.provenance.get(field) if isinstance(record.provenance, dict) else None
-    if isinstance(prov, dict) and prov.get("value"):
+    """One side of an evidence row, preferring validated provenance over the raw record.
+
+    For a modern record `provenance` is canonical validated transport, so a rejected or
+    consumer-incompatible row is present there for audit but is not evidence and may not
+    be explained as though it were. Such a row yields nothing rather than falling through
+    to the raw attribute, which is blank for exactly the same reason.
+
+    A legacy record has no provenance at all and keeps the raw fallback with blank source
+    and timestamp, unchanged.
+
+    Provenance is only consulted for a name that is a real observed field identity.
+    `_EVIDENCE_FIELDS` maps `cross_profile_link` onto `links`, which is a **synthetic**
+    `IdentityRecord` attribute and not a field this contract observes — while the contract
+    deliberately permits unknown observed field names for forward compatibility. Without
+    this guard a valid `observed["links"]` row would collide with that synthetic name and
+    be quoted as the provenance of a matched URL it had nothing to do with, down to
+    reporting its `source` — including the row-level `"multiple"` aggregation marker,
+    which names no extractor at all. That is false attribution, so `links` falls through
+    to the raw coarse view below, where `record.links` already holds only active validated
+    `external_links` / `social_links` values. The unknown row stays in provenance as audit
+    transport; it simply cannot borrow authority from a consumer attribute that happens to
+    share its spelling. Which specific `ObservedItem` supported a cross-profile link is
+    still B2-03B3.
+    """
+    prov = None
+    if field in KNOWN_OBSERVED_FIELDS and isinstance(record.provenance, dict):
+        prov = record.provenance.get(field)
+    if isinstance(prov, dict):
+        if not transport_row_is_active(field, prov):
+            return {"value": "", "source": "", "observed_at": ""}
         value = prov.get("value")
-        if isinstance(value, list):
-            value = ", ".join(str(item) for item in value)
-        return {
-            "value": str(value),
-            "source": str(prov.get("source") or ""),
-            "observed_at": str(prov.get("observed_at") or ""),
-        }
+        if value:
+            if isinstance(value, list):
+                value = ", ".join(str(item) for item in value)
+            return {
+                "value": str(value),
+                "source": str(prov.get("source") or ""),
+                "observed_at": str(prov.get("observed_at") or ""),
+            }
     raw = {
         "display_name": record.display_name,
         "bio": record.bio,

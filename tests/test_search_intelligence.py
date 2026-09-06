@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -246,6 +247,7 @@ def test_operator_alias_is_not_extracted_as_observed_handle() -> None:
             "observed": {
                 "bio": {
                     "value": "also @alice_osint and @otherhandle",
+                    "original": "also @alice_osint and @otherhandle",
                     "source": "github_api.bio",
                     "observed_at": utcnow().isoformat(),
                 }
@@ -400,7 +402,12 @@ def test_external_github_blog_is_a_novel_pivot() -> None:
     from spectre_osint.modules.search.novelty import DERIVED, NOVEL, annotate_indicators
 
     github = _github_finding(
-        website={"value": "https://alice.dev", "source": "github_api.blog", "observed_at": utcnow().isoformat()}
+        website={
+            "value": "https://alice.dev",
+            "original": "https://alice.dev",
+            "source": "github_api.blog",
+            "observed_at": utcnow().isoformat(),
+        }
     )
     rows = annotate_indicators(
         extract_indicators([github], operator_usernames={"alice_osint"}),
@@ -429,6 +436,7 @@ def test_rel_me_external_link_is_candidate() -> None:
     github = _github_finding(
         social_links={
             "value": ["https://alice.dev/about"],
+            "original": ["https://alice.dev/about"],
             "source": "github_api.blog",
             "observed_at": utcnow().isoformat(),
         }
@@ -460,8 +468,18 @@ def test_operator_username_is_not_novel() -> None:
 
 def test_duplicate_sources_merge_into_one_indicator() -> None:
     finding = _github_finding(
-        website={"value": "https://alice.dev", "source": "github_api.blog", "observed_at": utcnow().isoformat()},
-        personal_domain={"value": "alice.dev", "source": "duckduckgo-html", "observed_at": utcnow().isoformat()},
+        website={
+            "value": "https://alice.dev",
+            "original": "https://alice.dev",
+            "source": "github_api.blog",
+            "observed_at": utcnow().isoformat(),
+        },
+        personal_domain={
+            "value": "alice.dev",
+            "original": "https://alice.dev",
+            "source": "duckduckgo-html",
+            "observed_at": utcnow().isoformat(),
+        },
     )
     rows = extract_indicators([finding], operator_usernames={"alice_osint"})
     domains = [row for row in rows if row["indicator_type"] == "domain" and row["value"] == "alice.dev"]
@@ -501,7 +519,9 @@ def test_generic_profile_titles_are_not_display_names() -> None:
                     "observed": {
                         "display_name": {
                             "value": "alice_osint’s Music Profile | Last.fm",
+                            "original": "alice_osint’s Music Profile | Last.fm",
                             "source": "html_title",
+                            "observed_at": utcnow().isoformat(),
                         }
                     },
                 },
@@ -516,7 +536,12 @@ def test_generic_profile_titles_are_not_display_names() -> None:
                     "check_status": "CONFIRMED",
                     "username": "alice_osint",
                     "observed": {
-                        "display_name": {"value": "Alice Example", "source": "github_api.name"}
+                        "display_name": {
+                            "value": "Alice Example",
+                            "original": "Alice Example",
+                            "source": "github_api.name",
+                            "observed_at": utcnow().isoformat(),
+                        }
                     },
                 },
             ),
@@ -526,3 +551,145 @@ def test_generic_profile_titles_are_not_display_names() -> None:
     assert "Alice Example" in summary["observed_names"]
     assert all("Last.fm" not in name for name in summary["observed_names"])
     assert summary["new_discoveries"] == []
+
+
+# ---------------------------------------------------------------------------
+# B2-03B1: pivots inherit the observed authority boundary.
+#
+# `extract_indicators()` reads observed attributes through `observed_profile_fields()`,
+# which now validates. Malformed and rejected observations therefore stop being pivot
+# material, while profile-URL extraction — which is not observed enrichment — is untouched.
+# ---------------------------------------------------------------------------
+
+_B1_STAMP = "2026-01-01T12:00:00+00:00"
+
+
+def _github_finding_with(observed: object) -> Finding:
+    """One CONFIRMED GitHub profile whose whole `observed` value is under test.
+
+    `_github_finding(**observed)` can only build a mapping, and the payloads that matter
+    here include `None` and `[]` — present-but-invalid transport, which is exactly the
+    state the authority rule has to tell apart from an absent key.
+    """
+    return Finding(
+        module="username",
+        title="GitHub",
+        status=FindingStatus.FOUND,
+        summary="CONFIRMED",
+        data={
+            "platform": "GitHub",
+            "check_status": "CONFIRMED",
+            "username": "alice_osint",
+            "profile_url": "https://github.com/alice_osint",
+            "website": "https://top-level.example/",
+            "public_links": ["https://top-level.example/link"],
+            "observed": observed,
+        },
+    )
+
+
+def _b1_row(value: object, **extra: object) -> dict:
+    original = list(value) if isinstance(value, list) else value
+    return {
+        "value": value,
+        "original": original,
+        "source": "github_api.field",
+        "observed_at": _B1_STAMP,
+        **extra,
+    }
+
+
+def _rules(rows: list[dict]) -> set[str]:
+    return {str(row["extraction_rule"]) for row in rows}
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    (
+        ("row missing observed_at", {"website": {"value": "https://o.example/", "original": "x", "source": "s"}}),
+        ("observed is None", None),
+        ("observed is a list", []),
+        ("forbidden extra key", {"website": {**_b1_row("https://o.example/"), "bogus": "x"}}),
+    ),
+)
+def test_malformed_observed_yields_no_pivot_indicators(label: str, payload: object) -> None:
+    """Unvalidated observations are not pivot material, and the profile URL still is.
+
+    profile_url and profile_host establish the checked public profile rather than claiming
+    anything observed about its owner, so they must survive a broken enrichment payload.
+    """
+    rows = extract_indicators([_github_finding_with(payload)], operator_usernames={"alice_osint"})
+    assert _rules(rows) == {"profile_url", "profile_host"}
+    assert "o.example" not in json.dumps(rows)
+
+
+def test_a_rejected_observed_field_is_never_a_pivot() -> None:
+    observed = {
+        "website": _b1_row("https://rejected.example/", rejected_by="test_rule"),
+        "public_email": _b1_row("rejected@rejected.example", rejected_by="test_rule"),
+        "social_links": _b1_row(["https://rejected.example/social"], rejected_by="test_rule"),
+        "bio": _b1_row("contact @rejectedhandle", rejected_by="test_rule"),
+    }
+    rows = extract_indicators([_github_finding_with(observed)], operator_usernames={"alice_osint"})
+    assert _rules(rows) == {"profile_url", "profile_host"}
+    assert "rejected" not in json.dumps(rows)
+
+
+def test_accepted_observed_fields_still_produce_their_indicator_types() -> None:
+    """The control: authority did not narrow what valid observations are worth."""
+    observed = {
+        "website": _b1_row("https://alice.dev"),
+        "public_email": _b1_row("alice@alice.dev"),
+        "social_links": _b1_row(["https://x.com/alice"]),
+        "bio": _b1_row("also @otherhandle"),
+    }
+    rows = extract_indicators([_github_finding_with(observed)], operator_usernames={"alice_osint"})
+    assert _rules(rows) == {
+        "profile_url",
+        "profile_host",
+        "website",
+        "public_email",
+        "social_links",
+        "bio_handle",
+    }
+
+
+def test_one_parse_serves_both_the_field_pass_and_the_bio_pass() -> None:
+    """Both passes read one validated row set, so they cannot disagree about authority."""
+    observed = {"website": _b1_row("https://alice.dev"), "bio": _b1_row("also @otherhandle")}
+    rows = extract_indicators([_github_finding_with(observed)], operator_usernames={"alice_osint"})
+    handles = [row["value"] for row in rows if row["indicator_type"] == "username"]
+    domains = [row["value"] for row in rows if row["indicator_type"] == "domain"]
+    assert handles == ["otherhandle"]
+    assert "alice.dev" in domains
+
+    # A rejected bio beside an accepted website: one pass drops it, the other keeps its own
+    # field. Two independent reads could have disagreed here; one read cannot.
+    mixed = {
+        "website": _b1_row("https://alice.dev"),
+        "bio": _b1_row("also @otherhandle", rejected_by="test_rule"),
+    }
+    rows = extract_indicators([_github_finding_with(mixed)], operator_usernames={"alice_osint"})
+    assert not [row for row in rows if row["indicator_type"] == "username"]
+    assert "alice.dev" in [row["value"] for row in rows if row["indicator_type"] == "domain"]
+
+
+def test_a_finding_without_observed_keeps_its_existing_pivot_behavior() -> None:
+    """True legacy rows have no observed channel, and never had observed indicators."""
+    finding = Finding(
+        module="username",
+        title="GitHub",
+        status=FindingStatus.FOUND,
+        summary="CONFIRMED",
+        data={
+            "platform": "GitHub",
+            "check_status": "CONFIRMED",
+            "username": "alice_osint",
+            "profile_url": "https://github.com/alice_osint",
+            "website": "https://top-level.example/",
+            "public_links": ["https://top-level.example/link"],
+        },
+    )
+    assert "observed" not in finding.data
+    rows = extract_indicators([finding], operator_usernames={"alice_osint"})
+    assert _rules(rows) == {"profile_url", "profile_host"}

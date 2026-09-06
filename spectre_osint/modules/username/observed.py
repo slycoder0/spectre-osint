@@ -16,7 +16,8 @@ repeated inside the observation itself.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any
@@ -26,6 +27,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     RootModel,
+    ValidationError,
     field_serializer,
     field_validator,
     model_validator,
@@ -455,6 +457,175 @@ def _coerce_stamp(row: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(stamp, datetime) and stamp.tzinfo is None:
         out["observed_at"] = stamp.replace(tzinfo=UTC)
     return out
+
+
+OBSERVED_KEY = "observed"
+
+# The semantic shape each known profile field carries. `ObservedField.value` is
+# deliberately generic — the B2-03A model serves scalars and lists alike — but a consumer
+# knows what a display name looks like, and a field of the wrong shape is suppressed
+# rather than coerced: `["Alice"]` must never reach evidence as the string "['Alice']",
+# and a scalar `social_links` must not become a link just because it can be wrapped in a
+# list. Names in neither set are unconstrained; forward compatibility for observed field
+# names is not this milestone's business to forbid.
+SCALAR_OBSERVED_FIELDS = frozenset(
+    {
+        "display_name",
+        "username",
+        "bio",
+        "location",
+        "organization",
+        "website",
+        "personal_domain",
+        "public_email",
+        "avatar_url",
+        "public_id",
+    }
+)
+LIST_OBSERVED_FIELDS = frozenset({"external_links", "social_links"})
+
+# Every name this contract gives a semantic shape to, and therefore the whole namespace of
+# real observed field identities. An *explanation* adapter has to respect it: a consumer
+# attribute that is not in here names no observation — `links`, the synthetic
+# `IdentityRecord` attribute `cross_profile_link` is explained through, is the case in
+# point — so an unknown observed field that merely shares its spelling must never be read
+# as its provenance. Unknown names stay valid transport; they just cannot borrow authority
+# from a consumer attribute that happens to be spelled the same way.
+KNOWN_OBSERVED_FIELDS = SCALAR_OBSERVED_FIELDS | LIST_OBSERVED_FIELDS
+
+
+def _is_active(name: str, value: Any, rejected_by: Any) -> bool:
+    """Whether one observed field may act as evidence. The single rule, one place.
+
+    `rejected_by is not None` — never truthiness. A model-valid but odd empty rejection
+    token still names a rejection, and reading it as falsy would turn *rejected* into
+    *accepted* by accident. A REJECTED VALUE STAYS REJECTED.
+    """
+    if rejected_by is not None:
+        return False
+    if name in SCALAR_OBSERVED_FIELDS:
+        return not isinstance(value, list)
+    if name in LIST_OBSERVED_FIELDS:
+        return isinstance(value, list)
+    return True
+
+
+def field_is_active(name: str, field: ObservedField) -> bool:
+    """Whether a validated field is active evidence for the attribute `name`."""
+    return _is_active(name, field.value, field.rejected_by)
+
+
+def transport_row_is_active(name: str, row: Mapping[str, Any]) -> bool:
+    """The same rule read off canonical validated transport.
+
+    `to_transport()` excludes `None`, so a row carrying a `rejected_by` key carries a
+    real rejection and an accepted row has no such key at all — `row.get()` returning
+    `None` therefore means exactly `field.rejected_by is None`.
+    """
+    return _is_active(name, row.get("value"), row.get("rejected_by"))
+
+
+def _validation_summary(exc: Exception) -> str:
+    """A bounded diagnostic built from nothing the payload controls.
+
+    Enough to tell an operator that validation failed and roughly how; never enough to
+    quote the transport. Pydantic offers three tempting fields and all three are data:
+    `msg` embeds `input_value=...`, `input` *is* the payload, and `loc` carries **mapping
+    keys** — for a `RootModel` over a dict the observed field name is itself a loc
+    component, and `extra="forbid"` puts the offending key there too. A row spelled
+    `{"private.person@example.test": "extra"}` would have named that key in the log.
+
+    So only the error **count** and the machine-readable **type codes** are reported,
+    deduplicated and capped. Those codes come from a fixed pydantic-core vocabulary
+    (`missing`, `extra_forbidden`, `value_error`, ...), so the result is bounded and
+    deterministic no matter what the payload contains. `errors()` is asked to omit the
+    url, context and input outright, so the dicts in hand do not carry them at all.
+
+    A non-Pydantic failure gets its class name and nothing else. `str(exc)` is refused on
+    principle rather than because today's two messages happen to be safe: a `ValueError`
+    raised deeper in the walk could interpolate transport into its own message, and this
+    helper should not be the thing that has to be re-audited when one does.
+    """
+    if isinstance(exc, ValidationError):
+        codes: list[str] = []
+        for error in exc.errors(include_url=False, include_context=False, include_input=False):
+            code = str(error.get("type") or "validation_error")
+            if code not in codes:
+                codes.append(code)
+        shown = codes[:3]
+        if len(codes) > len(shown):
+            shown.append("...")
+        return f"{exc.error_count()} validation error(s): {', '.join(shown)}"[:200]
+    return f"invalid observed transport ({type(exc).__name__})"
+
+
+@dataclass(frozen=True)
+class ObservedAuthority:
+    """What a finding's `observed` channel is allowed to decide, for one consumer.
+
+    Authority is decided by **key presence**, never by truthiness and never by type.
+    `observed` absent means no observed transport was ever written, and only then may a
+    consumer read the top-level compatibility attributes. `observed` present means the
+    authoritative channel exists — including when it is `{}`, `None`, `[]` or malformed —
+    and the top-level attributes are no longer evidence for anything it covers.
+
+    Three states, and every consumer needs the same three:
+
+    - absent: `present` false, `fields` None. Legacy fallback path.
+    - present and valid: `fields` is the validated model, `{}` included. An empty mapping
+      is authoritative emptiness, not an invitation to fall back.
+    - present and invalid: `present` true, `fields` None, `error` a short reason. Fail
+      closed for enrichment — but only for enrichment. PROFILE EXISTS != SAME PERSON, so
+      a malformed enrichment payload does not un-check the public profile it was attached
+      to, and the record itself survives with its optional attributes blank.
+    """
+
+    present: bool
+    fields: ObservedFields | None = None
+    error: str = ""
+
+    @property
+    def failed(self) -> bool:
+        """Transport exists and does not validate. Never a reason to read top level."""
+        return self.present and self.fields is None
+
+    def active(self) -> dict[str, ObservedField]:
+        """The validated fields a consumer may treat as evidence, in transport order.
+
+        Empty when the channel is absent or invalid, so a caller that only wants active
+        evidence needs no state machine of its own.
+        """
+        if self.fields is None:
+            return {}
+        return {
+            name: field
+            for name, field in self.fields.root.items()
+            if field_is_active(name, field)
+        }
+
+
+def read_observed(data: Mapping[str, Any] | None) -> ObservedAuthority:
+    """Decide what a finding's `observed` channel may authorize, and validate it once.
+
+    This is the consumer-side parse boundary B2-03B1 introduces: identity correlation,
+    presentation and pivot extraction all read observed profile attributes through here,
+    so "is this transport trustworthy" is answered in exactly one place.
+
+    Only validation failures are caught. `parse_observed()` raises `ValueError` for a
+    non-mapping payload and Pydantic's `ValidationError` — itself a `ValueError` — for a
+    malformed one; `TypeError` covers a payload whose shape breaks the walk before
+    validation starts. Nothing broader is swallowed, and the original
+    `Finding.data[OBSERVED_KEY]` is left exactly as persisted: this decides what may be
+    *read* as evidence, never what was written.
+    """
+    payload = data or {}
+    if OBSERVED_KEY not in payload:
+        return ObservedAuthority(present=False)
+    try:
+        fields = parse_observed(payload[OBSERVED_KEY])
+    except (ValueError, TypeError) as exc:
+        return ObservedAuthority(present=True, error=_validation_summary(exc))
+    return ObservedAuthority(present=True, fields=fields)
 
 
 def project_items(items: list[ObservedItem]) -> dict[str, Any]:

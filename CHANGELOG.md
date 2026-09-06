@@ -83,7 +83,89 @@ The format is based on Keep a Changelog.
   um `observed_at` sem fuso é interpretado como UTC. **Sem migração de banco**
   (`Finding.data` já é coluna JSON) e sem alteração de quais valores são aceitos, rejeitados
   ou pontuados — as strings de `source` existentes seguem byte a byte idênticas, e a
-  correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B).
+  correlação de identidades ainda não usa o modelo como autoridade (escopo de B2-03B);
+- **Consumidores de evidência passam a tratar `observed` como autoridade (B2-03B1):**
+  `records_from_findings()`, `observed_profile_fields()` e, por consequência,
+  `extract_indicators()` leem os atributos observados de perfil através de um único ponto
+  de validação, `read_observed()` em `observed.py`. A decisão é por **presença da chave**,
+  nunca por veracidade e nunca por tipo: `observed` **ausente** é uma linha verdadeiramente
+  legada e mantém intacto o fallback das chaves de nível superior; `observed` **presente** —
+  válido, `{}`, `None`, `[]` ou malformado — significa que o canal autoritativo existe, e as
+  chaves de nível superior **deixam de ser evidência** para os atributos que ele cobre. Um
+  `display_name`, `website`, `public_email`, `public_id`, `organization`, `location`,
+  `avatar_url`, `bio` ou `public_links` de nível superior em conflito com o canal observado
+  agora perde. `{}` é enriquecimento vazio e **autoritativo**, não um convite ao fallback;
+- transporte presente e **inválido falha fechado**: nenhum atributo observado é exposto e
+  **não há fallback** para o nível superior. O registro do perfil sobrevive — `platform`,
+  `username`, `profile_url`/`final_url`, `check_status` e `entity_id` dizem que um perfil
+  público foi verificado, o que não é uma alegação de enriquecimento, e `PERFIL EXISTE !=
+  MESMA PESSOA`. Uma investigação inteira não é derrubada por um achado malformado, e o
+  `Finding.data` original nunca é reparado nem reescrito: a autoridade é decidida na
+  **leitura**, portanto um achado vindo do cache ou do banco recebe exatamente a mesma
+  validação que um ao vivo. **Sem migração de banco** e sem validação no momento da
+  gravação;
+- **`rejected_by` presente passa a significar evidência inativa a jusante.** O teste é
+  `is not None`, não veracidade — um token de rejeição vazio continua rejeitando. Um campo
+  rejeitado não vira atributo ativo do `IdentityRecord`, não entra em `links`, não é
+  apresentado como linha observada ativa, não se torna indicador de pivô e não é explicado
+  como evidência: nem como sinal **positivo** (`same_display_name`, `same_organization`, …)
+  nem como **conflito** (`distinct_display_name`, …). Um valor rejeitado não é um valor que
+  pontua zero, está **ausente** da comparação. A observação rejeitada permanece no
+  transporte original e na proveniência validada, porque foi observada e depois rejeitada;
+- **a forma semântica é verificada no consumidor**: um campo escalar conhecido com valor de
+  lista, ou um campo de lista com valor escalar, é **suprimido** em vez de convertido —
+  `["Alice"]` nunca vira a string `"['Alice']"` e um `social_links` escalar não vira link.
+  Suprime-se apenas aquele campo; um mapeamento válido no modelo não é recusado inteiro, e
+  nomes de campo desconhecidos continuam permitidos;
+- `IdentityRecord.provenance` passa a ser a visão **validada**
+  (`parse_observed(...).to_transport()`) para dados modernos válidos, e um mapeamento vazio
+  quando o transporte é inválido; `_observed_side()` deixa de explicar como evidência
+  qualquer linha de proveniência rejeitada ou de forma incompatível. `IdentityRecord` segue
+  um dataclass — nenhuma migração de tipos foi feita;
+- `IdentityRecord.links` para dados modernos vem de `external_links` e `social_links`
+  aceitos, nessa ordem, deduplicados sem reescrever grafia; `public_links` de nível superior
+  é ignorado quando `observed` existe, e `website` continua atributo próprio. O valor da
+  linha é seguro como pertencimento porque o contrato B2-03A garante que ele é a projeção
+  verdadeira dos `items` — isso **não** afirma que o `source` de linha (`"multiple"`) seja a
+  origem de cada membro. `items` continua preservado;
+- `extract_indicators()` passa a validar o transporte **uma vez por achado** e reutilizar o
+  resultado nas duas passagens (campos gerais e `bio`), em vez de reler o mesmo payload;
+  `profile_url`/`profile_host` continuam independentes de `observed` e sobrevivem a um
+  payload de enriquecimento quebrado. Nenhuma chamada de rede foi adicionada;
+- **fora do escopo desta fatia, e não implementado:** emissão de `rejected_by` pelo produtor
+  (B2-03B2), preservação de originais brutos por item (B2-03B2), explicação item-exata de
+  `cross_profile_link` (B2-03B3) e qualquer alteração de `WEIGHTS`, `CONFLICTS`, `BANDS`,
+  `CLUSTER_MIN`, aritmética de score, bandas de confiança, política de conflito forte ou
+  clusterização (B2-04). `engine.py` e `enrichment.py` seguem inalterados: as chaves de
+  nível superior continuam sendo escritas para compatibilidade — o que mudou é **em qual
+  canal o consumidor confia** quando `observed` existe;
+- **Correções Astra P2 dentro de B2-03B1 — explicação de evidência e privacidade do
+  diagnóstico:**
+  - **F1.** `links` é um atributo **sintético** do `IdentityRecord` — o alvo para o qual
+    `_EVIDENCE_FIELDS` mapeia `cross_profile_link` — e **não** uma identidade de campo
+    observado, enquanto o contrato permite nomes de campo desconhecidos de propósito. Uma
+    linha válida em `observed["links"]` colidia com esse nome sintético e era citada em
+    `evidence_detail` como a proveniência de uma URL que não sustentou, reportando o seu
+    `source` e o seu `observed_at` — inclusive o marcador de agregação `"multiple"`, que não
+    nomeia extrator algum. Isso é atribuição falsa. `_observed_side()` agora só consulta
+    proveniência para nomes que são identidades reais de campo observado
+    (`KNOWN_OBSERVED_FIELDS`); qualquer outro cai na visão grosseira de `record.links`, que
+    as regras de autoridade já filtraram — campos de link rejeitados, de forma incompatível,
+    de transporte malformado e `public_links` de nível superior continuam todos fora. O
+    **score nunca esteve errado** (a pertinência sempre veio de `record.links`) e não muda:
+    só o detalhe deixa de mentir. A linha desconhecida **continua preservada** em
+    `provenance` como auditoria, e nomes desconhecidos **não** passaram a ser proibidos.
+  - **F2.** O diagnóstico de validação serializava `error["loc"]` do pydantic, e essa
+    localização **não** é só de esquema: num `RootModel` sobre dicionário o nome do campo
+    observado é um componente dela, e `extra="forbid"` coloca ali a chave ofensora. Chaves de
+    mapeamento são **dados**, então uma linha malformada podia publicar no log uma chave
+    arbitrária do payload — por exemplo `website.private.person@example.test`. O aviso agora
+    reporta apenas a **contagem** de erros e os **códigos de tipo** do pydantic (`missing`,
+    `extra_forbidden`, …), deduplicados e limitados a três: sem `loc`, sem `msg` (que embute
+    `input_value=`), sem `input` e sem `ctx`. Uma falha que não seja de validação reporta
+    apenas a **classe** da exceção — `str(exc)` é recusado por princípio, não porque as
+    mensagens de hoje sejam seguras. O aviso segue existindo e sendo útil: falha fechada,
+    registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
 - **`parse_observed()` agora é total sobre o transporte canônico que este contrato emite
