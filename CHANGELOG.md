@@ -168,6 +168,7 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Dependências (B2-05):** `Pillow` passa a exigir `>=13.0.0,<14`, eliminando os 39 avisos do `pip-audit` do 12.3.0 (a CI da `main` voltava a ficar vermelha).
 - **`parse_observed()` agora é total sobre o transporte canônico que este contrato emite
   (preflight de B2-03B):** todo `observed_at` em formato de texto — na linha e em cada
   item — é lido **uma vez** por `datetime.fromisoformat()` antes da validação Pydantic, e
@@ -237,6 +238,8 @@ The format is based on Keep a Changelog.
   autoridade de consumo de B2-03B seguem intocados;
 
 ### Changed
+- **Versão consistente (B2-05):** o `User-Agent` padrão passa a ser `SPECTRE-OSINT/<versão> (+passive-osint)`, derivado de `__version__` (antes `0.1-alpha`); `.env.example`, `docker-compose.yml` e `docs/configuration.md` acompanham.
+- **Metadados do pacote (B2-05):** classificador `Development Status :: 4 - Beta` e `Operating System :: Microsoft :: Windows`; descrição sem `alpha`.
 - **Correção de `observed_at` (B2-03A):** a ordenação temporal de uma linha com `items` passa a
   usar o **instante absoluto**, não o relógio de parede. `project_items()` escolhe o item mais
   novo comparando instantes absolutos, e a validação linha/itens compara `observed_at` por
