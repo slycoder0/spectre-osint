@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from spectre_osint.core.case_manager import CaseManager
@@ -643,8 +644,15 @@ def _timeline_from_result(result: InvestigationResult) -> list[TimelineEvent]:
                     confidence=finding.confidence,
                 )
             )
-    events.sort(key=lambda e: e.timestamp or utcnow())
+    events.sort(key=_timeline_sort_key)
     return events
+
+
+def _timeline_sort_key(event: TimelineEvent) -> datetime:
+    """Sources mix aware ("...Z") and naive dates; naive ones are read as UTC so the two
+    can be ordered. Undated events sort as now. The stored timestamps are unchanged."""
+    stamp = event.timestamp or utcnow()
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
 
 
 def _parse_dt(value: Any):
