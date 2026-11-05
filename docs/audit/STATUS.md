@@ -39,7 +39,11 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-**Fase 3 — menu interativo (fluxo de username primeiro).** `spectre` sem argumentos abre o
+**Próximo PR (antes da Fase 3): logs sem dados do alvo** — corrigir o defeito pré-existente
+descrito em "Follow-ups" (URLs de perfil e valores de pivô nos logs). Decisão do usuário em
+2026-11-05.
+
+**Depois: Fase 3 — menu interativo (fluxo de username primeiro).** `spectre` sem argumentos abre o
 menu (questionary/prompt_toolkit + Rich) sobre a mesma camada `services/` e as mesmas views;
 tela de Configurações grava o idioma com `core.i18n.save_language()`.
 
@@ -82,7 +86,7 @@ Ao vivo (`spectre username torvalds`, diretórios isolados, cwd fora do repo, st
   registra `url=%s` (URL de perfil contém o username) em avisos de timeout/TLS/HTTP;
   `core/pipeline.py` registra o valor do pivô (`Pivot failed for %s`) e `str(exc)` das
   coletas opcionais de e-mail/website. Viola o invariante "logs sem dados do alvo";
-  trocar por host/classe da exceção numa fase de limpeza.
+  trocar por host/classe da exceção — **agendado para o próximo PR**.
 - **Texto não confiável no `--verbose`:** as seções legadas imprimem títulos de menção,
   plataforma/URL/detalhe como markup Rich (`[...]` pode virar estilo ou `MarkupError`).
   O bloco compacto já usa `clean_text()` + `rich.text.Text`; aplicar o mesmo no verbose.
