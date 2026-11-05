@@ -173,6 +173,15 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Cache de resultados versionado (B2-06):** entradas gravadas por uma versão anterior do
+  SPECTRE eram servidas sem reprocessar durante todo o TTL (6 h para username). Por isso,
+  mesmo depois da B2-03B2, títulos de página (`torvalds - Codeberg.org`, `Contact @torvalds`)
+  voltavam como "nomes observados" e geravam conflitos falsos `distinct_display_name`. A
+  chave agora inclui `RESULT_SCHEMA_VERSION` e a versão do pacote; ao abrir o cache, entradas
+  de outro esquema e expiradas são apagadas. Não é preciso `spectre cache clear`.
+- **Título de página nunca é nome, nem em dados antigos (B2-06):** `display_name` vindo de
+  `html_title` / `html_og.title` fica inativo mesmo sem `rejected_by` (terminal, relatórios,
+  `spectre report` sobre casos antigos e correlação). A exceção do Instagram não muda.
 - **Nomes de contas diferentes não são mais fundidos (B2-06):** a linha `Observed name
   Linus Torvalds, Hemant` juntava numa linha só nomes de contas distintas com o mesmo
   username; agora cada nome aparece com a sua plataforma (`GitHub: Linus Torvalds`,

@@ -3,13 +3,36 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-05 — Fase 2 (`feat/b2-06-presentation-i18n`) concluída no branch._
+_Última atualização: 2026-11-05 — PR #17 (Fase 2) com a correção do cache de resultados._
 
 ## Fase atual
 
 **Fase 2 — `feat/b2-06-presentation-i18n`** (camada de apresentação + base i18n PT-BR/EN):
-implementada e com portões verdes no branch. **PR ainda não aberto** (aguardando pedido do
-usuário). Não mergeado.
+**PR #17 aberto**, aguardando revisão. Não mergeado. Inclui a correção do cache de resultados
+abaixo, pedida antes do review.
+
+### Correção dentro do PR #17 — cache servindo resultados de código antigo
+
+Sintoma (rodando no repo, não em diretórios isolados): títulos de página apareciam como
+"Nomes observados" (Codeberg, Scratch, Telegram, SoundCloud, Launchpad) e geravam conflitos
+`distinct_display_name` na correlação.
+
+Causa raiz, confirmada com evidência: `core/result_cache.py` guarda `Finding.data` **derivado**
+e o devolve literalmente (`engine._bundle_from_cached`); a chave era só
+`kind|provider|subject|access_mode`, sem versão. As 55 linhas de `torvalds` foram gravadas às
+14:44 UTC (11:44 local) com o HEAD em `chore/b2-05-resume-hygiene` (99c0f30), **antes** da
+rejeição de títulos da Fase 1 (052f6bf, 12:49 local), e ainda tinham ~2h18 de TTL. O relatório
+problemático tinha 55/57 findings `CACHED`. Reprodução A/B com uma cópia do cache: com cache →
+títulos aparecem; mesma pasta com `--refresh` → só GitHub e Hugging Face. Nenhum outro escritor:
+os caminhos ao vivo (HTML anônimo, JSON API, autenticado) passam por `enrich_profile`. O
+"value/original invertido" era um defeito do formato antigo (`original=og_title or title`).
+
+Correção: (1) `RESULT_SCHEMA_VERSION` (= 2) e `__version__` na chave; ao abrir, linhas de outro
+esquema (`PRAGMA user_version`) e expiradas são apagadas; (2) defesa em profundidade:
+`display_name` de `html_title` / `html_og.title` é inativo mesmo sem `rejected_by`
+(`PAGE_TITLE_SOURCES` em `observed.py`), cobrindo view, correlação, relatórios e
+`flatten_observed()`. Regra de quando subir a versão: docstring de `core/result_cache.py`,
+`CONTRIBUTING.md` e `docs/commands.md`.
 
 Roadmap revisado (decisão de produto de 2026-11-05): apresentação + i18n viraram a Fase 2
 porque são a base do menu. O antigo "A2 — discovery page chrome" (`fix/b2-06-discovery-page-chrome`)
@@ -24,7 +47,7 @@ passou para a Fase 5. Ordem atual: 2 apresentação/i18n → 3 menu (fluxo de us
 | — | Auditoria 2026-11-05 | #14 | mergeado |
 | 0 | `chore/b2-05-resume-hygiene` (Pillow `>=13,<14`, strings `0.1.0b1`, UA) | #15 | mergeado |
 | 1 | `fix/b2-03b2-display-name-rejection` | #16 | mergeado (`5ee5fd7`) |
-| 2 | `feat/b2-06-presentation-i18n` | — | branch pronto, PR não aberto |
+| 2 | `feat/b2-06-presentation-i18n` | #17 | aberto, em revisão |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -47,10 +70,10 @@ descrito em "Follow-ups" (URLs de perfil e valores de pivô nos logs). Decisão 
 menu (questionary/prompt_toolkit + Rich) sobre a mesma camada `services/` e as mesmas views;
 tela de Configurações grava o idioma com `core.i18n.save_language()`.
 
-## Últimos resultados dos portões (branch da Fase 2, 2026-11-05)
+## Últimos resultados dos portões (PR #17 com a correção do cache, 2026-11-05)
 
 ```text
-pytest -q        1041 passed in 92.57s
+pytest -q        1061 passed in 87.13s
 ruff check       All checks passed!
 mypy             Success: no issues found in 134 source files
 pip check        No broken requirements found.
@@ -58,7 +81,13 @@ pip-audit        No known vulnerabilities found
                  (spectre-osint: not on PyPI, skipped — esperado)
 ```
 
-Ao vivo (`spectre username torvalds`, diretórios isolados, cwd fora do repo, stderr não-TTY):
+Ao vivo **dentro do repo, com o cache antigo** (`spectre username torvalds`, sem `--lang`,
+locale `pt_BR`): cache foi de `user_version 0` / 55 linhas antigas para `user_version 2` / 53
+linhas novas; saída com `15 perfis encontrados`, nomes só `GitHub: Linus Torvalds` e
+`Hugging Face: Hemant`, `27 não verificados`; relatório com 57 findings `LIVE`, títulos com
+`rejected_by="page_title_unverified"` e nenhum conflito `distinct_display_name`.
+
+Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr não-TTY):
 
 - EN: `torvalds — 16 profiles found (sites checked: 57)`; `GitHub: Linus Torvalds`,
   `Hugging Face: Hemant` em linhas separadas; `25 not verified: 9 blocked, 8 need login,
@@ -73,8 +102,14 @@ Ao vivo (`spectre username torvalds`, diretórios isolados, cwd fora do repo, st
 
 - Quando cortar o `0.1.0b2` (Fase 6) — depois da Fase 3 ou só no fim do roadmap.
 - Comando de CLI para salvar o idioma (`spectre config lang …`) ou só pelo menu.
+- Incluir em `CLAUDE.md` (invariantes) a regra "mudou o que é cacheado → suba
+  `RESULT_SCHEMA_VERSION`" — hoje está em `CONTRIBUTING.md` e na docstring do cache.
 
 ## Follow-ups registrados
+
+- **Achados sem `observed` (anteriores à B2-03A)** continuam no fallback de nível superior da
+  correlação: sem `source`, não há como distinguir um título de um nome. Só afeta casos muito
+  antigos recarregados do SQLite (`spectre report`); o cache de resultados já não os serve.
 
 - **i18n restante:** seções detalhadas do `--verbose` (`cli/display.py`: tabela, painéis
   USERNAME SUMMARY / PUBLIC MENTIONS / DISCOVERY GAIN / INTELLIGENCE SUMMARY / IDENTITY
