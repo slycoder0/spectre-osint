@@ -12,6 +12,7 @@ from spectre_osint import __version__
 from spectre_osint.cli.auth_commands import auth_app
 from spectre_osint.cli.cache_commands import cache_app
 from spectre_osint.cli.display import (
+    configure_cli_logging,
     configure_display,
     display_options,
     print_banner,
@@ -27,7 +28,6 @@ from spectre_osint.core.exceptions import AuthorizationRequired, SpectreError
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.i18n import SUPPORTED_LANGUAGES, resolve_language, set_language, t
 from spectre_osint.core.inputs import parse_target_inputs
-from spectre_osint.core.logger import setup_logging
 from spectre_osint.core.registry import default_registry
 from spectre_osint.core.types import EntityType
 from spectre_osint.modules.metadata import analyze_metadata
@@ -58,17 +58,9 @@ def _cli_fail(message: str) -> None:
 def _bootstrap() -> None:
     """Settings, logging and database. Logs go to the file; the terminal only gets them
     on --verbose (INFO) or --debug (DEBUG), always on stderr."""
-    options = display_options()
     try:
         settings = get_settings()
-        if options.debug:
-            setup_logging("DEBUG", settings.logs_dir, console_level="DEBUG")
-        else:
-            setup_logging(
-                settings.log_level,
-                settings.logs_dir,
-                console_level="INFO" if options.verbose else None,
-            )
+        configure_cli_logging(settings.log_level, settings.logs_dir)
         init_db(settings)
     except OSError as exc:
         _cli_fail(

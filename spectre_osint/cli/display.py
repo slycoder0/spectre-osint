@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -25,14 +26,16 @@ from rich.table import Table
 from spectre_osint import __version__
 from spectre_osint.cli.render import render_username
 from spectre_osint.core.entities import InvestigationResult
+from spectre_osint.core.logger import setup_logging
 from spectre_osint.core.presentation import (
+    USERNAME_SWEEP_TITLE,
     mention_findings,
     mention_relevance_counts,
     username_counts,
     username_rows,
 )
 from spectre_osint.core.timefmt import relative_age
-from spectre_osint.core.types import FindingStatus
+from spectre_osint.core.types import EntityType, FindingStatus
 from spectre_osint.modules.search.summary import build_intelligence_summary
 from spectre_osint.services.views import build_username_view
 
@@ -111,6 +114,18 @@ def configure_display(
 
 def display_options() -> DisplayOptions:
     return _OPTIONS
+
+
+def configure_cli_logging(file_level: str, logs_dir: Path) -> None:
+    """Logging for any CLI command, honoring the global --verbose / --debug flags.
+
+    Default: log file only, at `file_level` (SPECTRE_LOG_LEVEL). --verbose adds INFO on
+    stderr; --debug adds DEBUG on stderr and writes DEBUG to the file.
+    """
+    if _OPTIONS.debug:
+        setup_logging("DEBUG", logs_dir, console_level="DEBUG")
+    else:
+        setup_logging(file_level, logs_dir, console_level="INFO" if _OPTIONS.verbose else None)
 
 
 def _want_banner() -> bool:
@@ -196,7 +211,7 @@ def print_result(result: InvestigationResult) -> None:
     verbose = _OPTIONS.verbose
     print_banner()
     rows = username_rows(result)
-    if rows:
+    if rows or _is_username_result(result):
         if verbose:
             _print_header(result)
             _print_provider_notes(result)
@@ -233,6 +248,17 @@ def print_result(result: InvestigationResult) -> None:
         _print_metrics(result)
     if result.report_path:
         console.print(f"\n[bold]Report:[/bold] {result.report_path}")
+
+
+def _is_username_result(result: InvestigationResult) -> bool:
+    """A username sweep ran, even if it produced zero site rows.
+
+    Such a result still gets the compact view, so the unverified line is printed
+    (as `0`) instead of silently falling back to the generic table.
+    """
+    if result.target_type == EntityType.USERNAME:
+        return True
+    return any(f.module == "username" and f.title == USERNAME_SWEEP_TITLE for f in result.findings)
 
 
 def _print_header(result: InvestigationResult) -> None:

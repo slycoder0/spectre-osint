@@ -70,12 +70,15 @@ def setup_logging(
 ) -> logging.Logger:
     """Configure the `spectre` logger. Idempotent; safe to call once per command.
 
-    `level` is the logger threshold (what reaches the file). `console_level` adds a
-    stderr handler at that threshold; None (the default) means no terminal output, and
-    removes a terminal handler left by an earlier call in the same process.
+    `level` is what reaches the log file. `console_level` adds a stderr handler at that
+    threshold; None (the default) means no terminal output, and removes a terminal
+    handler left by an earlier call in the same process. The logger itself sits at the
+    more verbose of the two, so `--verbose` shows INFO even when the file is at WARNING,
+    while each handler keeps its own threshold.
     """
+    file_level = _level(level)
     logger = logging.getLogger(ROOT_LOGGER)
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.setLevel(min(file_level, _level(console_level)) if console_level else file_level)
     logger.propagate = False
 
     formatter = RedactingFormatter(
@@ -88,24 +91,29 @@ def setup_logging(
             logger.removeHandler(handler)
     if console_level:
         console = _CurrentStderrHandler()
-        console.setLevel(getattr(logging, console_level.upper(), logging.INFO))
+        console.setLevel(_level(console_level))
         console.setFormatter(formatter)
         logger.addHandler(console)
 
     if logs_dir is not None:
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / "spectre.log"
-        already = False
+        file_handler: logging.FileHandler | None = None
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == log_path.resolve():
-                already = True
+                file_handler = handler
                 break
-        if not already:
+        if file_handler is None:
             file_handler = logging.FileHandler(log_path, encoding="utf-8")
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
+        file_handler.setLevel(file_level)
 
     return logger
+
+
+def _level(name: str | None) -> int:
+    return int(getattr(logging, str(name or "INFO").upper(), logging.INFO))
 
 
 def get_logger(name: str = ROOT_LOGGER) -> logging.Logger:

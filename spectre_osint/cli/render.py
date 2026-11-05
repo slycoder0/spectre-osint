@@ -19,7 +19,8 @@ from rich.text import Text
 from spectre_osint.core.i18n import t, tn
 from spectre_osint.services.views import UsernameView
 
-_SPACE_CONTROLS = re.compile(r"[\t\n\r\x0b\x0c]")
+# Line breaks, including the Unicode line/paragraph separators, become one space.
+_SPACE_CONTROLS = re.compile("[\t\n\r\x0b\x0c  ]")
 # C0/C1 controls (ESC included), DEL, and the bidi marks/overrides/isolates that can
 # visually reorder a line ("Trojan Source").
 _STRIP = re.compile("[\x00-\x1f\x7f-\x9f؜‎‏‪-‮⁦-⁩]")

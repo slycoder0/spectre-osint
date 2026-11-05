@@ -69,17 +69,29 @@ class ResultCache:
             "subject TEXT NOT NULL, access_mode TEXT NOT NULL, "
             "value TEXT NOT NULL, checked_at TEXT NOT NULL, expires_at REAL NOT NULL)"
         )
-        self._purge_stale()
         self._conn.commit()
+        self._purge_stale()
 
     def _purge_stale(self) -> None:
-        """Drop rows another schema wrote, and rows past their TTL."""
-        stored = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if stored != RESULT_SCHEMA_VERSION:
-            self._conn.execute("DELETE FROM results")
-            # PRAGMA takes no bound parameters; the value is this module's own integer.
-            self._conn.execute(f"PRAGMA user_version = {int(RESULT_SCHEMA_VERSION)}")
-        self._conn.execute("DELETE FROM results WHERE expires_at < ?", (time.time(),))
+        """Drop rows another schema wrote, and rows past their TTL.
+
+        Runs under `BEGIN IMMEDIATE` and reads `user_version` *inside* that write
+        transaction. Two processes opening an old cache at once would otherwise both see
+        the old version, and the slower one's `DELETE` would wipe rows the faster one had
+        already written under the new schema.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            stored = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if stored != RESULT_SCHEMA_VERSION:
+                self._conn.execute("DELETE FROM results")
+                # PRAGMA takes no bound parameters; the value is this module's own integer.
+                self._conn.execute(f"PRAGMA user_version = {int(RESULT_SCHEMA_VERSION)}")
+            self._conn.execute("DELETE FROM results WHERE expires_at < ?", (time.time(),))
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def ttl_for(self, kind: str, provider: str = "") -> int:
         kind_l = kind.lower()
