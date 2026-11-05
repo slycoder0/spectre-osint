@@ -40,6 +40,18 @@ passou para a Fase 5. Ordem atual: 2 apresentação/i18n → 3 menu (fluxo de us
 → 4 menu completo + testes dos módulos cyber → 5 ruído de discovery + saúde do catálogo →
 6 release `0.1.0b2` → depois B2-03B3, B2-04, limpeza.
 
+### Revisão independente do PR #17 — 5 ajustes (sem blockers)
+
+1. `print_result`: alvo username ou finding de sweep → view compacta mesmo sem linhas de site
+   (a linha "0 não verificados" não some); email/domain seguem na tabela legada.
+2. `ResultCache`: limpeza de esquema em `BEGIN IMMEDIATE`, relendo `user_version` dentro da
+   transação (corrida de primeira abertura entre dois processos).
+3. `spectre auth` honra `--verbose` / `--debug` (`configure_cli_logging()` compartilhado).
+4. Nível do logger = o mais verboso entre arquivo e terminal; `FileHandler` em `SPECTRE_LOG_LEVEL`.
+5. `clean_text()` troca U+2028 / U+2029 por espaço.
+
+Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da correção).
+
 ## Feito
 
 | Fase | Marco | PR | Estado |
@@ -70,10 +82,10 @@ descrito em "Follow-ups" (URLs de perfil e valores de pivô nos logs). Decisão 
 menu (questionary/prompt_toolkit + Rich) sobre a mesma camada `services/` e as mesmas views;
 tela de Configurações grava o idioma com `core.i18n.save_language()`.
 
-## Últimos resultados dos portões (PR #17 com a correção do cache, 2026-11-05)
+## Últimos resultados dos portões (PR #17 com a correção do cache e os 5 ajustes da revisão, 2026-11-05)
 
 ```text
-pytest -q        1061 passed in 87.13s
+pytest -q        1068 passed in 89.20s
 ruff check       All checks passed!
 mypy             Success: no issues found in 134 source files
 pip check        No broken requirements found.

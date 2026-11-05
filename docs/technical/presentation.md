@@ -93,6 +93,12 @@ As seções detalhadas ainda estão só em inglês (follow-up registrado em
   é inventada (contrato de `core/progress.py`).
 - Com saída redirecionada ou em pipe, stderr não é TTY: nenhuma barra é desenhada.
 - Logs passam pelo `RedactingFormatter` em qualquer destino (`core/redaction.py`).
+- O arquivo segue `SPECTRE_LOG_LEVEL` (exceto com `--debug`, que grava DEBUG); o terminal segue a
+  flag. Com `SPECTRE_LOG_LEVEL=WARNING` e `--verbose`, o INFO aparece no stderr e não no arquivo.
+  As flags valem para todo comando que configura logs (`username`, demais investigações, `auth`)
+  via `configure_cli_logging()` em `cli/display.py`.
+- Um resultado de username sem nenhuma linha de site (só o finding de sweep) também usa a view
+  compacta: a linha de não verificados aparece como `0`.
 
 ## 5. Texto não confiável
 

@@ -173,6 +173,12 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Ajustes da revisão do PR #17 (B2-06):** username sem nenhum site consultado ainda mostra a
+  saída compacta com `0 não verificados`; `--verbose` / `--debug` agora valem também para
+  `spectre auth`; `--verbose` mostra INFO mesmo com `SPECTRE_LOG_LEVEL=WARNING` (o arquivo de
+  log continua no nível configurado); dois processos abrindo um cache antigo ao mesmo tempo não
+  apagam mais a entrada nova um do outro; separadores de linha Unicode (U+2028/U+2029) em nomes
+  não quebram mais a linha no terminal.
 - **Cache de resultados versionado (B2-06):** entradas gravadas por uma versão anterior do
   SPECTRE eram servidas sem reprocessar durante todo o TTL (6 h para username). Por isso,
   mesmo depois da B2-03B2, títulos de página (`torvalds - Codeberg.org`, `Contact @torvalds`)
