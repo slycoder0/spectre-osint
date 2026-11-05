@@ -131,6 +131,7 @@ def test_instagram_og_title_display_name_without_inventing_bio() -> None:
     )
     assert observed["display_name"]["value"] == "Alice Example"
     assert observed["display_name"]["source"] == "instagram_og.title"
+    assert "rejected_by" not in observed["display_name"]
     assert "bio" not in observed
 
 
@@ -144,7 +145,8 @@ def test_generic_tryhackme_title_is_rejected_as_observed_name() -> None:
     assert "display_name" not in observed
 
 
-def test_real_tryhackme_display_name_is_preserved() -> None:
+def test_tryhackme_page_title_name_is_recorded_rejected() -> None:
+    # B2-03B2: a page title is not structured proof of a name. Kept, but inactive.
     observed = enrich_profile(
         platform="TryHackMe",
         username="alice_osint",
@@ -152,7 +154,10 @@ def test_real_tryhackme_display_name_is_preserved() -> None:
         meta={"title": "Alice Example | TryHackMe", "og_title": "Alice Example | TryHackMe"},
     )
     assert observed["display_name"]["value"] == "Alice Example"
+    assert observed["display_name"]["original"] == "Alice Example | TryHackMe"
     assert observed["display_name"]["source"] == "html_og.title"
+    assert observed["display_name"]["rejected_by"] == "page_title_unverified"
+    assert observed_profile_fields({"observed": observed}) == []
 
 
 def test_existing_platform_filters_continue_working() -> None:
@@ -171,6 +176,7 @@ def test_existing_platform_filters_continue_working() -> None:
         meta={"title": "Alice Dev · GitHub"},
     )
     assert observed_gh["display_name"]["value"] == "Alice Dev"
+    assert observed_gh["display_name"]["rejected_by"] == "page_title_unverified"
 
 
 def test_operator_provided_name_is_not_observed() -> None:

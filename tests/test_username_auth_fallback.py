@@ -711,7 +711,12 @@ async def test_authenticated_html_fallback_discards_anonymous_login_metadata(tmp
         assert data["check_status"] in {UsernameCheckStatus.CONFIRMED.value, UsernameCheckStatus.LIKELY.value}
 
         # Anonymous login metadata must not leak
-        assert data["display_name"] == "Alice Example"
+        # B2-03B2: the authenticated og:title is still a page title, not proof of a
+        # name (only Instagram's `(@handle)` binding is). Recorded, rejected, inactive.
+        assert data["display_name"] is None
+        assert data["observed"]["display_name"]["original"] == "Alice Example"
+        assert data["observed"]["display_name"]["rejected_by"] == "page_title_unverified"
+        assert data["observed"]["display_name"]["source_method"] == AccessMode.AUTHENTICATED_PUBLIC.value
         assert data["bio"] != "Sign in to continue to Example"
         assert data["avatar_url"] != "https://example.com/login-logo.png"
         assert data["website"] == "https://alice-personal.org/"
@@ -724,11 +729,12 @@ async def test_authenticated_html_fallback_discards_anonymous_login_metadata(tmp
         assert evidence.url == "https://example.com/alice"
         raw_data = json.loads(evidence.raw_reference or "{}")
         assert raw_data["title"] == "Alice (@alice) • Example"
-        assert raw_data["public_name"] == "Alice Example"
+        # A rejected page title is not a public name either (B2-03B2).
+        assert raw_data["public_name"] is None
 
         # SOCIAL_PROFILE Entity metadata
         profile_entity = next(e for e in res["entities"] if e.type == EntityType.SOCIAL_PROFILE)
-        assert profile_entity.metadata["public_name"] == "Alice Example"
+        assert profile_entity.metadata["public_name"] is None
 
         # No support website entity
         entity_values = [e.value for e in res["entities"]]

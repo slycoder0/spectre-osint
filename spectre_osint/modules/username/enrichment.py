@@ -27,9 +27,14 @@ from spectre_osint.modules.username.observed import (
     ObservedField,
     ObservedItem,
     SourceMethod,
+    transport_row_is_active,
 )
 
 logger = get_logger("spectre.username")
+
+# B2-03B2: a page title is metadata about the page, not the person's name. A title-
+# derived display name is recorded with this token and is inactive evidence downstream.
+PAGE_TITLE_UNVERIFIED = "page_title_unverified"
 
 FIELD_ORDER = (
     "display_name",
@@ -153,6 +158,17 @@ def clean_display_name(raw: str | None, username: str, platform: str | None = No
     if is_generic_display_name(text, handle, platform=platform):
         return ""
     return text[:200]
+
+
+def _instagram_binds_handle(platform: str | None, og_title: str, handle: str) -> bool:
+    """The one explicit exception to page-title rejection (B2-03B2).
+
+    Instagram's og:title is `<Name> (@<handle>) • Instagram ...`: the page binds the
+    name to the exact handle. Only that binding, on og:title, counts as proof.
+    """
+    if str(platform or "").strip().lower() != "instagram" or not handle:
+        return False
+    return f"(@{handle.lower()})" in str(og_title or "").lower()
 
 
 def _is_platform_url(url: str | None) -> bool:
@@ -299,6 +315,7 @@ def enrich_profile(
         method: SourceMethod,
         original: str | None = None,
         derived_from: str | None = None,
+        rejected_by: str | None = None,
     ) -> None:
         # Operator input was not read from a page; claiming a source_url for it would
         # invent network provenance.
@@ -344,6 +361,7 @@ def enrich_profile(
             source_method=method,
             source_url=url,
             derived_from=derived_from,
+            rejected_by=rejected_by,
         )
 
     if handle:
@@ -489,12 +507,16 @@ def enrich_profile(
                     if domain:
                         put("personal_domain", domain, "html_rel_me", method=SourceMethod.DERIVED, derived_from="website")
 
-    name = clean_display_name(og_title, handle, platform=platform) or clean_display_name(title, handle, platform=platform)
+    # Must stay the last display_name writer: `put` keeps the first value, so a rejected
+    # title never shadows a JSON API or JSON-LD Person name observed above.
+    og_name = clean_display_name(og_title, handle, platform=platform)
+    name = og_name or clean_display_name(title, handle, platform=platform)
     if name:
-        source = "html_og.title" if clean_display_name(og_title, handle, platform=platform) else "html_title"
-        if str(platform).lower() == "instagram":
-            source = "instagram_og.title"
-        put("display_name", name, source, method=html_method, original=og_title or title)
+        source, raw_title = ("html_og.title", og_title) if og_name else ("html_title", title)
+        rejected: str | None = PAGE_TITLE_UNVERIFIED
+        if og_name and _instagram_binds_handle(platform, og_title, handle):
+            source, rejected = "instagram_og.title", None
+        put("display_name", name, source, method=html_method, original=raw_title, rejected_by=rejected)
     img = normalize_url(og_image)
     if img:
         put("avatar_url", img, "html_og.image", method=html_method, original=og_image)
@@ -523,10 +545,20 @@ def enrich_profile(
 
 
 def flatten_observed(observed: dict[str, Any]) -> dict[str, Any]:
-    """Top-level finding fields for IdentityRecord compatibility."""
-    def value(key: str) -> str:
+    """Top-level finding fields for IdentityRecord compatibility.
+
+    A rejected field (`rejected_by` present, any field) is inactive evidence and is
+    never copied to the top level. Same rule as the consumers: `transport_row_is_active`.
+    """
+    def active(key: str) -> dict[str, Any] | None:
         item = observed.get(key)
-        if isinstance(item, dict):
+        if isinstance(item, dict) and transport_row_is_active(key, item):
+            return item
+        return None
+
+    def value(key: str) -> str:
+        item = active(key)
+        if item is not None:
             raw = item.get("value")
             if isinstance(raw, list):
                 return ""
@@ -538,8 +570,8 @@ def flatten_observed(observed: dict[str, Any]) -> dict[str, Any]:
         if value(key):
             links.append(value(key))
     for key in ("external_links", "social_links"):
-        item = observed.get(key)
-        if isinstance(item, dict) and isinstance(item.get("value"), list):
+        item = active(key)
+        if item is not None and isinstance(item.get("value"), list):
             for href in item["value"]:
                 if href and href not in links:
                     links.append(str(href))

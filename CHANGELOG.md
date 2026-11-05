@@ -168,6 +168,14 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Título de página não vira mais "nome observado" (A1 / B2-03B2):** `og:title` e `<title>`
+  (ex.: `torvalds - Codeberg.org`, `Contact @torvalds`) ficam no transporte `observed` com
+  `rejected_by="page_title_unverified"` e não aparecem em "Observed name", nos relatórios
+  nem na correlação, onde geravam conflito falso de nome. A única exceção é o `og:title` do
+  Instagram com o `(@handle)` exato. Nomes vindos de API JSON e JSON-LD não mudam.
+- **Título de página não eleva mais a confiança (B2-03B2):** um perfil `LIKELY` anônimo só
+  sobe de `MEDIUM` para `HIGH` com nome vindo de campo de API; o `og:title` bruto com o handle
+  (ex.: `torvalds does not use Launchpad`) deixou de contar.
 - **Dependências (B2-05):** `Pillow` passa a exigir `>=13.0.0,<14`, eliminando os 39 avisos do `pip-audit` do 12.3.0 (a CI da `main` voltava a ficar vermelha).
 - **`parse_observed()` agora é total sobre o transporte canônico que este contrato emite
   (preflight de B2-03B):** todo `observed_at` em formato de texto — na linha e em cada

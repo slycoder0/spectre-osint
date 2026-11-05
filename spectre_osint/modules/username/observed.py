@@ -240,10 +240,9 @@ class ObservedField(BaseModel):
     source_method: SourceMethod | None = None
     source_url: str | None = None
     derived_from: str | None = None
-    # Field-level rejection metadata, and forward compatibility for B2-03B. It
-    # describes the field, never an individual item, so ObservedItem has no such key.
-    # B2-03A never emits it: rejection semantics are unchanged, and a rejected value is
-    # still simply omitted.
+    # Field-level rejection metadata. It describes the field, never an individual item,
+    # so ObservedItem has no such key. Emitted since B2-03B2 for title-derived
+    # `display_name` (`page_title_unverified`); consumers read it as inactive (B2-03B1).
     rejected_by: str | None = None
 
     # Exact per-member provenance for a list-valued observation. Absent on scalars,
