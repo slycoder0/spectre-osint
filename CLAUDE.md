@@ -5,6 +5,8 @@ Ponto de entrada: `spectre = spectre_osint.main:app`. Versão em `spectre_osint/
 
 Leia antes de mexer: `docs/technical/architecture.md`, `docs/technical/testing.md`,
 `CONTRIBUTING.md`. Auditoria e roadmap atuais: `docs/audit/2026-11-05-auditoria.md`.
+**Estado atual (fase, próximos passos, portões, follow-ups): `docs/audit/STATUS.md` — leia
+primeiro depois de um `/clear`.**
 
 ## Ambiente (Windows, PowerShell)
 
@@ -51,3 +53,11 @@ Se `pytest` falhar com `PermissionError` no diretório temporário, rode com
 - `CHANGELOG.md` → seção `[Unreleased]`; entradas curtas (o que muda para o usuário),
   detalhes de design vão na descrição do PR.
 - Não crie tag, não faça push, não abra release sem pedido explícito do usuário.
+
+## Protocolo de fim de fase
+
+- Todo PR de fase atualiza `docs/audit/STATUS.md` (fase atual, feito, próximo, portões,
+  decisões em aberto, follow-ups).
+- Ao abrir o PR de uma fase, termine a resposta com um bloco **FIM DE FASE** de 5 linhas:
+  1. o que mudou; 2. o que falta; 3. saída real dos portões; 4. riscos; 5. follow-ups.
+- Depois do bloco, lembre o usuário de dar `/clear` antes da próxima fase.
