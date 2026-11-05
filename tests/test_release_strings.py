@@ -8,13 +8,11 @@ from __future__ import annotations
 
 import re
 import tomllib
-from pathlib import Path
 
 import pytest
 
 from spectre_osint import __version__
-from spectre_osint.core.config import PROJECT_ROOT, Settings
-from spectre_osint.core.http_client import load_user_agents
+from spectre_osint.core.config import PROJECT_ROOT, PROJECT_URL, Settings
 
 
 def _read(name: str) -> str:
@@ -32,19 +30,12 @@ def test_default_user_agent_tracks_version(monkeypatch: pytest.MonkeyPatch) -> N
     assert "alpha" not in ua.lower()
 
 
-def test_user_agent_fallback_tracks_version(tmp_path: Path) -> None:
-    fallback = load_user_agents(tmp_path / "missing.txt")
-    assert len(fallback) == 1
-    assert __version__ in fallback[0]
-    assert "alpha" not in fallback[0].lower()
-
-
-def test_bundled_user_agents_tracks_version() -> None:
-    spectre_agents = [ua for ua in load_user_agents() if ua.startswith("SPECTRE-OSINT/")]
-    assert spectre_agents
-    for ua in spectre_agents:
-        assert __version__ in ua
-        assert "alpha" not in ua.lower()
+def test_user_agent_template_and_docs_use_the_honest_default() -> None:
+    """B2-06 replaced UA rotation with one honest UA; templates must not drift from it."""
+    honest = f"SPECTRE-OSINT/{__version__} (+{PROJECT_URL})"
+    assert f"SPECTRE_USER_AGENT={honest}" in _read(".env.example")
+    assert honest in _read("docs/configuration.md")
+    assert not (PROJECT_ROOT / "spectre_osint" / "data" / "user_agents.txt").exists()
 
 
 def test_packaging_metadata_is_beta_and_lists_windows() -> None:

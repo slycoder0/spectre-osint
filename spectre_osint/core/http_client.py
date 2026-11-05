@@ -1,4 +1,4 @@
-"""Shared async HTTP client: timeout, retry, cache, UA rotation, SSRF, redaction."""
+"""Shared async HTTP client: timeout, retry, cache, honest UA, SSRF, redaction."""
 
 from __future__ import annotations
 
@@ -8,15 +8,13 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from spectre_osint import __version__
 from spectre_osint.core.cache import ResponseCache
-from spectre_osint.core.config import BUNDLED_DATA_DIR, Settings, get_settings
+from spectre_osint.core.config import Settings, get_settings
 from spectre_osint.core.exceptions import (
     ProviderUnavailable,
     RateLimitExceeded,
@@ -75,14 +73,6 @@ def request_host(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
 
-def load_user_agents(path: Path | None = None) -> list[str]:
-    ua_path = path or (BUNDLED_DATA_DIR / "user_agents.txt")
-    if not ua_path.exists():
-        return [f"SPECTRE-OSINT/{__version__} (+passive-osint)"]
-    lines = [line.strip() for line in ua_path.read_text(encoding="utf-8").splitlines()]
-    return [line for line in lines if line and not line.startswith("#")]
-
-
 def parse_retry_after(value: str | None) -> float | None:
     if not value:
         return None
@@ -132,7 +122,6 @@ class HttpClient:
         self.cooldown = cooldown or HostCooldown()
         self._sleeper = sleeper
         self._jitter_fn = jitter_fn
-        self.user_agents = load_user_agents()
         self._concurrency = GlobalConcurrency(self.settings.max_concurrency)
         self.ssrf = SSRFPolicy(
             allow_private=self.settings.allow_private_targets,
@@ -146,11 +135,8 @@ class HttpClient:
             transport=transport,
         )
 
-    def pick_ua(self) -> str:
-        if not self.user_agents:
-            return self.settings.user_agent
-        if random.random() < 0.35:
-            return random.choice(self.user_agents)
+    def user_agent(self) -> str:
+        """The one User-Agent every request carries. Never rotated, never a browser's."""
         return self.settings.user_agent
 
     async def close(self) -> None:
@@ -380,7 +366,7 @@ class HttpClient:
     ) -> HttpResponse:
         host = request_host(url)
         await self.rate_limiter.acquire(provider, host=host or None, interval=min_interval)
-        merged = {"User-Agent": self.pick_ua()}
+        merged = {"User-Agent": self.user_agent()}
         if headers:
             merged.update(headers)
         request_url = url

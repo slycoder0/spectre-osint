@@ -17,6 +17,7 @@ from spectre_osint import __version__
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = PACKAGE_DIR.parent
 BUNDLED_DATA_DIR = PACKAGE_DIR / "data"
+PROJECT_URL = "https://github.com/slycoder0/spectre-osint"
 
 _KNOWN_PLACEHOLDERS = frozenset(
     {
@@ -103,8 +104,10 @@ class Settings(BaseSettings):
     http_retry_budget: float = Field(default=20.0, alias="SPECTRE_HTTP_RETRY_BUDGET")
     http_max_backoff: float = Field(default=30.0, alias="SPECTRE_HTTP_MAX_BACKOFF")
     http_circuit_failures: int = Field(default=3, alias="SPECTRE_HTTP_CIRCUIT_FAILURES")
+    # Honest, identifiable and constant (B2-06): no browser-UA rotation. The operator may
+    # override it, and the override is sent verbatim on every request.
     user_agent: str = Field(
-        default=f"SPECTRE-OSINT/{__version__} (+passive-osint)",
+        default=f"SPECTRE-OSINT/{__version__} (+{PROJECT_URL})",
         alias="SPECTRE_USER_AGENT",
     )
     ssrf_enabled: bool = Field(default=True, alias="SPECTRE_SSRF_ENABLED")
