@@ -492,15 +492,30 @@ LIST_OBSERVED_FIELDS = frozenset({"external_links", "social_links"})
 # from a consumer attribute that happens to be spelled the same way.
 KNOWN_OBSERVED_FIELDS = SCALAR_OBSERVED_FIELDS | LIST_OBSERVED_FIELDS
 
+# The two extractors that read a page title (`<title>`, `og:title`). Since B2-03B2 every
+# display name they produce is written with `rejected_by="page_title_unverified"`; data
+# written before that (a stale result-cache row, a finding persisted in SQLite and
+# reloaded) carries the same title *without* `rejected_by`. A display name from these
+# sources is therefore never active, whatever `rejected_by` says. The one sanctioned
+# title-derived name, Instagram's `og:title` bound to the exact `(@handle)`, is recorded
+# under its own source (`instagram_og.title`) and is not in this set.
+PAGE_TITLE_SOURCES = frozenset({"html_title", "html_og.title"})
 
-def _is_active(name: str, value: Any, rejected_by: Any) -> bool:
+
+def _is_active(name: str, value: Any, rejected_by: Any, source: Any = None) -> bool:
     """Whether one observed field may act as evidence. The single rule, one place.
 
     `rejected_by is not None` — never truthiness. A model-valid but odd empty rejection
     token still names a rejection, and reading it as falsy would turn *rejected* into
     *accepted* by accident. A REJECTED VALUE STAYS REJECTED.
+
+    A `display_name` from a page-title extractor (`PAGE_TITLE_SOURCES`) is inactive even
+    without `rejected_by`, so data written before B2-03B2 can never present a page title
+    as a name — in the terminal, in reports or in identity correlation.
     """
     if rejected_by is not None:
+        return False
+    if name == "display_name" and source in PAGE_TITLE_SOURCES:
         return False
     if name in SCALAR_OBSERVED_FIELDS:
         return not isinstance(value, list)
@@ -511,7 +526,7 @@ def _is_active(name: str, value: Any, rejected_by: Any) -> bool:
 
 def field_is_active(name: str, field: ObservedField) -> bool:
     """Whether a validated field is active evidence for the attribute `name`."""
-    return _is_active(name, field.value, field.rejected_by)
+    return _is_active(name, field.value, field.rejected_by, field.source)
 
 
 def transport_row_is_active(name: str, row: Mapping[str, Any]) -> bool:
@@ -521,7 +536,7 @@ def transport_row_is_active(name: str, row: Mapping[str, Any]) -> bool:
     real rejection and an accepted row has no such key at all — `row.get()` returning
     `None` therefore means exactly `field.rejected_by is None`.
     """
-    return _is_active(name, row.get("value"), row.get("rejected_by"))
+    return _is_active(name, row.get("value"), row.get("rejected_by"), row.get("source"))
 
 
 def _validation_summary(exc: Exception) -> str:

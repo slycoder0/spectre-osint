@@ -90,9 +90,12 @@ def test_platform_present_on_every_username_row() -> None:
 
 
 def test_cli_and_report_share_findings(tmp_path, capsys) -> None:
-    from spectre_osint.cli.display import print_result
+    """--verbose lists the same platforms the report does (compact only counts the
+    unverified ones; see tests/test_cli_presentation.py)."""
+    from spectre_osint.cli.display import configure_display, print_result
 
     result = _username_result()
+    configure_display(verbose=True)
     print_result(result)
     cli = capsys.readouterr().out
     html = write_html_report(result, tmp_path).read_text(encoding="utf-8")

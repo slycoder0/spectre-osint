@@ -70,6 +70,8 @@ nav:
       - "Privacidade & Segurança": concepts/privacy-and-safety.md
   - "Técnico":
       - "Arquitetura": technical/architecture.md
+      - "Camada de Apresentação": technical/presentation.md
+      - "Internacionalização (i18n)": technical/i18n.md
       - "Site Catalog 2.0": technical/site-catalog.md
       - "Engine de Usernames": technical/username-engine.md
       - "Enriquecimento": technical/enrichment.md

@@ -7,6 +7,11 @@ The format is based on Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- **Saída em português e inglês (B2-06):** `--lang en|pt-BR`, a variável `SPECTRE_LANG` e a
+  config persistida escolhem o idioma do terminal; sem nenhuma delas vale o locale do sistema,
+  com inglês como fallback. `spectre username` e `spectre doctor` já saem traduzidos.
+- **Barra de progresso ao vivo (B2-06)** em stderr, desenhada só quando stderr é um terminal.
+- **`spectre doctor --all`** lista todas as verificações; **`--debug`** mostra logs DEBUG em stderr.
 - **Contrato validado de campo observado (B2-03A):** `spectre_osint/modules/username/observed.py`
   introduz `ObservedField`, o container `ObservedFields` e o parser `parse_observed()`,
   validando com Pydantic (`extra="forbid"`) o que o enriquecimento de perfis escreve em
@@ -168,6 +173,25 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Ajustes da revisão do PR #17 (B2-06):** username sem nenhum site consultado ainda mostra a
+  saída compacta com `0 não verificados`; `--verbose` / `--debug` agora valem também para
+  `spectre auth`; `--verbose` mostra INFO mesmo com `SPECTRE_LOG_LEVEL=WARNING` (o arquivo de
+  log continua no nível configurado); dois processos abrindo um cache antigo ao mesmo tempo não
+  apagam mais a entrada nova um do outro; separadores de linha Unicode (U+2028/U+2029) em nomes
+  não quebram mais a linha no terminal.
+- **Cache de resultados versionado (B2-06):** entradas gravadas por uma versão anterior do
+  SPECTRE eram servidas sem reprocessar durante todo o TTL (6 h para username). Por isso,
+  mesmo depois da B2-03B2, títulos de página (`torvalds - Codeberg.org`, `Contact @torvalds`)
+  voltavam como "nomes observados" e geravam conflitos falsos `distinct_display_name`. A
+  chave agora inclui `RESULT_SCHEMA_VERSION` e a versão do pacote; ao abrir o cache, entradas
+  de outro esquema e expiradas são apagadas. Não é preciso `spectre cache clear`.
+- **Título de página nunca é nome, nem em dados antigos (B2-06):** `display_name` vindo de
+  `html_title` / `html_og.title` fica inativo mesmo sem `rejected_by` (terminal, relatórios,
+  `spectre report` sobre casos antigos e correlação). A exceção do Instagram não muda.
+- **Nomes de contas diferentes não são mais fundidos (B2-06):** a linha `Observed name
+  Linus Torvalds, Hemant` juntava numa linha só nomes de contas distintas com o mesmo
+  username; agora cada nome aparece com a sua plataforma (`GitHub: Linus Torvalds`,
+  `Hugging Face: Hemant`).
 - **Título de página não vira mais "nome observado" (A1 / B2-03B2):** `og:title` e `<title>`
   (ex.: `torvalds - Codeberg.org`, `Contact @torvalds`) ficam no transporte `observed` com
   `rejected_by="page_title_unverified"` e não aparecem em "Observed name", nos relatórios
@@ -246,7 +270,20 @@ The format is based on Keep a Changelog.
   autoridade de consumo de B2-03B seguem intocados;
 
 ### Changed
-- **Versão consistente (B2-05):** o `User-Agent` padrão passa a ser `SPECTRE-OSINT/<versão> (+passive-osint)`, derivado de `__version__` (antes `0.1-alpha`); `.env.example`, `docker-compose.yml` e `docs/configuration.md` acompanham.
+- **Saída compacta por padrão (B2-06):** `spectre username` mostra só os perfis encontrados
+  (plataforma + URL), os nomes observados por plataforma e uma linha fixa "N não
+  verificados" (bloqueados / login / limite / inconclusivos), sempre presente, mesmo com 0.
+  Score, risco, banner e métricas internas só aparecem com `--verbose`. Relatórios
+  continuam completos. `--compact` virou o padrão (a flag ainda é aceita e não faz nada).
+- **`spectre doctor` em ~8 linhas (B2-06):** opcionais não configurados colapsados numa
+  linha; itens que pedem ação ou atenção sempre listados com a dica. `--json` não mudou.
+- **Logs só em arquivo (B2-06):** nada de log no terminal por padrão; `--verbose` (INFO) e
+  `--debug` (DEBUG) os imprimem em stderr.
+- **User-Agent honesto (B2-06):** toda requisição leva
+  `SPECTRE-OSINT/<versão> (+https://github.com/slycoder0/spectre-osint)`. Acabou a rotação
+  que enviava um UA de navegador em ~35% das requisições (inclusive por cima de um
+  `SPECTRE_USER_AGENT` definido); o valor do operador agora é enviado literalmente.
+- **Versão consistente (B2-05):** o `User-Agent` padrão passa a ser `SPECTRE-OSINT/<versão> (+passive-osint)`, derivado de `__version__` (antes `0.1-alpha`); `.env.example`, `docker-compose.yml` e `docs/configuration.md` acompanham. (Sufixo substituído pela URL do projeto na B2-06.)
 - **Metadados do pacote (B2-05):** classificador `Development Status :: 4 - Beta` e `Operating System :: Microsoft :: Windows`; descrição sem `alpha`.
 - **Correção de `observed_at` (B2-03A):** a ordenação temporal de uma linha com `items` passa a
   usar o **instante absoluto**, não o relógio de parede. `project_items()` escolhe o item mais
@@ -291,6 +328,8 @@ The format is based on Keep a Changelog.
   leniently loaded catalog can never be served to a strict caller.
 
 ### Removed
+- `spectre_osint/data/user_agents.txt` e `load_user_agents()`: lista de UAs de navegador
+  usada na rotação (B2-06).
 - **BREAKING:** the deprecated `spectre web` and `spectre dashboard` commands were
   removed; invoking either now fails as an unknown command with a non-zero exit;
 - the legacy web runtime `spectre_osint/web/` was deleted (FastAPI application,

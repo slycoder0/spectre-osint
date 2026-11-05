@@ -49,6 +49,26 @@ def isolate_auth(tmp_path, monkeypatch):
     FakeCdpConnector.reset()
 
 
+@pytest.fixture(autouse=True)
+def isolate_presentation(tmp_path, monkeypatch):
+    """Deterministic terminal language; never read the developer's own preferences.
+
+    Without this a developer whose system locale is pt_BR (or who saved a language with
+    the CLI) would see English assertions fail. Tests that exercise resolution override
+    or delete SPECTRE_LANG themselves.
+    """
+    monkeypatch.setenv("SPECTRE_LANG", "en")
+    monkeypatch.setenv("SPECTRE_CONFIG_FILE", str(tmp_path / "spectre-config.json"))
+    from spectre_osint.cli.display import configure_display
+    from spectre_osint.core.i18n import set_language
+
+    set_language(None)
+    configure_display()
+    yield
+    set_language(None)
+    configure_display()
+
+
 @pytest.fixture
 def settings(tmp_path, monkeypatch):
     from spectre_osint.core.config import Settings, reload_settings

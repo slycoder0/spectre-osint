@@ -15,10 +15,14 @@ from spectre_osint.browser.models import (
     normalize_platform,
     official_api_suggestion,
 )
-from spectre_osint.cli.display import console, print_auth_status, print_banner
+from spectre_osint.cli.display import (
+    configure_cli_logging,
+    console,
+    print_auth_status,
+    print_banner,
+)
 from spectre_osint.core.config import get_settings
 from spectre_osint.core.database import init_db
-from spectre_osint.core.logger import setup_logging
 from spectre_osint.core.types import SessionStatus
 
 auth_app = typer.Typer(help="Authenticated public OSINT sessions. Never stores passwords.")
@@ -26,7 +30,7 @@ auth_app = typer.Typer(help="Authenticated public OSINT sessions. Never stores p
 
 def _service() -> AuthService:
     settings = get_settings()
-    setup_logging(settings.log_level, settings.logs_dir)
+    configure_cli_logging(settings.log_level, settings.logs_dir)
     init_db(settings)
     return AuthService(settings)
 

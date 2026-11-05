@@ -9,10 +9,18 @@ Complete list of the commands exposed by the `spectre` entry point. Options are 
 | Option | Effect |
 | :--- | :--- |
 | `--version` | Prints the installed version and exits. |
-| `--no-banner` | Skips the ASCII banner. |
-| `--compact` | Summary-oriented output. |
-| `--verbose` | Expands result presentation (entity table, extra detail column). It does not change the log level. |
+| `--lang en\|pt-BR` | Terminal language. Default order: `SPECTRE_LANG`, saved config, system locale, English. An unsupported value is a usage error. |
+| `--verbose` | Full detail: every platform with its status, mentions, discovery, identity correlation, score/risk and internal metrics, followed by the same compact summary. Also prints INFO logs on stderr. |
+| `--debug` | Prints DEBUG logs on stderr (they always go to the log file). |
+| `--no-banner` | Never print the ASCII banner (it is shown only with `--verbose`). |
 | `--help` | Shows help for the CLI or for a specific command. |
+
+Output is **compact by default**: `spectre username` prints the profiles found, the names
+each platform states (one line per platform, never merged) and one line counting the sites
+that could not be verified — always printed, even at `0`. Score and risk are hidden unless
+`--verbose`. A live progress bar is drawn on stderr only when stderr is a terminal. Reports
+(HTML/JSON/Markdown/CSV/GraphML) are always complete. The old `--compact` flag is still
+accepted (hidden) and does nothing.
 
 ---
 
@@ -21,7 +29,7 @@ Complete list of the commands exposed by the `spectre` entry point. Options are 
 | Command | Description |
 | :--- | :--- |
 | `spectre version` | Prints the installed version (equivalent to the global `--version`). |
-| `spectre doctor [--json]` | Inspects install, database, browser, sessions and provider configuration. Never starts an investigation and never prints secrets. Exits `1` only when the overall status is `ACTION REQUIRED`. |
+| `spectre doctor [--all] [--json]` | Inspects install, database, browser, sessions and provider configuration. About eight lines by default (unconfigured optionals collapsed into one line); `--all` lists every check; `--json` is the unchanged machine-readable report. Never starts an investigation and never prints secrets. Exits `1` only when the overall status is `ACTION REQUIRED`. |
 
 ---
 

@@ -14,7 +14,8 @@ from spectre_osint.core.entities import Finding, InvestigationResult
 from spectre_osint.core.types import EntityType, FindingStatus, UsernameCheckStatus
 from spectre_osint.modules.username.observed import read_observed
 
-_USERNAME_SWEEP_TITLE = "Username sweep"
+USERNAME_SWEEP_TITLE = "Username sweep"
+_USERNAME_SWEEP_TITLE = USERNAME_SWEEP_TITLE
 _IDENTITY_TITLE = "Identity correlation"
 
 STATUS_FILTERS = (

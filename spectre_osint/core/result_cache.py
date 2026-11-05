@@ -1,6 +1,22 @@
 """OSINT result cache. Separate from HTTP cache and from auth session storage.
 
 Never stores cookies, Authorization headers or Playwright storage_state.
+
+Unlike the HTTP cache (raw responses, re-processed by current code on every hit), this
+cache stores *derived* payloads — `Finding.data` with `observed` rows, statuses and
+confidences — that are served back verbatim. A payload derived by older code must
+therefore never be served to newer code. Two guards, both keyed off this module:
+
+- `RESULT_SCHEMA_VERSION` and the package `__version__` are part of every key, so an
+  entry written under another schema or release is unreachable;
+- opening the cache purges every row when the stored schema (`PRAGMA user_version`)
+  differs, and purges expired rows, so unreachable rows do not accumulate.
+
+**Bump `RESULT_SCHEMA_VERSION` in the same commit** whenever what gets cached changes
+meaning or shape: the fields of `Finding.data` an investigation writes, the `observed`
+transport, or any rule that decides a cached value (rejection, status classification,
+confidence). History: 1 = unversioned (before B2-06); 2 = B2-06, after B2-03B2 began
+rejecting page titles as display names.
 """
 
 from __future__ import annotations
@@ -15,9 +31,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from spectre_osint import __version__
 from spectre_osint.core.config import Settings, get_settings
 from spectre_osint.core.redaction import redact_mapping, strip_auth_material
 from spectre_osint.core.types import CacheState
+
+RESULT_SCHEMA_VERSION = 2
+PACKAGE_VERSION = __version__
 
 
 @dataclass
@@ -50,6 +70,28 @@ class ResultCache:
             "value TEXT NOT NULL, checked_at TEXT NOT NULL, expires_at REAL NOT NULL)"
         )
         self._conn.commit()
+        self._purge_stale()
+
+    def _purge_stale(self) -> None:
+        """Drop rows another schema wrote, and rows past their TTL.
+
+        Runs under `BEGIN IMMEDIATE` and reads `user_version` *inside* that write
+        transaction. Two processes opening an old cache at once would otherwise both see
+        the old version, and the slower one's `DELETE` would wipe rows the faster one had
+        already written under the new schema.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            stored = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if stored != RESULT_SCHEMA_VERSION:
+                self._conn.execute("DELETE FROM results")
+                # PRAGMA takes no bound parameters; the value is this module's own integer.
+                self._conn.execute(f"PRAGMA user_version = {int(RESULT_SCHEMA_VERSION)}")
+            self._conn.execute("DELETE FROM results WHERE expires_at < ?", (time.time(),))
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def ttl_for(self, kind: str, provider: str = "") -> int:
         kind_l = kind.lower()
@@ -77,7 +119,9 @@ class ResultCache:
 
     @staticmethod
     def make_key(kind: str, provider: str, subject: str, access_mode: str = "") -> str:
-        material = f"{kind}|{provider}|{subject}|{access_mode}".encode()
+        material = (
+            f"v{RESULT_SCHEMA_VERSION}|{PACKAGE_VERSION}|{kind}|{provider}|{subject}|{access_mode}"
+        ).encode()
         return hashlib.sha256(material).hexdigest()
 
     def get(self, kind: str, provider: str, subject: str, access_mode: str = "") -> CachedResult | None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from spectre_osint import __version__
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = PACKAGE_DIR.parent
 BUNDLED_DATA_DIR = PACKAGE_DIR / "data"
+PROJECT_URL = "https://github.com/slycoder0/spectre-osint"
 
 _KNOWN_PLACEHOLDERS = frozenset(
     {
@@ -102,8 +104,10 @@ class Settings(BaseSettings):
     http_retry_budget: float = Field(default=20.0, alias="SPECTRE_HTTP_RETRY_BUDGET")
     http_max_backoff: float = Field(default=30.0, alias="SPECTRE_HTTP_MAX_BACKOFF")
     http_circuit_failures: int = Field(default=3, alias="SPECTRE_HTTP_CIRCUIT_FAILURES")
+    # Honest, identifiable and constant (B2-06): no browser-UA rotation. The operator may
+    # override it, and the override is sent verbatim on every request.
     user_agent: str = Field(
-        default=f"SPECTRE-OSINT/{__version__} (+passive-osint)",
+        default=f"SPECTRE-OSINT/{__version__} (+{PROJECT_URL})",
         alias="SPECTRE_USER_AGENT",
     )
     ssrf_enabled: bool = Field(default=True, alias="SPECTRE_SSRF_ENABLED")
@@ -247,6 +251,28 @@ def default_browser_profiles_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return _spectre_data_home() / "browser-profiles"
+
+
+def default_config_file(environ: Mapping[str, str] | None = None) -> Path:
+    """Per-user preferences file (language today). Never inside the git repository.
+
+    `SPECTRE_CONFIG_FILE` overrides it. Otherwise the platform's user config folder:
+    `%APPDATA%\\spectre` on Windows, `~/Library/Application Support/spectre` on macOS,
+    `$XDG_CONFIG_HOME/spectre` (default `~/.config/spectre`) elsewhere.
+    """
+    env = os.environ if environ is None else environ
+    override = env.get("SPECTRE_CONFIG_FILE")
+    if override:
+        return Path(override).expanduser()
+    if sys.platform == "win32":
+        appdata = env.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "spectre" / "config.json"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "spectre" / "config.json"
+    xdg = env.get("XDG_CONFIG_HOME")
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / "spectre" / "config.json"
 
 
 def _spectre_data_home() -> Path:

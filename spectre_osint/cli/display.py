@@ -1,9 +1,22 @@
-"""Rich console rendering for investigation results."""
+"""Rich console rendering for investigation results.
+
+Default output is compact (B2-06): a username investigation prints only the view built
+by `services/views.py` through `cli/render.py` — found profiles, per-platform names and
+the unverified count. `--verbose` prepends the detailed sections (every platform,
+mentions, discovery, identity correlation, scores, internal metrics) and keeps the same
+closing summary, so verbose is always a superset of compact. The ASCII banner is shown
+only in verbose mode.
+
+The detailed sections below are legacy English text; their i18n is a registered
+follow-up (docs/audit/STATUS.md).
+"""
 
 from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -11,22 +24,32 @@ from rich.panel import Panel
 from rich.table import Table
 
 from spectre_osint import __version__
+from spectre_osint.cli.render import render_username
 from spectre_osint.core.entities import InvestigationResult
+from spectre_osint.core.logger import setup_logging
 from spectre_osint.core.presentation import (
+    USERNAME_SWEEP_TITLE,
     mention_findings,
     mention_relevance_counts,
     username_counts,
     username_rows,
 )
 from spectre_osint.core.timefmt import relative_age
-from spectre_osint.core.types import FindingStatus
+from spectre_osint.core.types import EntityType, FindingStatus
 from spectre_osint.modules.search.summary import build_intelligence_summary
+from spectre_osint.services.views import build_username_view
 
 console = Console(highlight=False)
 
-_NO_BANNER = False
-_COMPACT = False
-_VERBOSE = False
+
+@dataclass(frozen=True)
+class DisplayOptions:
+    no_banner: bool = False
+    verbose: bool = False
+    debug: bool = False
+
+
+_OPTIONS = DisplayOptions()
 
 BANNER_WIDE = r"""
   ███████╗██████╗ ███████╗ ██████╗████████╗██████╗ ███████╗
@@ -75,17 +98,40 @@ STATUS_STYLE = {
 }
 
 
-def configure_display(*, no_banner: bool = False, compact: bool = False, verbose: bool = False) -> None:
-    global _NO_BANNER, _COMPACT, _VERBOSE
-    _NO_BANNER = no_banner
-    _COMPACT = compact
-    _VERBOSE = verbose
+def configure_display(
+    *,
+    no_banner: bool = False,
+    compact: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
+) -> None:
+    """Set global display options. `compact` is accepted for compatibility only:
+    compact output is the default since B2-06."""
+    global _OPTIONS
+    del compact
+    _OPTIONS = DisplayOptions(no_banner=no_banner, verbose=verbose, debug=debug)
+
+
+def display_options() -> DisplayOptions:
+    return _OPTIONS
+
+
+def configure_cli_logging(file_level: str, logs_dir: Path) -> None:
+    """Logging for any CLI command, honoring the global --verbose / --debug flags.
+
+    Default: log file only, at `file_level` (SPECTRE_LOG_LEVEL). --verbose adds INFO on
+    stderr; --debug adds DEBUG on stderr and writes DEBUG to the file.
+    """
+    if _OPTIONS.debug:
+        setup_logging("DEBUG", logs_dir, console_level="DEBUG")
+    else:
+        setup_logging(file_level, logs_dir, console_level="INFO" if _OPTIONS.verbose else None)
 
 
 def _want_banner() -> bool:
-    if _NO_BANNER or os.environ.get("SPECTRE_NO_BANNER"):
+    if not _OPTIONS.verbose or _OPTIONS.no_banner:
         return False
-    if os.environ.get("NO_BANNER"):
+    if os.environ.get("SPECTRE_NO_BANNER") or os.environ.get("NO_BANNER"):
         return False
     return True
 
@@ -161,7 +207,61 @@ def style_status(status: str) -> str:
 
 
 def print_result(result: InvestigationResult) -> None:
+    """Render a result. Compact by default; `--verbose` adds every detailed section."""
+    verbose = _OPTIONS.verbose
     print_banner()
+    rows = username_rows(result)
+    if rows or _is_username_result(result):
+        if verbose:
+            _print_header(result)
+            _print_provider_notes(result)
+            _print_username(result, rows)
+            _print_mentions_summary(result)
+            _print_discovery(result)
+            _print_intelligence_summary(result)
+            _print_entities(result)
+            _print_scores(result)
+            _print_pivots(result)
+            _print_metrics(result)
+            console.print()
+        render_username(build_username_view(result), console, verbose=verbose)
+        return
+
+    _print_header(result)
+    _print_provider_notes(result)
+    table = Table(title="Findings", show_lines=False, expand=True)
+    table.add_column("Module", style="cyan", no_wrap=True)
+    table.add_column("Status")
+    table.add_column("Summary")
+    for finding in result.findings[:40]:
+        table.add_row(
+            finding.module,
+            style_status(finding.status.value),
+            finding.summary[:140],
+        )
+    console.print(table)
+    _print_entities(result)
+    if verbose:
+        _print_scores(result)
+    _print_pivots(result)
+    if verbose:
+        _print_metrics(result)
+    if result.report_path:
+        console.print(f"\n[bold]Report:[/bold] {result.report_path}")
+
+
+def _is_username_result(result: InvestigationResult) -> bool:
+    """A username sweep ran, even if it produced zero site rows.
+
+    Such a result still gets the compact view, so the unverified line is printed
+    (as `0`) instead of silently falling back to the generic table.
+    """
+    if result.target_type == EntityType.USERNAME:
+        return True
+    return any(f.module == "username" and f.title == USERNAME_SWEEP_TITLE for f in result.findings)
+
+
+def _print_header(result: InvestigationResult) -> None:
     kind = result.target_type.value if hasattr(result.target_type, "value") else str(result.target_type)
     header = (
         f"[bold]Target[/bold]        {result.target}\n"
@@ -173,122 +273,111 @@ def print_result(result: InvestigationResult) -> None:
         Panel(header, title=f"SPECTRE / {kind}", border_style="cyan", padding=(0, 1))
     )
 
-    if not _COMPACT:
-        modules_ok = sorted({f.module for f in result.findings if f.status == FindingStatus.FOUND})
-        for name in modules_ok:
-            console.print(f"[green][+][/green] {name}")
-        missing = sorted({f.module for f in result.findings if f.status == FindingStatus.NOT_CONFIGURED})
-        for name in missing:
-            console.print(f"[yellow][!][/yellow] {name}: Provider not configured")
-            if name == "search":
-                console.print("    Optional. Set loopback SEARXNG_URL or continue without search indexes.")
-            else:
-                console.print("    Optional API key missing. Investigation continues. Run `spectre doctor`.")
-        unavailable = [f for f in result.findings if f.status == FindingStatus.PROVIDER_UNAVAILABLE]
-        for finding in unavailable:
-            console.print(f"[red][!][/red] {finding.module}")
-            console.print(f"    Reason: {finding.summary}")
-            summary = finding.summary or ""
-            if "429" in summary:
-                console.print("    Action: Rate limited. Wait and retry. SPECTRE does not rotate IPs.")
-            elif "403" in summary or "401" in summary:
-                console.print("    Action: Provider rejected the request. Check the API key; SPECTRE will not bypass.")
-            else:
-                console.print("    Continuing investigation...")
-        limited = [f for f in result.findings if f.status == FindingStatus.RATE_LIMITED]
-        for finding in limited:
-            console.print(f"[yellow][!][/yellow] {finding.module}: RATE_LIMITED")
-            console.print("    Action: HTTP 429 / quota. Wait and retry. SPECTRE does not bypass limits.")
 
-    rows = username_rows(result)
-    if rows:
-        _print_username(result, rows)
-        _print_mentions_summary(result)
-        if not _COMPACT:
-            _print_discovery(result)
-            _print_intelligence_summary(result)
-    elif not _COMPACT:
-        table = Table(title="Findings", show_lines=False, expand=True)
-        table.add_column("Module", style="cyan", no_wrap=True)
-        table.add_column("Status")
-        table.add_column("Summary")
-        for finding in result.findings[:40]:
-            table.add_row(
-                finding.module,
-                style_status(finding.status.value),
-                finding.summary[:140],
-            )
-        console.print(table)
+def _print_provider_notes(result: InvestigationResult) -> None:
+    modules_ok = sorted({f.module for f in result.findings if f.status == FindingStatus.FOUND})
+    for name in modules_ok:
+        console.print(f"[green][+][/green] {name}")
+    missing = sorted({f.module for f in result.findings if f.status == FindingStatus.NOT_CONFIGURED})
+    for name in missing:
+        console.print(f"[yellow][!][/yellow] {name}: Provider not configured")
+        if name == "search":
+            console.print("    Optional. Set loopback SEARXNG_URL or continue without search indexes.")
+        else:
+            console.print("    Optional API key missing. Investigation continues. Run `spectre doctor`.")
+    unavailable = [f for f in result.findings if f.status == FindingStatus.PROVIDER_UNAVAILABLE]
+    for finding in unavailable:
+        console.print(f"[red][!][/red] {finding.module}")
+        console.print(f"    Reason: {finding.summary}")
+        summary = finding.summary or ""
+        if "429" in summary:
+            console.print("    Action: Rate limited. Wait and retry. SPECTRE does not rotate IPs.")
+        elif "403" in summary or "401" in summary:
+            console.print("    Action: Provider rejected the request. Check the API key; SPECTRE will not bypass.")
+        else:
+            console.print("    Continuing investigation...")
+    limited = [f for f in result.findings if f.status == FindingStatus.RATE_LIMITED]
+    for finding in limited:
+        console.print(f"[yellow][!][/yellow] {finding.module}: RATE_LIMITED")
+        console.print("    Action: HTTP 429 / quota. Wait and retry. SPECTRE does not bypass limits.")
 
-    if _VERBOSE or not rows:
-        ent = Table(title="Entities")
-        ent.add_column("Type")
-        ent.add_column("Value")
-        ent.add_column("Confidence")
-        ent.add_column("Source")
-        for entity in result.entities[:40]:
-            ent.add_row(entity.type.value, entity.normalized_value, entity.confidence.value, entity.source)
-        console.print(ent)
 
-    if result.scores and not _COMPACT:
-        scores = result.scores
-        bd = scores.confidence_breakdown or {}
-        bd_lines = [f"  {k}: {v:+d}" for k, v in bd.items()]
-        console.print(
-            Panel(
-                f"confidence_score = {scores.confidence_score}\n"
-                f"risk_score       = {scores.risk_score} ({scores.risk_level})\n"
-                f"reputation_score = {scores.reputation_score}\n\n"
-                + "confidence breakdown:\n"
-                + "\n".join(bd_lines or scores.confidence_explain)
-                + "\n\n"
-                + "\n".join(scores.confidence_explain + scores.risk_explain),
-                title="Scoring (this investigation only)",
-            )
+def _print_entities(result: InvestigationResult) -> None:
+    ent = Table(title="Entities")
+    ent.add_column("Type")
+    ent.add_column("Value")
+    ent.add_column("Confidence")
+    ent.add_column("Source")
+    for entity in result.entities[:40]:
+        ent.add_row(entity.type.value, entity.normalized_value, entity.confidence.value, entity.source)
+    console.print(ent)
+
+
+def _print_scores(result: InvestigationResult) -> None:
+    """Score and risk: verbose only (B2-06). Never part of the compact output."""
+    if not result.scores:
+        return
+    scores = result.scores
+    bd = scores.confidence_breakdown or {}
+    bd_lines = [f"  {k}: {v:+d}" for k, v in bd.items()]
+    console.print(
+        Panel(
+            f"confidence_score = {scores.confidence_score}\n"
+            f"risk_score       = {scores.risk_score} ({scores.risk_level})\n"
+            f"reputation_score = {scores.reputation_score}\n\n"
+            + "confidence breakdown:\n"
+            + "\n".join(bd_lines or scores.confidence_explain)
+            + "\n\n"
+            + "\n".join(scores.confidence_explain + scores.risk_explain),
+            title="Scoring (this investigation only)",
         )
-    if result.pivots and (_VERBOSE or not _COMPACT):
-        console.print("[bold]Possible pivots[/bold]")
-        for i, pivot in enumerate(result.pivots, 1):
-            console.print(f"  {i}. {pivot.action}: [cyan]{pivot.target}[/cyan] — {pivot.reason}")
+    )
+
+
+def _print_pivots(result: InvestigationResult) -> None:
+    if not result.pivots:
+        return
+    console.print("[bold]Possible pivots[/bold]")
+    for i, pivot in enumerate(result.pivots, 1):
+        console.print(f"  {i}. {pivot.action}: [cyan]{pivot.target}[/cyan] — {pivot.reason}")
+
+
+def _print_metrics(result: InvestigationResult) -> None:
+    """Internal counters: verbose only."""
     console.print(f"\nEntities discovered: {len(result.entities)}")
     console.print(f"Relationships: {len(result.relationships)}")
     console.print(f"Providers queried: {len(result.providers_queried)}")
-    if result.report_path:
-        console.print(f"\n[bold]Report:[/bold] {result.report_path}")
 
 
 def _print_username(result: InvestigationResult, rows: list[dict]) -> None:
+    """Verbose username detail: every platform row plus the legacy summary panel."""
     counts = username_counts(result)
     total = max(len(rows), 1)
-    if not _COMPACT:
-        table = Table(title="Username platforms", show_lines=False, expand=True)
-        table.add_column("#", style="dim", no_wrap=True)
-        table.add_column("Platform", style="cyan", no_wrap=True)
-        table.add_column("Status", no_wrap=True)
-        table.add_column("Confidence")
-        table.add_column("Access")
-        table.add_column("Cache")
-        table.add_column("URL")
-        if _VERBOSE:
-            table.add_column("Detail")
-        for idx, row in enumerate(rows, 1):
-            cache_label = row.get("cache_state") or "LIVE"
-            if cache_label == "CACHED":
-                cache_label = f"CACHED · checked {relative_age(row.get('checked_at'))}"
-            url = row["profile_url"] or "-"
-            values = [
-                f"{idx:02d}/{total:02d}",
-                row["platform"],
-                style_status(row["status"]),
-                row["confidence"] or "-",
-                style_status(row.get("access_mode") or "ANONYMOUS_PUBLIC"),
-                cache_label,
-                url,
-            ]
-            if _VERBOSE:
-                values.append((row["detail"] or "")[:80])
-            table.add_row(*values)
-        console.print(table)
+    table = Table(title="Username platforms", show_lines=False, expand=True)
+    table.add_column("#", style="dim", no_wrap=True)
+    table.add_column("Platform", style="cyan", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Confidence")
+    table.add_column("Access")
+    table.add_column("Cache")
+    table.add_column("URL")
+    table.add_column("Detail")
+    for idx, row in enumerate(rows, 1):
+        cache_label = row.get("cache_state") or "LIVE"
+        if cache_label == "CACHED":
+            cache_label = f"CACHED · checked {relative_age(row.get('checked_at'))}"
+        url = row["profile_url"] or "-"
+        table.add_row(
+            f"{idx:02d}/{total:02d}",
+            row["platform"],
+            style_status(row["status"]),
+            row["confidence"] or "-",
+            style_status(row.get("access_mode") or "ANONYMOUS_PUBLIC"),
+            cache_label,
+            url,
+            (row["detail"] or "")[:80],
+        )
+    console.print(table)
     console.print(
         Panel(
             f"Checked             {counts['checked']}\n"
@@ -335,8 +424,10 @@ def _print_discovery(result: InvestigationResult) -> None:
 
 
 def _print_intelligence_summary(result: InvestigationResult) -> None:
+    """Verbose panel. Observed names are deliberately absent: they are printed per
+    platform by the closing summary, never merged into one line across profiles that
+    are not confirmed to be the same person (B2-06)."""
     summary = build_intelligence_summary(result)
-    names = ", ".join(summary.get("observed_names") or []) or "Insufficient evidence"
     handles = ", ".join(f"@{item}" for item in (summary.get("observed_handles") or [])) or "Insufficient evidence"
     profiles = ", ".join(summary.get("observed_profiles") or []) or "Insufficient evidence"
     geo = ", ".join(summary.get("geographic_indicators") or []) or "None confidently observed"
@@ -344,7 +435,6 @@ def _print_intelligence_summary(result: InvestigationResult) -> None:
     nxt = "\n".join(f"• {item}" for item in (summary.get("next_pivots") or []))
     console.print(
         Panel(
-            f"Observed name        {names}\n"
             f"Observed handles     {handles}\n"
             f"Observed profiles    {profiles}\n"
             f"Public mentions      {summary.get('mentions_total', 0)}"
@@ -368,21 +458,20 @@ def _print_mentions_summary(result: InvestigationResult) -> None:
         f"Associated: {counts['ASSOCIATED']}",
         f"Ambiguous: {counts['AMBIGUOUS']}",
     ]
-    if not _COMPACT:
-        ranked = []
-        for finding in findings:
-            data = finding.data or {}
-            relevance = str(data.get("relevance") or "")
-            if relevance not in {"DIRECT", "ASSOCIATED"}:
-                continue
-            ranked.append((0 if relevance == "DIRECT" else 1, data))
-        ranked.sort(key=lambda item: item[0])
-        for _rank, data in ranked[:5]:
-            title = str(data.get("title") or "Public mention")[:72]
-            query = str(data.get("query") or "")
-            lines.append(f"  {data.get('relevance')}  {query}  {title}")
-        if counts["AMBIGUOUS"] or len(ranked) > 5:
-            lines.append("  Full list: HTML report")
+    ranked = []
+    for finding in findings:
+        data = finding.data or {}
+        relevance = str(data.get("relevance") or "")
+        if relevance not in {"DIRECT", "ASSOCIATED"}:
+            continue
+        ranked.append((0 if relevance == "DIRECT" else 1, data))
+    ranked.sort(key=lambda item: item[0])
+    for _rank, data in ranked[:5]:
+        title = str(data.get("title") or "Public mention")[:72]
+        query = str(data.get("query") or "")
+        lines.append(f"  {data.get('relevance')}  {query}  {title}")
+    if counts["AMBIGUOUS"] or len(ranked) > 5:
+        lines.append("  Full list: HTML report")
     console.print(Panel("\n".join(lines), title="PUBLIC MENTIONS", border_style="cyan"))
 
 

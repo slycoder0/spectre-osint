@@ -1,12 +1,25 @@
-"""Structured logging. API keys are never written."""
+"""Structured logging. API keys are never written.
+
+Logs go to `<logs_dir>/spectre.log`. The terminal gets log lines only when the operator
+asks for them (`--verbose` -> INFO, `--debug` -> DEBUG, both on stderr); by default the
+terminal shows results, never logs (B2-06).
+"""
 
 from __future__ import annotations
 
 import logging
 import sys
 from pathlib import Path
+from typing import TextIO
 
 from spectre_osint.core.redaction import redact_text
+
+ROOT_LOGGER = "spectre"
+
+# Library etiquette: with no configured handler, records are dropped instead of reaching
+# Python's last-resort handler, which would print WARNINGs to stderr (doctor runs
+# without `setup_logging()`).
+logging.getLogger(ROOT_LOGGER).addHandler(logging.NullHandler())
 
 
 class RedactingFormatter(logging.Formatter):
@@ -24,9 +37,48 @@ class RedactingFormatter(logging.Formatter):
         return redact_text(original)
 
 
-def setup_logging(level: str = "INFO", logs_dir: Path | None = None) -> logging.Logger:
-    logger = logging.getLogger("spectre")
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+class _CurrentStderrHandler(logging.StreamHandler):
+    """Writes to whatever `sys.stderr` is *now*, never to the stream seen at creation.
+
+    CLI runners and test harnesses replace `sys.stderr` per invocation; a handler bound
+    to an earlier object would write to a closed file.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(sys.stderr)
+
+    @property
+    def stream(self) -> TextIO:
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, _value: TextIO) -> None:
+        return None
+
+
+def _is_console_handler(handler: logging.Handler) -> bool:
+    return isinstance(handler, logging.StreamHandler) and not isinstance(
+        handler, logging.FileHandler
+    )
+
+
+def setup_logging(
+    level: str = "INFO",
+    logs_dir: Path | None = None,
+    *,
+    console_level: str | None = None,
+) -> logging.Logger:
+    """Configure the `spectre` logger. Idempotent; safe to call once per command.
+
+    `level` is what reaches the log file. `console_level` adds a stderr handler at that
+    threshold; None (the default) means no terminal output, and removes a terminal
+    handler left by an earlier call in the same process. The logger itself sits at the
+    more verbose of the two, so `--verbose` shows INFO even when the file is at WARNING,
+    while each handler keeps its own threshold.
+    """
+    file_level = _level(level)
+    logger = logging.getLogger(ROOT_LOGGER)
+    logger.setLevel(min(file_level, _level(console_level)) if console_level else file_level)
     logger.propagate = False
 
     formatter = RedactingFormatter(
@@ -34,26 +86,35 @@ def setup_logging(level: str = "INFO", logs_dir: Path | None = None) -> logging.
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in logger.handlers):
-        console = logging.StreamHandler(sys.stderr)
+    for handler in list(logger.handlers):
+        if _is_console_handler(handler):
+            logger.removeHandler(handler)
+    if console_level:
+        console = _CurrentStderrHandler()
+        console.setLevel(_level(console_level))
         console.setFormatter(formatter)
         logger.addHandler(console)
 
     if logs_dir is not None:
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / "spectre.log"
-        already = False
+        file_handler: logging.FileHandler | None = None
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == log_path.resolve():
-                already = True
+                file_handler = handler
                 break
-        if not already:
+        if file_handler is None:
             file_handler = logging.FileHandler(log_path, encoding="utf-8")
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
+        file_handler.setLevel(file_level)
 
     return logger
 
 
-def get_logger(name: str = "spectre") -> logging.Logger:
+def _level(name: str | None) -> int:
+    return int(getattr(logging, str(name or "INFO").upper(), logging.INFO))
+
+
+def get_logger(name: str = ROOT_LOGGER) -> logging.Logger:
     return logging.getLogger(name)

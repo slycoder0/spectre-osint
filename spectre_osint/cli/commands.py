@@ -12,24 +12,31 @@ from spectre_osint import __version__
 from spectre_osint.cli.auth_commands import auth_app
 from spectre_osint.cli.cache_commands import cache_app
 from spectre_osint.cli.display import (
-    CliProgressReporter,
+    configure_cli_logging,
     configure_display,
+    display_options,
     print_banner,
     print_providers,
     print_result,
 )
+from spectre_osint.cli.progress_bar import make_progress_display
 from spectre_osint.core.case_manager import CaseManager
 from spectre_osint.core.config import get_settings
 from spectre_osint.core.database import init_db
+from spectre_osint.core.entities import InvestigationResult
 from spectre_osint.core.exceptions import AuthorizationRequired, SpectreError
 from spectre_osint.core.http_client import HttpClient
+from spectre_osint.core.i18n import SUPPORTED_LANGUAGES, resolve_language, set_language, t
 from spectre_osint.core.inputs import parse_target_inputs
-from spectre_osint.core.logger import setup_logging
-from spectre_osint.core.pipeline import InvestigationRunner
 from spectre_osint.core.registry import default_registry
 from spectre_osint.core.types import EntityType
 from spectre_osint.modules.metadata import analyze_metadata
 from spectre_osint.modules.network import authorized_connect_scan
+from spectre_osint.services.investigations import (
+    InvestigationRequest,
+    run_investigation,
+    username_request,
+)
 
 app = typer.Typer(
     name="spectre",
@@ -49,9 +56,11 @@ def _cli_fail(message: str) -> None:
 
 
 def _bootstrap() -> None:
+    """Settings, logging and database. Logs go to the file; the terminal only gets them
+    on --verbose (INFO) or --debug (DEBUG), always on stderr."""
     try:
         settings = get_settings()
-        setup_logging(settings.log_level, settings.logs_dir)
+        configure_cli_logging(settings.log_level, settings.logs_dir)
         init_db(settings)
     except OSError as exc:
         _cli_fail(
@@ -81,7 +90,18 @@ def _run(coro):
         )
 
 
-async def _investigate(
+def _execute(request: InvestigationRequest) -> InvestigationResult:
+    """Run one investigation through the service layer with live progress on stderr."""
+
+    async def _go() -> InvestigationResult:
+        _bootstrap()
+        with make_progress_display(verbose=display_options().verbose) as progress:
+            return await run_investigation(request, progress=progress)
+
+    return _run(_go())
+
+
+def _investigate(
     target: str,
     *,
     force_type: EntityType | None = None,
@@ -90,23 +110,18 @@ async def _investigate(
     extra: dict | None = None,
     case_name: str | None = None,
     refresh: bool = False,
-):
-    _bootstrap()
-    runner = InvestigationRunner()
-    progress_reporter = CliProgressReporter()
-    try:
-        return await runner.run(
-            target,
+) -> InvestigationResult:
+    return _execute(
+        InvestigationRequest(
+            target=target,
             force_type=force_type,
             auto_pivot=auto_pivot,
             depth=depth,
             extra=extra,
             case_name=case_name,
-            refresh=refresh or bool((extra or {}).get("refresh")),
-            progress=progress_reporter,
+            refresh=refresh,
         )
-    finally:
-        await runner.close()
+    )
 
 
 def _version_callback(value: bool) -> None:
@@ -124,12 +139,34 @@ def _root(
         callback=_version_callback,
         is_eager=True,
     ),
-    no_banner: bool = typer.Option(False, "--no-banner", help="Skip the ASCII banner."),
-    compact: bool = typer.Option(False, "--compact", help="Summary-oriented output."),
-    verbose: bool = typer.Option(False, "--verbose", help="Full finding detail."),
+    lang: str | None = typer.Option(
+        None,
+        "--lang",
+        help="Output language: en or pt-BR. Default: SPECTRE_LANG, saved config, system locale, en.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Full detail: every platform, scores, internal metrics; INFO logs on stderr.",
+    ),
+    debug: bool = typer.Option(False, "--debug", help="DEBUG logs on stderr (always in the log file)."),
+    no_banner: bool = typer.Option(
+        False, "--no-banner", help="Never print the ASCII banner (shown only with --verbose)."
+    ),
+    compact: bool = typer.Option(
+        False, "--compact", hidden=True, help="Deprecated: compact output is the default."
+    ),
 ) -> None:
     """SPECTRE OSINT."""
-    configure_display(no_banner=no_banner, compact=compact, verbose=verbose)
+    try:
+        set_language(resolve_language(lang))
+    except ValueError as exc:
+        set_language(None)
+        raise typer.BadParameter(
+            t("cli.lang_invalid", value=lang, supported=", ".join(SUPPORTED_LANGUAGES)),
+            param_hint="--lang",
+        ) from exc
+    configure_display(no_banner=no_banner, compact=compact, verbose=verbose, debug=debug)
 
 
 @app.command()
@@ -141,6 +178,7 @@ def version() -> None:
 @app.command()
 def doctor(
     json_out: bool = typer.Option(False, "--json", help="Machine-readable diagnostics."),
+    show_all: bool = typer.Option(False, "--all", help="List every check, including unconfigured optionals."),
 ) -> None:
     """Report whether this install is ready. Never investigates or prints secrets."""
     from spectre_osint.cli.doctor import dumps_doctor, render_doctor, run_doctor
@@ -149,7 +187,7 @@ def doctor(
     if json_out:
         typer.echo(dumps_doctor(report))
     else:
-        typer.echo(render_doctor(report))
+        typer.echo(render_doctor(report, show_all=show_all))
     if report.get("status") == "ACTION REQUIRED":
         raise typer.Exit(1)
 
@@ -169,32 +207,24 @@ def username(
     refresh: bool = typer.Option(False, "--refresh", help="Ignore result cache."),
 ) -> None:
     """Search a username across public sites from data/sites.yaml."""
-    parsed = parse_target_inputs(
+    request = username_request(
         target,
         aliases=alias,
         display_name=display_name,
         email=email,
         website=website,
-        force_type=EntityType.USERNAME,
+        auto_pivot=auto_pivot,
+        depth=depth,
+        case_name=case_name,
+        refresh=refresh,
     )
-    extra = {"refresh": refresh, "inputs": parsed.as_dict()}
-    result = _run(
-        _investigate(
-            parsed.primary,
-            force_type=EntityType.USERNAME,
-            auto_pivot=auto_pivot,
-            depth=depth,
-            case_name=case_name,
-            extra=extra,
-        )
-    )
-    print_result(result)
+    print_result(_execute(request))
 
 
 @app.command()
 def email(target: str = typer.Argument(..., help="Email address")) -> None:
     """Email OSINT (format, DNS, optional HIBP/GitHub/Gravatar)."""
-    result = _run(_investigate(target, force_type=EntityType.EMAIL))
+    result = _investigate(target, force_type=EntityType.EMAIL)
     print_result(result)
 
 
@@ -205,35 +235,35 @@ def domain(
     depth: int = typer.Option(1, "--depth", min=1, max=3),
 ) -> None:
     """Domain intelligence: DNS, RDAP, CT, fingerprint, optional APIs."""
-    result = _run(_investigate(target, force_type=EntityType.DOMAIN, auto_pivot=auto_pivot, depth=depth))
+    result = _investigate(target, force_type=EntityType.DOMAIN, auto_pivot=auto_pivot, depth=depth)
     print_result(result)
 
 
 @app.command()
 def ip(target: str = typer.Argument(..., help="IPv4 or IPv6 address")) -> None:
     """IP intelligence. Historical provider intel is labelled as such."""
-    result = _run(_investigate(target, force_type=EntityType.IP))
+    result = _investigate(target, force_type=EntityType.IP)
     print_result(result)
 
 
 @app.command("url")
 def url_cmd(target: str = typer.Argument(..., help="http(s) URL")) -> None:
     """URL analysis with explainable heuristic risk."""
-    result = _run(_investigate(target, force_type=EntityType.URL))
+    result = _investigate(target, force_type=EntityType.URL)
     print_result(result)
 
 
 @app.command("hash")
 def hash_cmd(target: str = typer.Argument(..., help="MD5/SHA1/SHA256/SHA512")) -> None:
     """Hash intelligence. Malware is never downloaded."""
-    result = _run(_investigate(target, force_type=EntityType.HASH))
+    result = _investigate(target, force_type=EntityType.HASH)
     print_result(result)
 
 
 @app.command()
 def company(target: str = typer.Argument(..., help="Company or organization name")) -> None:
     """Public company footprint (GitHub org, no employee scraping)."""
-    result = _run(_investigate(target, force_type=EntityType.COMPANY))
+    result = _investigate(target, force_type=EntityType.COMPANY)
     print_result(result)
 
 
@@ -244,12 +274,10 @@ def person(
     email_opt: str | None = typer.Option(None, "--email"),
 ) -> None:
     """Public-source people search. Similar profiles are possible_match only."""
-    result = _run(
-        _investigate(
-            name,
-            force_type=EntityType.PERSON,
-            extra={"username": username_opt, "email": email_opt},
-        )
+    result = _investigate(
+        name,
+        force_type=EntityType.PERSON,
+        extra={"username": username_opt, "email": email_opt},
     )
     print_result(result)
 
@@ -272,14 +300,14 @@ def threat(target: str = typer.Argument(..., help="IP, domain, URL or hash")) ->
     from spectre_osint.core.validators import detect_entity_type
 
     detected = detect_entity_type(target)
-    result = _run(_investigate(target, force_type=detected))
+    result = _investigate(target, force_type=detected)
     print_result(result)
 
 
 @app.command()
 def wayback(target: str = typer.Argument(..., help="Domain or URL")) -> None:
     """Wayback Machine CDX snapshots."""
-    result = _run(_investigate(target, force_type=EntityType.DOMAIN))
+    result = _investigate(target, force_type=EntityType.DOMAIN)
     print_result(result)
 
 
@@ -301,15 +329,13 @@ def investigate(
         target, aliases=alias, display_name=display_name, email=email, website=website
     )
     extra = {"inputs": parsed.as_dict()}
-    result = _run(
-        _investigate(
-            parsed.primary,
-            force_type=parsed.primary_type,
-            auto_pivot=auto_pivot,
-            depth=depth,
-            case_name=case_name,
-            extra=extra,
-        )
+    result = _investigate(
+        parsed.primary,
+        force_type=parsed.primary_type,
+        auto_pivot=auto_pivot,
+        depth=depth,
+        case_name=case_name,
+        extra=extra,
     )
     print_result(result)
 

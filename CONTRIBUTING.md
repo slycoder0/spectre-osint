@@ -36,6 +36,11 @@ pip check
 - Fixtures must be synthetic (`alice_osint`, `Alice Example`). Tests must not
   depend on live personal accounts.
 - Never commit `.env`, cookies, session files, Chrome profiles, or real reports.
+- The OSINT result cache (`core/result_cache.py`) stores *derived* `Finding.data`
+  and serves it verbatim. If a change alters what an investigation caches — the
+  fields of `Finding.data`, the `observed` transport, or any rejection, status or
+  confidence rule — bump `RESULT_SCHEMA_VERSION` in the same commit. Otherwise
+  users keep seeing results computed by the old code until the TTL expires.
 
 ## CLI notes
 

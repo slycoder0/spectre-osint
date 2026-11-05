@@ -13,6 +13,7 @@ from urllib.request import urlopen
 
 from spectre_osint import __version__
 from spectre_osint.core.config import Settings
+from spectre_osint.core.i18n import has_message, t, tn
 from spectre_osint.modules.search.providers import is_loopback_searxng, searxng_origin
 
 OK = "ok"
@@ -56,9 +57,6 @@ _SECRET_ENV = (
     "OPENROUTER_API_KEY",
     "GEMINI_API_KEY",
 )
-
-_STATE_LABEL = {OK: "OK", OPTIONAL: "OPTIONAL", ACTION: "ACTION"}
-
 
 def _check(group: str, label: str, value: str, state: str, *, hint: str = "") -> dict[str, str]:
     return {"group": group, "label": label, "value": value, "state": state, "hint": hint}
@@ -333,28 +331,187 @@ def run_doctor(settings: Settings | None = None) -> dict[str, Any]:
     }
 
 
-def render_doctor(report: dict[str, Any]) -> str:
-    groups: list[tuple[str, str]] = [
-        ("core", "Core"),
-        ("browser", "Browser"),
-        ("search", "Search"),
-        ("auth", "Authenticated public sessions"),
-        ("providers", "API providers"),
-        ("security", "Security"),
-    ]
-    lines = ["SPECTRE DOCTOR", ""]
-    for key, title in groups:
-        rows = [item for item in report["checks"] if item["group"] == key]
+# --- presentation (B2-06) ------------------------------------------------------------------
+#
+# `run_doctor()` keeps producing the same language-neutral report (the `--json` contract).
+# The renderers below translate it. Labels, values and hints are produced by this module
+# from a closed vocabulary, so they are mapped English text -> catalog key; anything not
+# in a table (proper nouns, versions, exception class names, session status codes) is
+# printed as-is. `tests/test_doctor_compact.py` scans this file to keep the tables complete.
+
+_GROUPS = ("core", "browser", "search", "auth", "providers", "security")
+_SUMMARY_GROUPS = frozenset({"core", "security"})
+
+_LABEL_KEYS = {
+    "Package import": "doctor.label.package_import",
+    "Database": "doctor.label.database",
+    "Database writable": "doctor.label.database_writable",
+    "Reports directory": "doctor.label.reports_directory",
+    "Settings": "doctor.label.settings",
+    "Secrets redaction": "doctor.label.secrets_redaction",
+    "SSRF policy": "doctor.label.ssrf_policy",
+    "Authenticated sessions": "doctor.label.authenticated_sessions",
+    "Censys secret": "doctor.label.censys_secret",
+    "GitHub token": "doctor.label.github_token",
+}
+_VALUE_KEYS = {
+    "memory": "doctor.value.memory",
+    "not probed": "doctor.value.not_probed",
+    "detected": "doctor.value.detected",
+    "missing": "doctor.value.missing",
+    "inactive": "doctor.value.inactive",
+    "listening": "doctor.value.listening",
+    "configured": "doctor.value.configured",
+    "configured (error)": "doctor.value.configured_error",
+    "configured (offline)": "doctor.value.configured_offline",
+    "invalid": "doctor.value.invalid",
+    "CONFIGURED": "doctor.value.configured_upper",
+    "NOT CONFIGURED": "doctor.value.not_configured_upper",
+    "enabled": "doctor.value.enabled",
+    "disabled": "doctor.value.disabled",
+    "unreadable": "doctor.value.unreadable",
+    "none": "doctor.value.none",
+}
+_HINT_KEYS = {
+    "Python 3.12 or 3.13 is required.": "doctor.hint.python",
+    "SPECTRE_DATA_DIR must be writable.": "doctor.hint.data_dir",
+    "SPECTRE_DATA_DIR / SPECTRE_DATABASE_URL must be writable.": "doctor.hint.database",
+    "SPECTRE_REPORTS_DIR must be writable.": "doctor.hint.reports_dir",
+    "Optional. Needed for authenticated-public sessions.": "doctor.hint.chrome",
+    "Doctor does not launch Chrome.": "doctor.hint.cdp",
+    "Set SEARXNG_URL=http://127.0.0.1:<port> for local search.": "doctor.hint.searxng_missing",
+    "SEARXNG_URL must be loopback http(s).": "doctor.hint.searxng_invalid",
+    "Instance responded with a server error. Optional.": "doctor.hint.searxng_error",
+    "URL is set; instance did not respond. Optional.": "doctor.hint.searxng_offline",
+    "Check .env syntax. Do not paste secrets into issues.": "doctor.hint.settings",
+}
+_STATUS_KEYS = {
+    READY: "doctor.status.ready",
+    READY_OPTIONAL: "doctor.status.ready_optional",
+    ACTION_REQUIRED: "doctor.status.action_required",
+}
+# An optional check whose value says "nothing is set up here": collapsed by default.
+_UNCONFIGURED_VALUES = frozenset({"missing", "NOT CONFIGURED", "NOT_CONFIGURED", "inactive", "none"})
+# A check that is set up and working, even when its state is OPTIONAL (API keys).
+_CONFIGURED_VALUES = frozenset({"CONFIGURED", "configured", "detected", "listening", "ACTIVE"})
+
+KIND_ACTION = "action"
+KIND_ATTENTION = "attention"
+KIND_CONFIGURED = "configured"
+KIND_UNCONFIGURED = "unconfigured"
+KIND_OK = "ok"
+
+
+def classify_check(item: dict[str, str]) -> str:
+    """How the compact doctor treats one check."""
+    state = item.get("state")
+    value = str(item.get("value") or "")
+    if state == ACTION:
+        return KIND_ACTION
+    if item.get("group") in _SUMMARY_GROUPS:
+        return KIND_OK if state == OK else KIND_ATTENTION
+    if state == OK or value in _CONFIGURED_VALUES:
+        return KIND_CONFIGURED
+    if value in _UNCONFIGURED_VALUES:
+        return KIND_UNCONFIGURED
+    return KIND_ATTENTION
+
+
+def _localized(text: str, table: dict[str, str]) -> str:
+    key = table.get(text)
+    return t(key) if key else text
+
+
+def _label(item: dict[str, str], *, compact: bool) -> str:
+    label = _localized(str(item.get("label") or ""), _LABEL_KEYS)
+    if compact and item.get("group") == "auth" and item.get("label") != "Authenticated sessions":
+        return t("doctor.session_item", platform=label)
+    return label
+
+
+def _value(item: dict[str, str]) -> str:
+    return _localized(str(item.get("value") or ""), _VALUE_KEYS)
+
+
+def _hint(item: dict[str, str]) -> str:
+    return _localized(str(item.get("hint") or ""), _HINT_KEYS)
+
+
+def _state(item: dict[str, str]) -> str:
+    key = f"doctor.state.{item.get('state')}"
+    return t(key) if has_message(key) else str(item.get("state") or "").upper()
+
+
+def _overall(report: dict[str, Any]) -> str:
+    status = str(report.get("status") or "")
+    key = _STATUS_KEYS.get(status)
+    return t("doctor.overall", status=t(key) if key else status)
+
+
+def _value_of(checks: list[dict[str, str]], label: str) -> str:
+    return next((str(item.get("value") or "") for item in checks if item.get("label") == label), "?")
+
+
+def _flagged(item: dict[str, str]) -> str:
+    line = f"[{_state(item)}] {_label(item, compact=True)}: {_value(item)}"
+    hint = _hint(item)
+    return f"{line} — {hint}" if hint else line
+
+
+def _render_compact(report: dict[str, Any]) -> list[str]:
+    checks: list[dict[str, str]] = list(report.get("checks") or [])
+    kinds = [(item, classify_check(item)) for item in checks]
+    lines = [t("doctor.title", version=report.get("version") or __version__)]
+    for group, key in (("core", "doctor.core_ok"), ("security", "doctor.security_ok")):
+        members = [item for item in checks if item.get("group") == group]
+        if members and not any(item.get("state") == ACTION for item in members):
+            lines.append(
+                t(key, python=_value_of(checks, "Python"), database=_value_of(checks, "Database"))
+            )
+    configured = [_label(item, compact=True) for item, kind in kinds if kind == KIND_CONFIGURED]
+    if configured:
+        lines.append(t("doctor.configured", items=", ".join(configured)))
+    lines.extend(_flagged(item) for item, kind in kinds if kind == KIND_ACTION)
+    lines.extend(_flagged(item) for item, kind in kinds if kind == KIND_ATTENTION)
+    missing = [item for item, kind in kinds if kind == KIND_UNCONFIGURED]
+    if missing:
+        groups = [g for g in _GROUPS if any(item.get("group") == g for item in missing)]
+        lines.append(
+            tn(
+                "doctor.optional_missing",
+                len(missing),
+                groups=", ".join(t(f"doctor.short.{g}") for g in groups),
+            )
+        )
+    lines.append(_overall(report))
+    return lines
+
+
+def _render_all(report: dict[str, Any]) -> list[str]:
+    lines = [t("doctor.title", version=report.get("version") or __version__), ""]
+    for group in _GROUPS:
+        rows = [item for item in report.get("checks") or [] if item.get("group") == group]
         if not rows:
             continue
-        lines.append(title)
+        lines.append(t(f"doctor.group.{group}"))
         for item in rows:
-            state = _STATE_LABEL.get(item["state"], str(item["state"]).upper())
-            lines.append(f"  {item['label']:<24} {item['value']:<16} {state}")
-            if item.get("hint"):
-                lines.append(f"    {item['hint']}")
+            lines.append(f"  {_label(item, compact=False):<24} {_value(item):<16} {_state(item)}")
+            hint = _hint(item)
+            if hint:
+                lines.append(f"    {hint}")
         lines.append("")
-    lines.append(f"Overall: {report['status']}")
+    lines.append(_overall(report))
+    return lines
+
+
+def render_doctor(report: dict[str, Any], *, show_all: bool = False) -> str:
+    """Human-readable doctor output in the active language.
+
+    Default: about eight lines — core and security summarized, configured items on one
+    line, anything needing action or attention listed with its hint, unconfigured
+    optionals collapsed into one counted line. `show_all=True` lists every check.
+    """
+    lines = _render_all(report) if show_all else _render_compact(report)
     return _scrub_secrets("\n".join(lines))
 
 
