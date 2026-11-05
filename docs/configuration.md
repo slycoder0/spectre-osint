@@ -38,7 +38,7 @@ cp .env.example .env
 | `SPECTRE_HTTP_RETRY_BUDGET` | `20.0` | Orçamento total em segundos para tentativas de retry por requisição. |
 | `SPECTRE_HTTP_MAX_BACKOFF` | `30.0` | Tempo máximo de espera exponencial de backoff. |
 | `SPECTRE_HTTP_CIRCUIT_FAILURES`| `3` | Limiar de falhas consecutivas antes de desativar temporariamente um provedor. |
-| `SPECTRE_USER_AGENT` | `SPECTRE-OSINT/0.1-alpha (+passive-osint)` | Header `User-Agent` padrão para requisições HTTP. |
+| `SPECTRE_USER_AGENT` | `SPECTRE-OSINT/0.1.0b1 (+passive-osint)` | Header `User-Agent` padrão para requisições HTTP. |
 | `SPECTRE_SSRF_ENABLED` | `true` | Bloqueia requisições a redes privadas, loopback e metadados de nuvem (`169.254.169.254`). |
 | `SPECTRE_ALLOW_PRIVATE_TARGETS`| `false` | Permite explicitamente alvos em redes privadas se ativado pelo operador. |
 | `SPECTRE_PIVOT_BUDGET` | `8` | Limite de pivôs automáticos por execução padrão. |

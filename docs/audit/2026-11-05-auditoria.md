@@ -18,7 +18,7 @@ que o usuário vê na primeira execução continuam abertos.
 | Testes | **897 passando**, 0 falhas (~95 s, offline) |
 | Cobertura | **77 %** de branches no total, mas muito desigual (seção 4) |
 | `ruff` / `mypy` / `pip check` | limpos |
-| `pip-audit` | **FALHA — 21 CVEs no Pillow 12.3.0** (corrigidos no 13.0.0, bloqueado por `Pillow<13`). A próxima execução da CI na `main` vai ficar vermelha. |
+| `pip-audit` | **FALHA — 39 avisos no Pillow 12.3.0** (reconfirmado em 05/nov; a contagem inicial de 21 estava errada) (corrigidos no 13.0.0, bloqueado por `Pillow<13`). A próxima execução da CI na `main` vai ficar vermelha. |
 | CI no GitHub | verde na última execução (06/set), antes desses CVEs saírem |
 | Smoke test ao vivo (`spectre username torvalds`) | roda de ponta a ponta e gera os 5 relatórios, mas com problemas de qualidade (seção 3) |
 
@@ -104,7 +104,7 @@ Hugging Face `torvalds` é outra pessoa (`Hemant`) e o sistema **não** a juntou
 ## 4. Achados — código, testes e engenharia
 
 ### B1 — CVEs de dependência quebram a CI (CRÍTICA, trivial)
-`Pillow>=10.4.0,<13` → 21 CVEs, correção em `13.0.0`. `playwright<1.56` está 9 minors atrás
+`Pillow>=10.4.0,<13` → 39 avisos do `pip-audit`, correção em `13.0.0`. `playwright<1.56` está 9 minors atrás
 (1.64.1). Primeiro commit da retomada deve ser este.
 
 ### B2 — Cobertura concentrada só no username (ALTA)
