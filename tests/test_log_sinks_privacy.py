@@ -137,6 +137,13 @@ def test_url_echoing_third_party_loggers_are_capped_at_warning(tmp_path: Path) -
         assert not logging.getLogger(name).isEnabledFor(logging.INFO)
 
 
+def test_crash_tracebacks_never_print_local_variables() -> None:
+    """A crash's Rich traceback with locals would print `target`, inputs and settings.
+    Typer 0.27 defaults to False; the CLI pins it so an upgrade cannot flip it."""
+    assert app.pretty_exceptions_show_locals is False
+    assert app.pretty_exceptions_short is True
+
+
 # --- doctor --------------------------------------------------------------------------------
 
 

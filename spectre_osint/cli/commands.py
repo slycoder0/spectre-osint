@@ -43,6 +43,9 @@ app = typer.Typer(
     help="SPECTRE OSINT — Passive-first OSINT and Threat Intelligence.",
     no_args_is_help=True,
     add_completion=False,
+    # A crash traceback with locals would print the target, the operator's leads and
+    # settings to stderr (B2-07). Pinned, not left to Typer's default.
+    pretty_exceptions_show_locals=False,
 )
 case_app = typer.Typer(help="Investigation case management.")
 app.add_typer(case_app, name="case")
