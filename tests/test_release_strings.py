@@ -10,6 +10,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from spectre_osint import __version__
 from spectre_osint.core.config import PROJECT_ROOT, Settings
 from spectre_osint.core.http_client import load_user_agents
@@ -23,7 +25,8 @@ def _pyproject() -> dict:
     return tomllib.loads(_read("pyproject.toml"))
 
 
-def test_default_user_agent_tracks_version(tmp_path: Path) -> None:
+def test_default_user_agent_tracks_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SPECTRE_USER_AGENT", raising=False)
     ua = Settings(_env_file=None).user_agent
     assert __version__ in ua
     assert "alpha" not in ua.lower()
@@ -34,6 +37,14 @@ def test_user_agent_fallback_tracks_version(tmp_path: Path) -> None:
     assert len(fallback) == 1
     assert __version__ in fallback[0]
     assert "alpha" not in fallback[0].lower()
+
+
+def test_bundled_user_agents_tracks_version() -> None:
+    spectre_agents = [ua for ua in load_user_agents() if ua.startswith("SPECTRE-OSINT/")]
+    assert spectre_agents
+    for ua in spectre_agents:
+        assert __version__ in ua
+        assert "alpha" not in ua.lower()
 
 
 def test_packaging_metadata_is_beta_and_lists_windows() -> None:
