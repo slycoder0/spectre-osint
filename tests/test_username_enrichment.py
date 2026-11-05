@@ -11,6 +11,7 @@ from spectre_osint.core.config import Settings
 from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.presentation import observed_profile_fields, username_rows
+from spectre_osint.core.redaction import target_ref
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus, UsernameCheckStatus
 from spectre_osint.modules.username.catalog import SiteDefinition
 from spectre_osint.modules.username.engine import _check_site, analyze_username
@@ -226,7 +227,12 @@ def test_identity_debug_uses_record_keys(caplog: pytest.LogCaptureFixture) -> No
     pair = compare_records(records[0], records[1])
     assert pair["score"] >= 10
     blob = "\n".join(rec.getMessage() for rec in caplog.records)
-    assert "identity correlation github::alice <-> instagram::alice_sec" in blob
+    # Platform keys and per-run username references; never the usernames (B2-07).
+    assert (
+        f"identity correlation github::{target_ref('alice')} <-> instagram::{target_ref('alice_sec')}"
+        in blob
+    )
+    assert "alice" not in blob
     assert "same_display_name" in blob
     assert "same_personal_domain" in blob
 

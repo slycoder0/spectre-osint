@@ -371,12 +371,14 @@ async def test_authenticated_public_debug_log_omits_body_and_cookies(tmp_path: P
     text = caplog.text
     assert "AUTHENTICATED_PUBLIC evidence" in text
     assert "platform=Instagram" in text
-    assert "requested_url=" in text
-    assert "final_url=" in text
     assert "http_status=" in text
-    assert "title=" in text
-    assert "canonical=" in text
-    assert "og_url=" in text
+    # B2-07: presence flags instead of the URLs / titles themselves, no free-text reason.
+    for flag in ("final_url_present=", "canonical_present=", "og_url_present=", "title_present="):
+        assert flag in text
+    assert "requested_url=" not in text
+    assert "reason=" not in text
+    assert "alice_osint" not in text
+    assert "instagram.com/" not in text
     assert "username_in_final_url=" in text
     assert "username_in_canonical=" in text
     assert "username_in_og_url=" in text
@@ -388,7 +390,6 @@ async def test_authenticated_public_debug_log_omits_body_and_cookies(tmp_path: P
     assert "positive_rules=" in text
     assert "negative_rules=" in text
     assert "classification=" in text
-    assert "reason=" in text
     assert "content_length=" in text
     assert "TESTCOOKIE" not in text
     assert "<html>" not in text

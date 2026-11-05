@@ -14,6 +14,7 @@ from urllib.request import urlopen
 from spectre_osint import __version__
 from spectre_osint.core.config import Settings
 from spectre_osint.core.i18n import has_message, t, tn
+from spectre_osint.core.logger import legacy_log_files
 from spectre_osint.modules.search.providers import is_loopback_searxng, searxng_origin
 
 OK = "ok"
@@ -251,6 +252,20 @@ def _providers(settings: Settings) -> list[dict[str, str]]:
     return checks
 
 
+def _legacy_logs(settings: Settings) -> dict[str, str]:
+    """Logs from before B2-07 may hold target data. Pointed at, never opened or deleted."""
+    found = legacy_log_files(Path(settings.logs_dir))
+    if not found:
+        return _check("security", "Legacy logs", "none", OK)
+    return _check(
+        "security",
+        "Legacy logs",
+        ", ".join(str(path) for path in found),
+        OPTIONAL,
+        hint="Written by an earlier version; may contain target data. Delete it when you no longer need it.",
+    )
+
+
 def _security(settings: Settings) -> list[dict[str, str]]:
     return [
         _check("security", "Secrets redaction", "OK", OK),
@@ -260,6 +275,7 @@ def _security(settings: Settings) -> list[dict[str, str]]:
             "enabled" if settings.ssrf_enabled else "disabled",
             OK if settings.ssrf_enabled else ACTION,
         ),
+        _legacy_logs(settings),
     ]
 
 
@@ -350,6 +366,7 @@ _LABEL_KEYS = {
     "Settings": "doctor.label.settings",
     "Secrets redaction": "doctor.label.secrets_redaction",
     "SSRF policy": "doctor.label.ssrf_policy",
+    "Legacy logs": "doctor.label.legacy_logs",
     "Authenticated sessions": "doctor.label.authenticated_sessions",
     "Censys secret": "doctor.label.censys_secret",
     "GitHub token": "doctor.label.github_token",
@@ -384,6 +401,9 @@ _HINT_KEYS = {
     "Instance responded with a server error. Optional.": "doctor.hint.searxng_error",
     "URL is set; instance did not respond. Optional.": "doctor.hint.searxng_offline",
     "Check .env syntax. Do not paste secrets into issues.": "doctor.hint.settings",
+    "Written by an earlier version; may contain target data. Delete it when you no longer need it.": (
+        "doctor.hint.legacy_logs"
+    ),
 }
 _STATUS_KEYS = {
     READY: "doctor.status.ready",

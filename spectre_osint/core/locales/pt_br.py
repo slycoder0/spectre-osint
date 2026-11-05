@@ -73,6 +73,7 @@ MESSAGES: dict[str, str] = {
     "doctor.label.settings": "Configurações",
     "doctor.label.secrets_redaction": "Ocultação de segredos",
     "doctor.label.ssrf_policy": "Política SSRF",
+    "doctor.label.legacy_logs": "Logs antigos",
     "doctor.label.authenticated_sessions": "Sessões autenticadas",
     "doctor.label.censys_secret": "Segredo do Censys",
     "doctor.label.github_token": "Token do GitHub",
@@ -105,4 +106,7 @@ MESSAGES: dict[str, str] = {
     "doctor.hint.searxng_error": "A instância respondeu com erro de servidor. Opcional.",
     "doctor.hint.searxng_offline": "A URL está definida, mas a instância não respondeu. Opcional.",
     "doctor.hint.settings": "Confira a sintaxe do .env. Não cole segredos em issues.",
+    "doctor.hint.legacy_logs": (
+        "Gravado por uma versão anterior; pode conter dados do alvo. Apague quando não precisar mais."
+    ),
 }

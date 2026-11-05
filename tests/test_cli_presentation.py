@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 from spectre_osint.cli import commands
 from spectre_osint.cli.commands import app
 from spectre_osint.core.entities import InvestigationResult, ScoreBreakdown
-from spectre_osint.core.logger import get_logger
+from spectre_osint.core.logger import LOG_FILENAME, get_logger
 from spectre_osint.reporting.html import write_html_report
 from spectre_osint.reporting.json import write_json_report
 from spectre_osint.reporting.markdown import write_markdown_report
@@ -102,7 +102,7 @@ def test_stderr_is_silent_by_default_and_logs_reach_the_file(
     assert result.stderr == ""
     assert "synthetic-log-line" not in result.stdout
     assert "unavailable; continuing" not in result.stdout
-    log = (tmp_path / "logs" / "spectre.log").read_text(encoding="utf-8")
+    log = (tmp_path / "logs" / LOG_FILENAME).read_text(encoding="utf-8")
     assert "synthetic-log-line" in log
 
 

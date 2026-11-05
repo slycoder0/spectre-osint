@@ -24,6 +24,7 @@ from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.logger import get_logger
 from spectre_osint.core.paths import report_path, slugify
 from spectre_osint.core.progress import ProgressEvent, ProgressPhase, ProgressState
+from spectre_osint.core.redaction import exc_label, register_target_values, target_ref
 from spectre_osint.core.registry import ProviderRegistry, default_registry
 from spectre_osint.core.scoring import score_investigation
 from spectre_osint.core.ssrf import is_blocked_ip, validate_url_syntax
@@ -126,10 +127,15 @@ class InvestigationRunner:
     ) -> InvestigationResult:
         started = utcnow()
         self._progress = progress
+        # Safety net for the log sinks (B2-07): every value the operator named for this run
+        # is scrubbed from log lines even if a call site slips. Call sites still must not
+        # log it; tests/test_logs_no_target_data.py checks them before this net.
+        register_target_values(*_operator_values(target, extra))
         entity_type = force_type or detect_entity_type(target)
         self._emit_progress(ProgressPhase.INITIALIZING, ProgressState.RUNNING, target=target)
         _preflight_target(target, entity_type, self.settings)
         entity = Entity.create(entity_type, target, source="user", confidence=Confidence.CONFIRMED)
+        register_target_values(entity.normalized_value)
         if case_name:
             selected = self.cases.select(case_name)
             case = selected or self.cases.create(case_name)
@@ -220,7 +226,8 @@ class InvestigationRunner:
         try:
             export_graphml(graph, graph_path)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Graph export failed: %s", exc)
+            # The path is named after the target: the note (report) keeps it, the log does not.
+            logger.warning("Graph export failed: %s", exc_label(exc))
             result.notes.append(f"GraphML export failed: {exc}")
         try:
             html_path = write_html_report(result, self.settings.reports_dir)
@@ -394,7 +401,7 @@ class InvestigationRunner:
                 mail_bundle = await analyze_email(mail, self.http, self.registry, self.settings)
                 _extend_bundle(merged, mail_bundle)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Optional email collection failed: %s", exc)
+                logger.warning("Optional email collection failed: %s", exc_label(exc))
             merged["entities"].append(mail)
             merged["relationships"].append(
                 Relationship(
@@ -417,7 +424,7 @@ class InvestigationRunner:
                 site_bundle = await handler(site_entity, self.http, self.registry, self.settings)
                 _extend_bundle(merged, site_bundle)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Optional website collection failed: %s", exc)
+                logger.warning("Optional website collection failed: %s", exc_label(exc))
             merged["entities"].append(site_entity)
             merged["relationships"].append(
                 Relationship(
@@ -547,16 +554,23 @@ class InvestigationRunner:
             if entity.type == EntityType.IP and is_private_ip(entity.normalized_value):
                 continue
             visited.add(entity.normalized_value)
+            register_target_values(entity.normalized_value)
             logger.info(
-                "Auto-pivot depth=%s remaining_budget=%s target=%s",
+                "Auto-pivot depth=%s remaining_budget=%s type=%s target=%s",
                 depth,
                 budget,
-                entity.normalized_value,
+                entity.type.value,
+                target_ref(entity.normalized_value),
             )
             try:
                 bundle = await asyncio.wait_for(self._collect(entity, {}), timeout=60)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Pivot failed for %s: %s", entity.normalized_value, exc)
+                logger.warning(
+                    "Pivot failed type=%s target=%s err=%s",
+                    entity.type.value,
+                    target_ref(entity.normalized_value),
+                    exc_label(exc),
+                )
                 continue
             self._merge(result, bundle)
             followed += 1
@@ -565,6 +579,19 @@ class InvestigationRunner:
                 result, depth=depth - 1, visited=visited, budget=budget
             )
         return budget
+
+
+def _operator_values(target: str, extra: dict[str, Any] | None) -> list[object]:
+    """The target and every lead the operator passed with it (aliases, name, e-mail, site)."""
+    payload = extra or {}
+    values: list[object] = [target, payload.get("username"), payload.get("email")]
+    inputs = payload.get("inputs")
+    if isinstance(inputs, dict):
+        values.extend(inputs.get(key) for key in ("primary", "display_name", "email", "website"))
+        aliases = inputs.get("aliases")
+        if isinstance(aliases, list):
+            values.extend(aliases)
+    return values
 
 
 def _preflight_target(target: str, entity_type: EntityType, settings: Settings) -> None:

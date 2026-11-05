@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from spectre_osint.core.entities import Entity, Finding, Relationship
 from spectre_osint.core.logger import get_logger
+from spectre_osint.core.redaction import target_ref
 from spectre_osint.core.types import (
     Confidence,
     EntityType,
@@ -673,9 +674,11 @@ def compare_records(left: IdentityRecord, right: IdentityRecord) -> dict[str, An
     if not explain:
         explain = ["+ same_username only" if "same_username" in evidence else "no comparable public fields"]
     logger.debug(
-        "identity correlation %s <-> %s score=%s evidence=%s conflicts=%s",
-        f"{left.platform.lower()}::{left.username}",
-        f"{right.platform.lower()}::{right.username}",
+        "identity correlation %s::%s <-> %s::%s score=%s evidence=%s conflicts=%s",
+        left.platform.lower(),
+        target_ref(left.username),
+        right.platform.lower(),
+        target_ref(right.username),
         score,
         ",".join(evidence) or "none",
         ",".join(conflicts) or "none",

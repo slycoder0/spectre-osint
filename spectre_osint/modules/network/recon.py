@@ -12,6 +12,7 @@ from typing import Any
 from spectre_osint.core.entities import Finding
 from spectre_osint.core.exceptions import AuthorizationRequired
 from spectre_osint.core.logger import get_logger
+from spectre_osint.core.redaction import register_target_values, target_ref
 from spectre_osint.core.types import Confidence, FindingStatus
 
 logger = get_logger("spectre.network")
@@ -28,9 +29,12 @@ async def authorized_connect_scan(
 ) -> dict[str, Any]:
     if not authorized:
         raise AuthorizationRequired("Active recon requires --authorized")
+    register_target_values(host)
+    # The audit line records that an authorized scan ran, not which host: the host is the
+    # target (B2-07). The finding and the report keep it.
     logger.warning(
         "ACTIVE RECON AUTHORIZED host=%s ports=%s — operator asserted authorization",
-        host,
+        target_ref(host),
         ports,
     )
     open_ports: list[dict[str, Any]] = []

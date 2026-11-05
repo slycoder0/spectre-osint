@@ -6,7 +6,7 @@ from pydantic import SecretStr
 
 from spectre_osint.core.cache import ResponseCache
 from spectre_osint.core.config import Settings
-from spectre_osint.core.logger import setup_logging
+from spectre_osint.core.logger import LOG_FILENAME, setup_logging
 from spectre_osint.core.redaction import redact_mapping, redact_text
 
 CANARY = "SPECTRE_CANARY_SECRET_9f3a2c1b"
@@ -38,5 +38,5 @@ def test_cache_and_logs_never_store_canary(tmp_path: Path) -> None:
     assert CANARY not in str(stored)
     logger = setup_logging("INFO", settings.logs_dir)
     logger.info("using key %s", CANARY)
-    log_text = (settings.logs_dir / "spectre.log").read_text(encoding="utf-8")
+    log_text = (settings.logs_dir / LOG_FILENAME).read_text(encoding="utf-8")
     assert CANARY not in log_text

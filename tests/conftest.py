@@ -69,6 +69,16 @@ def isolate_presentation(tmp_path, monkeypatch):
     configure_display()
 
 
+@pytest.fixture(autouse=True)
+def isolate_log_safety_net():
+    """Target values registered by one test's run must not scrub another test's logs."""
+    from spectre_osint.core.redaction import clear_target_values
+
+    clear_target_values()
+    yield
+    clear_target_values()
+
+
 @pytest.fixture
 def settings(tmp_path, monkeypatch):
     from spectre_osint.core.config import Settings, reload_settings

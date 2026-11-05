@@ -17,7 +17,7 @@ from spectre_osint.cli.render import clean_text
 from spectre_osint.core import result_cache as result_cache_mod
 from spectre_osint.core.config import Settings, reload_settings
 from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
-from spectre_osint.core.logger import get_logger
+from spectre_osint.core.logger import LOG_FILENAME, get_logger
 from spectre_osint.core.result_cache import RESULT_SCHEMA_VERSION, ResultCache
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus
 from tests.conftest import strip_ansi
@@ -206,7 +206,7 @@ def test_verbose_shows_info_even_when_the_file_level_is_warning(
     result = runner.invoke(app, ["--verbose", "username", "alice_osint"])
     assert result.exit_code == 0, result.output
     assert "verbose-info-probe" in result.stderr
-    log = (logs_dir / "spectre.log").read_text(encoding="utf-8")
+    log = (logs_dir / LOG_FILENAME).read_text(encoding="utf-8")
     assert "verbose-warning-probe" in log
     assert "verbose-info-probe" not in log, "the log file keeps SPECTRE_LOG_LEVEL"
 
