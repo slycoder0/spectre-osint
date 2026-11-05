@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -247,6 +248,28 @@ def default_browser_profiles_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return _spectre_data_home() / "browser-profiles"
+
+
+def default_config_file(environ: Mapping[str, str] | None = None) -> Path:
+    """Per-user preferences file (language today). Never inside the git repository.
+
+    `SPECTRE_CONFIG_FILE` overrides it. Otherwise the platform's user config folder:
+    `%APPDATA%\\spectre` on Windows, `~/Library/Application Support/spectre` on macOS,
+    `$XDG_CONFIG_HOME/spectre` (default `~/.config/spectre`) elsewhere.
+    """
+    env = os.environ if environ is None else environ
+    override = env.get("SPECTRE_CONFIG_FILE")
+    if override:
+        return Path(override).expanduser()
+    if sys.platform == "win32":
+        appdata = env.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "spectre" / "config.json"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "spectre" / "config.json"
+    xdg = env.get("XDG_CONFIG_HOME")
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / "spectre" / "config.json"
 
 
 def _spectre_data_home() -> Path:
