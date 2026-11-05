@@ -30,8 +30,9 @@ O `InvestigationRunner` (`spectre_osint/core/pipeline.py`) é o loop externo par
 spectre_osint/
   main.py                 Ponto de entrada da CLI (`spectre`)
   __init__.py             __version__ = 0.1.0b1
-  cli/                    Comandos Typer, doctor, display
-  core/                   config, pipeline, scoring, SSRF, DB, entities, cache
+  cli/                    Comandos Typer, doctor, display, render (Rich), progress_bar
+  services/               Serviços sem UI: rodar investigações e montar views (base do menu)
+  core/                   config, pipeline, scoring, SSRF, DB, entities, cache, i18n + locales/
   modules/username/       Varredura de catálogo, Site Catalog 2.0, enriquecimento, identidade
   modules/mentions/       Menções indexadas públicas e relevância de texto
   modules/search/         Planejador, provedores, discover, extract, novelty, pivots, summary
@@ -40,7 +41,7 @@ spectre_osint/
   browser/                Sessões autenticadas públicas, Chrome CDP e Playwright
   correlation/            Grafo de entidades, sugestões de pivôs genéricos e fusão de confiança
   reporting/              Geradores de artefatos de arquivo único em HTML, JSON, Markdown, CSV e GraphML
-  data/                   sites.yaml (Site Catalog 2.0), providers.yaml, user_agents.txt
+  data/                   sites.yaml (Site Catalog 2.0), providers.yaml
   migrations/             Alembic (esquema inicial 0001_initial)
   llm/                    Módulo experimental de sumarização (atualmente não conectado ao pipeline principal)
 ```
@@ -66,8 +67,17 @@ spectre_osint/
 
 ### CLI — `spectre_osint/cli/`
 - **Responsabilidade:** Comandos do operador, `spectre --version`, `spectre doctor`.
-- **Entradas:** `sys.argv`, `.env` e variáveis de ambiente via `Settings`.
-- **Saídas:** `stdout` (Rich), códigos de saída (`doctor`: 0 pronto/opcional, 1 ação necessária).
+- **Entradas:** `sys.argv`, `.env` e variáveis de ambiente via `Settings`; flags globais `--lang`, `--verbose`, `--debug`, `--no-banner`.
+- **Saídas:** `stdout` (Rich) com saída **compacta por padrão** (B2-06); progresso e logs opcionais em `stderr`; códigos de saída (`doctor`: 0 pronto/opcional, 1 ação necessária). Detalhes em [Camada de Apresentação](presentation.md) e [i18n](i18n.md).
+- **Fronteira:** O CLI não calcula fatos: pede ao serviço (`services/`) e entrega a view ao renderer (`cli/render.py`).
+
+### Serviços — `spectre_osint/services/`
+- **Responsabilidade:** `investigations.py` roda uma investigação a partir de um `InvestigationRequest` e devolve o `InvestigationResult` intacto; `views.py` monta views neutras de idioma (`UsernameView`) com as regras de honestidade (encontrado / não encontrado / não verificado; nomes por plataforma).
+- **Fronteira:** Sem `print`, sem Rich, sem Typer, sem tradução. É a mesma camada que o menu (Fase 3) vai usar.
+
+### Internacionalização — `spectre_osint/core/i18n.py`
+- **Responsabilidade:** `t()` / `tn()` sobre catálogos `dict` em `core/locales/` (`en`, `pt-BR`); idioma resolvido por `--lang` → `SPECTRE_LANG` → config persistida → locale do sistema → inglês.
+- **Fronteira:** Traduz só texto de terminal. Status, JSON do doctor, relatórios e logs continuam neutros.
 - **Efeitos Colaterais:** Investigações gravam no banco e relatórios; `auth` grava arquivos de sessão. O `doctor` não produz efeitos colaterais.
 - **Dependências:** `core`, `browser`, `modules`, `reporting`.
 - **Comandos Principais:** `username`, `email`, `domain`, `ip`, `url`, `hash`, `company`, `person`, `investigate`, `metadata`, `threat`, `wayback`, `providers`, `report`, `search` (helper CSE), `network`, `case`, `auth`, `cache`, `doctor`, `version`.

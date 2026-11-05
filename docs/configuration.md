@@ -100,20 +100,23 @@ cp .env.example .env
 | `GITHUB_TOKEN` | GitHub API | Chave opcional | Eleva limite de requisições de 60/h para 5.000/h. |
 | `OTX_API_KEY` | AlienVault OTX | Chave opcional | Indicadores de ameaça (pulses). |
 
-### 7. Apresentação no Terminal (Banner)
+### 7. Apresentação no Terminal (Idioma, Banner)
 
-Estas duas variáveis **não são campos de `Settings`**: são lidas diretamente do ambiente do processo por `_want_banner()` em `spectre_osint/cli/display.py`. Como o `Settings` carrega o `.env` apenas para os próprios campos (`env_file=".env"` com `extra="ignore"`) e o projeto não utiliza `load_dotenv`, **declará-las no arquivo `.env` não produz efeito** — elas precisam estar exportadas no ambiente do shell.
+Estas variáveis **não são campos de `Settings`**: são lidas diretamente do ambiente do processo (`core/i18n.py` e `_want_banner()` em `spectre_osint/cli/display.py`). Como o `Settings` carrega o `.env` apenas para os próprios campos (`env_file=".env"` com `extra="ignore"`) e o projeto não utiliza `load_dotenv`, **declará-las no arquivo `.env` não produz efeito** — elas precisam estar exportadas no ambiente do shell.
 
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
-| `SPECTRE_NO_BANNER` | não definida | Qualquer valor **não vazio** suprime o banner ASCII nos comandos que o imprimem. Equivale à opção global `--no-banner`. |
+| `SPECTRE_LANG` | não definida | Idioma da saída de terminal: `en` ou `pt-BR` (aceita `pt`, `pt_BR`, `en_US`…). Perde para `--lang` e vence a config persistida e o locale do sistema. Valor não suportado é ignorado. Veja [i18n](technical/i18n.md). |
+| `SPECTRE_CONFIG_FILE` | pasta de config do usuário | Arquivo JSON de preferências (`{"language": "pt-BR"}`). Padrão: `%APPDATA%\spectre\config.json` (Windows), `~/Library/Application Support/spectre/config.json` (macOS), `$XDG_CONFIG_HOME/spectre/config.json` ou `~/.config/spectre/config.json` (demais). |
+| `SPECTRE_NO_BANNER` | não definida | Qualquer valor **não vazio** suprime o banner ASCII. Equivale à opção global `--no-banner`. |
 | `NO_BANNER` | não definida | Mesma semântica, na convenção genérica sem prefixo. Qualquer valor não vazio também suprime o banner. |
 
 Limites que o operador precisa conhecer:
 
+- **Desde a B2-06 o banner só aparece com `--verbose`.** A saída padrão é compacta e não tem banner; as variáveis acima e `--no-banner` o suprimem também no modo verbose.
 - **O valor não é interpretado como booleano.** Apenas a presença de uma string não vazia é testada, portanto `SPECTRE_NO_BANNER=0` e `SPECTRE_NO_BANNER=false` **também suprimem** o banner. Para manter o banner, deixe a variável indefinida (ou com string vazia).
 - **Basta uma das três formas.** `--no-banner`, `SPECTRE_NO_BANNER` e `NO_BANNER` são verificadas de forma independente; qualquer uma delas ativa é suficiente.
-- **O escopo é apenas o banner.** Suprimi-lo não altera as tabelas de resultado, o nível de log, nem a apresentação controlada por `--compact` e `--verbose`.
+- **O escopo é apenas o banner.** Suprimi-lo não altera o resultado, o nível de log, nem a apresentação controlada por `--verbose`. Logs vão só para `SPECTRE_LOGS_DIR/spectre.log`; no terminal, apenas com `--verbose` (INFO) ou `--debug` (DEBUG), sempre em stderr.
 
 ---
 

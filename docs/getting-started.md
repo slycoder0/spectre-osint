@@ -50,31 +50,22 @@ Antes de iniciar investigações, execute o comando de diagnóstico. Ele valida 
 spectre doctor
 ```
 
-Exemplo **abreviado** da saída — apenas alguns trechos são reproduzidos aqui; o relatório real é mais longo:
+Saída padrão (compacta, no idioma do sistema — aqui em português):
 
 ```text
-SPECTRE DOCTOR
-
-Core
-  Python                   3.13.x           OK
-  SPECTRE                  0.1.0b1          OK
-  ...
-
-Browser
-  Chrome/Chromium          detected         OK
-  ...
-
-Security
-  Secrets redaction        OK               OK
-  SSRF policy              enabled          OK
-  ...
-
-Overall: READY WITH OPTIONAL FEATURES MISSING
+SPECTRE DOCTOR 0.1.0b1
+Núcleo: OK (Python 3.13.x, banco SQLite)
+Segurança: OK (política SSRF ativa, segredos ocultados)
+Configurado: Chrome/Chromium
+20 itens opcionais não configurados (navegador, busca, sessões, chaves de API) — `spectre doctor --all` lista todos
+Resultado geral: PRONTO, COM RECURSOS OPCIONAIS AUSENTES
 ```
 
-O relatório completo é agrupado em seis seções, renderizadas na ordem `Core`, `Browser`, `Search`, `Authenticated public sessions`, `API providers` e `Security`; apenas seções que não produziram nenhuma linha são omitidas. Portanto, além dos trechos acima, espere também as linhas de busca (SearXNG e Google CSE), uma linha por plataforma de sessão autenticada e uma linha por provedor de API — em uma instalação limpa sem chaves configuradas, essas linhas normalmente aparecem marcadas como `OPTIONAL`.
+Itens que exigem ação ou atenção aparecem sempre, cada um com a dica de correção. Para ver
+todas as verificações (agrupadas em núcleo, navegador, busca, sessões públicas autenticadas,
+provedores de API e segurança), use `spectre doctor --all`. Para outro idioma, `spectre --lang en doctor`.
 
-O status final é `READY`, `READY WITH OPTIONAL FEATURES MISSING` ou `ACTION REQUIRED`. O comando retorna código de saída `1` apenas em `ACTION REQUIRED`.
+O status final é `READY`, `READY WITH OPTIONAL FEATURES MISSING` ou `ACTION REQUIRED` (traduzido no terminal; em inglês no `--json`). O comando retorna código de saída `1` apenas em `ACTION REQUIRED`.
 
 ---
 
