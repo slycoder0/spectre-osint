@@ -3,13 +3,39 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-05 — PR #17 (Fase 2) com a correção do cache de resultados._
+_Última atualização: 2026-11-05 — PR #18 (Fase 2.5, logs sem dados do alvo) aberto._
 
 ## Fase atual
 
-**Fase 2 — `feat/b2-06-presentation-i18n`** (camada de apresentação + base i18n PT-BR/EN):
-**PR #17 aberto**, aguardando revisão. Não mergeado. Inclui a correção do cache de resultados
-abaixo, pedida antes do review.
+**Fase 2.5 — `fix/b2-07-logs-no-target-data`** (logs e avisos sem dados do alvo em todo o
+pacote): **PR #18 aberto, em revisão.** Não mergeado. A Fase 2 (PR #17) foi mergeada em
+`main` (merge `b2f8d89`).
+
+### O que a Fase 2.5 fez
+
+- **Auditoria de todas as chamadas `logger.*`** (~105 em 19 arquivos; nenhum `warnings.warn`;
+  stderr só via handler de log, barra de progresso e `_cli_fail`). 20 pontos carregavam dado
+  do alvo: `url=` + `str(exc)` no `http_client` (5 linhas), host cru (7 linhas), valor do pivô
+  e `str(exc)` no `pipeline`, caminho do relatório no erro do GraphML, `str(exc)` em
+  fingerprint de domínio / falha de site / provedor indisponível, `username=` no
+  enriquecimento, `plataforma::username` na correlação, URLs/títulos/og:* e `reason` na
+  evidência autenticada, host do candidato descoberto, host do recon ativo. Tabela completa
+  na descrição do PR #18.
+- **Helpers em `core/redaction.py`:** `exc_label(exc)` (só a classe), `target_ref()` /
+  `host_ref()` (`t:` / `h:` + 8 hex de HMAC-SHA256 com sal aleatório por processo, nunca
+  gravado), e a rede de segurança `register_target_values()` / `scrub_target_values()`.
+- **`core/logger.py`:** arquivo novo `spectre-osint.log` (o `spectre.log` antigo nunca é
+  aberto, alterado nem apagado; `legacy_log_files()` o aponta); tracebacks com frames e sem
+  mensagem; valores registrados trocados por referência só na mensagem; `httpx` / `httpcore`
+  limitados a WARNING.
+- **`spectre doctor`:** linha "Logs antigos" (estado OPCIONAL) enquanto existir `spectre.log`.
+- **Guarda:** `tests/test_logs_no_target_data.py` — canário dinâmico offline (username com
+  pistas, domínio com auto-pivô, CLI `--debug`; timeout, TLS, 4xx/5xx/429, status não-RFC,
+  SSRF, validação, callbacks que quebram), registros brutos + arquivo + stderr em todas as
+  formas derivadas, varredura AST de toda chamada de log, autotestes do detector.
+- **Correção extra, commit separado:** `spectre domain example.com` saía com `TypeError`
+  (linha do tempo com datas com e sem fuso). Pré-existente em `main`; achado na verificação
+  ao vivo. Typer fixado em `pretty_exceptions_show_locals=False`.
 
 ### Correção dentro do PR #17 — cache servindo resultados de código antigo
 
@@ -59,7 +85,8 @@ Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da corre�
 | — | Auditoria 2026-11-05 | #14 | mergeado |
 | 0 | `chore/b2-05-resume-hygiene` (Pillow `>=13,<14`, strings `0.1.0b1`, UA) | #15 | mergeado |
 | 1 | `fix/b2-03b2-display-name-rejection` | #16 | mergeado (`5ee5fd7`) |
-| 2 | `feat/b2-06-presentation-i18n` | #17 | aberto, em revisão |
+| 2 | `feat/b2-06-presentation-i18n` | #17 | mergeado (`b2f8d89`) |
+| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | aberto, em revisão |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -74,24 +101,32 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-**Próximo PR (antes da Fase 3): logs sem dados do alvo** — corrigir o defeito pré-existente
-descrito em "Follow-ups" (URLs de perfil e valores de pivô nos logs). Decisão do usuário em
-2026-11-05.
+**Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual.** `spectre` sem
+argumentos abre o menu sobre a mesma camada `services/` e as mesmas views; tela de
+Configurações grava o idioma com `core.i18n.save_language()`. O plano da Fase 3 foi entregue
+ao arquiteto junto com o PR #18 (texto, sem branch) e espera revisão antes de começar.
 
-**Depois: Fase 3 — menu interativo (fluxo de username primeiro).** `spectre` sem argumentos abre o
-menu (questionary/prompt_toolkit + Rich) sobre a mesma camada `services/` e as mesmas views;
-tela de Configurações grava o idioma com `core.i18n.save_language()`.
-
-## Últimos resultados dos portões (PR #17 com a correção do cache e os 5 ajustes da revisão, 2026-11-05)
+## Últimos resultados dos portões (PR #18, Fase 2.5, 2026-11-05)
 
 ```text
-pytest -q        1068 passed in 89.20s
+pytest -q        1127 passed in 118.06s
 ruff check       All checks passed!
 mypy             Success: no issues found in 134 source files
 pip check        No broken requirements found.
 pip-audit        No known vulnerabilities found
                  (spectre-osint: not on PyPI, skipped — esperado)
 ```
+
+Verificação ao vivo **dentro do repo** (`logs/spectre-osint.log`, só os bytes desta execução):
+
+- `spectre --debug username torvalds` → saída 0; 244 linhas de log; `torvalds` no log desta
+  execução: **0**; no stderr (`--debug`): **0**; no stdout (resultado): 19 (esperado).
+- `spectre --debug domain example.com` → saída 0 (depois da correção da linha do tempo; antes
+  saía 1, também em `main`); `example.com` no log: **0**; no stderr: **0**; no stdout: 10.
+- O `logs/spectre.log` antigo (2915 bytes) ficou intacto nas duas execuções; o `spectre
+  doctor` do repo mostra `[OPCIONAL] Logs antigos: logs\spectre.log — …` (7 linhas, saída 0).
+
+Resultados da Fase 2 (PR #17): `pytest -q` 1068 passed; demais portões verdes.
 
 Ao vivo **dentro do repo, com o cache antigo** (`spectre username torvalds`, sem `--lang`,
 locale `pt_BR`): cache foi de `user_version 0` / 55 linhas antigas para `user_version 2` / 53
@@ -114,10 +149,26 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
 
 - Quando cortar o `0.1.0b2` (Fase 6) — depois da Fase 3 ou só no fim do roadmap.
 - Comando de CLI para salvar o idioma (`spectre config lang …`) ou só pelo menu.
-- Incluir em `CLAUDE.md` (invariantes) a regra "mudou o que é cacheado → suba
-  `RESULT_SCHEMA_VERSION`" — hoje está em `CONTRIBUTING.md` e na docstring do cache.
+- Fase 3: biblioteca do menu (questionary × prompt_toolkit) e perguntas abertas do plano.
+- (Resolvida na Fase 2.5) a regra "mudou o que é cacheado → suba `RESULT_SCHEMA_VERSION`"
+  agora está nos invariantes do `CLAUDE.md`.
 
 ## Follow-ups registrados
+
+- **Sink de progresso sem proteção em menções e busca:** `modules/mentions` e
+  `modules/search` chamam o callback de progresso direto; se ele lançar, a passada inteira é
+  pulada ("Search intelligence skipped"). O pipeline e o catálogo já protegem. Proteger no
+  pipeline (passar um wrapper seguro) — achado pelo canário da Fase 2.5.
+- **Mensagens de exceção continuam nos achados e relatórios** (por desenho: relatório pode
+  ter dado do alvo) e em `_cli_fail` / traceback de crash no terminal (texto que o operador
+  digitou, nunca gravado). Não são logs; registrado para a revisão.
+- **Rede de segurança de logs é por processo e nunca é limpa em produção:** no menu (Fase 3)
+  vários alvos no mesmo processo acumulam — mais redação, nunca menos. Avaliar limite.
+- **Guarda AST é heurística** (nomes/chaves/atributos com cara de alvo); o canário dinâmico
+  cobre os caminhos exercitados. Caminhos de navegador/autenticação só pela varredura AST e
+  por `test_username_auth_evidence.py`.
+- **`[!] <provedor> unavailable (Classe)`** não diz mais "timeout" × "HTTP 503": as linhas do
+  `spectre.http` logo antes trazem o status.
 
 - **Achados sem `observed` (anteriores à B2-03A)** continuam no fallback de nível superior da
   correlação: sem `source`, não há como distinguir um título de um nome. Só afeta casos muito
@@ -129,11 +180,8 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   `hash`, `company`, `person`, `threat`, `wayback`, `investigate` não-username), `auth`,
   `cache`, `case`, `providers`, `report`, mensagens de erro de `_cli_fail`, o
   `CliProgressReporter` do modo verbose e os textos de `--help` do Typer.
-- **Logs com dados do alvo (pré-existente, agora só no arquivo):** `core/http_client.py`
-  registra `url=%s` (URL de perfil contém o username) em avisos de timeout/TLS/HTTP;
-  `core/pipeline.py` registra o valor do pivô (`Pivot failed for %s`) e `str(exc)` das
-  coletas opcionais de e-mail/website. Viola o invariante "logs sem dados do alvo";
-  trocar por host/classe da exceção — **agendado para o próximo PR**.
+- ~~Logs com dados do alvo~~ — **resolvido na Fase 2.5 (PR #18).** Logs antigos
+  (`logs/spectre.log`) podem conter dados do alvo; o doctor avisa, nada é apagado.
 - **Texto não confiável no `--verbose`:** as seções legadas imprimem títulos de menção,
   plataforma/URL/detalhe como markup Rich (`[...]` pode virar estilo ou `MarkupError`).
   O bloco compacto já usa `clean_text()` + `rich.text.Text`; aplicar o mesmo no verbose.

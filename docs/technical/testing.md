@@ -83,3 +83,4 @@ git ls-files | grep -Ei '\.(db|sqlite3?)$|storage_state|\.env$' && echo FAIL
 3. **Expectativas do Doctor:** Testes do `spectre doctor` asseguram que segredos nunca sejam impressos e que investigações nunca sejam iniciadas.
 4. **Sem Delays de Backoff:** Fixtures utilizam `Settings(ssrf_enabled=False, http_max_retries=1)` para desativar esperas desnecessárias de retry em testes de status.
 5. **Não Mascarar Erros:** Preserve a suíte existente; nunca delete testes com falha apenas para "ficar verde".
+6. **Logs sem dados do alvo:** `tests/test_logs_no_target_data.py` roda investigações sintéticas offline em DEBUG (timeouts, TLS, 4xx/5xx/429, SSRF, validação, pivôs), confere registros brutos, arquivo de log e stderr em todas as formas derivadas dos valores sentinela, e varre por AST toda chamada `logger.*` do pacote. Se ele quebrar, um log novo carrega dado do alvo: troque por `exc_label` / `target_ref` / `host_ref`.

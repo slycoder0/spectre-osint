@@ -173,6 +173,21 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Logs sem dados do alvo (B2-07):** o arquivo de log e as linhas de `--verbose` / `--debug`
+  não registram mais username, e-mail, nome, domínio / IP / URL investigados, URLs de perfil,
+  valores de pivô, caminhos de relatório nem a mensagem de exceções (`str(exc)` do httpx, de
+  validação ou de arquivo). Ficam o provedor, o status HTTP, contagens e a classe da exceção;
+  quando é preciso ligar linhas do mesmo alvo ou host, aparece uma referência curta
+  (`t:1a2b3c4d`, `h:…`) que muda a cada execução e não pode ser revertida. Tracebacks mantêm
+  os frames e escondem a mensagem. Relatórios e banco continuam completos.
+- **Logs antigos podem conter dados do alvo.** Versões anteriores gravavam em
+  `SPECTRE_LOGS_DIR/spectre.log` (padrão `./logs/spectre.log`, relativo à pasta onde o
+  `spectre` roda) e esse arquivo pode ter usernames, URLs de perfil e domínios investigados.
+  Ele **não é apagado nem alterado**; o `spectre doctor` mostra uma linha "Logs antigos"
+  enquanto ele existir. Apague-o quando não precisar mais.
+- **`spectre domain` não quebra mais com datas mistas:** a linha do tempo ordenava datas com e
+  sem fuso juntas (RDAP × certificados) e o comando saía com `TypeError` em domínios reais
+  como `example.com`.
 - **Ajustes da revisão do PR #17 (B2-06):** username sem nenhum site consultado ainda mostra a
   saída compacta com `0 não verificados`; `--verbose` / `--debug` agora valem também para
   `spectre auth`; `--verbose` mostra INFO mesmo com `SPECTRE_LOG_LEVEL=WARNING` (o arquivo de
@@ -270,6 +285,8 @@ The format is based on Keep a Changelog.
   autoridade de consumo de B2-03B seguem intocados;
 
 ### Changed
+- **Novo arquivo de log (B2-07):** os logs vão para `SPECTRE_LOGS_DIR/spectre-osint.log`. O
+  `spectre.log` antigo fica onde está, sem ser misturado às linhas novas.
 - **Saída compacta por padrão (B2-06):** `spectre username` mostra só os perfis encontrados
   (plataforma + URL), os nomes observados por plataforma e uma linha fixa "N não
   verificados" (bloqueados / login / limite / inconclusivos), sempre presente, mesmo com 0.
