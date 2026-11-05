@@ -810,7 +810,9 @@ async def _check_site(
         public_location = flat.get("public_location")
         public_links = flat.get("public_links") or []
     else:
-        display_name = flat.get("display_name") or public_name
+        # No raw og:title fallback: a page title is not a name (B2-03B2). The observed
+        # row keeps the raw text in `original`, marked rejected.
+        display_name = flat.get("display_name")
         bio = flat.get("bio") or description
         avatar_url = flat.get("avatar_url") or avatar
         website_val = flat.get("website") or website
@@ -875,7 +877,7 @@ async def _check_site(
     if status not in {UsernameCheckStatus.CONFIRMED, UsernameCheckStatus.LIKELY}:
         return {"finding": finding, "evidence": [], "entities": [], "relationships": []}
 
-    effective_display_name = display_name if is_authenticated else (json_name or public_name)
+    effective_display_name = display_name if is_authenticated else (json_name or display_name)
 
     evidence = make_evidence(
         source=name,
