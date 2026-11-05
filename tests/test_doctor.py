@@ -22,7 +22,7 @@ from spectre_osint.core.pipeline import InvestigationRunner
 runner = CliRunner()
 
 
-def test_version_is_alpha() -> None:
+def test_version_is_beta() -> None:
     assert __version__ == "0.1.0b1"
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0

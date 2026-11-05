@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from spectre_osint import __version__
 from spectre_osint.core.cache import ResponseCache
 from spectre_osint.core.config import BUNDLED_DATA_DIR, Settings, get_settings
 from spectre_osint.core.exceptions import (
@@ -77,7 +78,7 @@ def request_host(url: str) -> str:
 def load_user_agents(path: Path | None = None) -> list[str]:
     ua_path = path or (BUNDLED_DATA_DIR / "user_agents.txt")
     if not ua_path.exists():
-        return ["SPECTRE-OSINT/0.1-alpha (+passive-osint)"]
+        return [f"SPECTRE-OSINT/{__version__} (+passive-osint)"]
     lines = [line.strip() for line in ua_path.read_text(encoding="utf-8").splitlines()]
     return [line for line in lines if line and not line.startswith("#")]
 

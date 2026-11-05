@@ -1,7 +1,7 @@
 services:
   spectre:
     build: .
-    image: spectre-osint:0.1.0-alpha
+    image: spectre-osint:0.1.0b1
     env_file:
       - path: .env
         required: false

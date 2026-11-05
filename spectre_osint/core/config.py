@@ -11,6 +11,8 @@ from typing import Any
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from spectre_osint import __version__
+
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = PACKAGE_DIR.parent
 BUNDLED_DATA_DIR = PACKAGE_DIR / "data"
@@ -101,7 +103,7 @@ class Settings(BaseSettings):
     http_max_backoff: float = Field(default=30.0, alias="SPECTRE_HTTP_MAX_BACKOFF")
     http_circuit_failures: int = Field(default=3, alias="SPECTRE_HTTP_CIRCUIT_FAILURES")
     user_agent: str = Field(
-        default="SPECTRE-OSINT/0.1-alpha (+passive-osint)",
+        default=f"SPECTRE-OSINT/{__version__} (+passive-osint)",
         alias="SPECTRE_USER_AGENT",
     )
     ssrf_enabled: bool = Field(default=True, alias="SPECTRE_SSRF_ENABLED")
