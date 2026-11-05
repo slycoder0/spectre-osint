@@ -807,7 +807,8 @@ async def test_collect_username_is_direct_and_logs_relevance_counts(
 
 
 def test_cli_mentions_panel_is_summary_only(capsys) -> None:
-    from spectre_osint.cli.display import print_result
+    """The mentions panel is verbose-only since B2-06; there it stays a summary."""
+    from spectre_osint.cli.display import configure_display, print_result
 
     user = Entity.create(EntityType.USERNAME, "alice_osint", "user", Confidence.CONFIRMED)
     findings = [
@@ -854,6 +855,9 @@ def test_cli_mentions_panel_is_summary_only(capsys) -> None:
         findings=findings,
         report_path="/tmp/report.html",
     )
+    print_result(result)
+    assert "PUBLIC MENTIONS" not in capsys.readouterr().out
+    configure_display(verbose=True)
     print_result(result)
     out = capsys.readouterr().out
     assert "PUBLIC MENTIONS" in out

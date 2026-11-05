@@ -17,7 +17,9 @@ def test_help_and_version() -> None:
 
 
 def test_username_cli_lists_platform(capsys) -> None:
-    from spectre_osint.cli.display import print_result
+    """Compact by default (B2-06): a LOGIN_REQUIRED site is counted, not listed.
+    --verbose lists every platform with its status."""
+    from spectre_osint.cli.display import configure_display, print_result
     from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
     from spectre_osint.core.types import Confidence, EntityType, FindingStatus
 
@@ -48,10 +50,16 @@ def test_username_cli_lists_platform(capsys) -> None:
         ],
     )
     print_result(result)
+    compact = capsys.readouterr().out
+    assert "1 not verified: 1 needs login" in compact
+    assert "Instagram" not in compact
+    configure_display(verbose=True)
+    print_result(result)
     out = capsys.readouterr().out
     assert "Platform" in out
     assert "Instagram" in out
     assert "LOGIN_REQUIRED" in out
+    assert "1 not verified: 1 needs login" in out
 
 
 def test_providers_not_probed() -> None:

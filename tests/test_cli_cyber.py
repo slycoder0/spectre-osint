@@ -27,12 +27,15 @@ def test_help_lists_auth_and_no_banner() -> None:
 
 def test_banner_respects_no_color(capsys, monkeypatch) -> None:
     monkeypatch.setenv("NO_COLOR", "1")
-    configure_display(no_banner=False)
+    configure_display()
+    print_banner()
+    assert capsys.readouterr().out.strip() == "", "no banner by default (B2-06)"
+    configure_display(no_banner=False, verbose=True)
     print_banner()
     out = capsys.readouterr().out
     assert "I N T E L L I G E N C E" in out
     assert "passive-first" in out
-    configure_display(no_banner=True)
+    configure_display(no_banner=True, verbose=True)
     print_banner()
     skipped = capsys.readouterr().out
     assert skipped.strip() == ""
@@ -71,13 +74,17 @@ def test_compact_username_summary(capsys) -> None:
     configure_display(compact=True, no_banner=True)
     print_result(result)
     out = capsys.readouterr().out
-    assert "USERNAME SUMMARY" in out
-    assert "CACHED" not in out or "GitHub" not in out  # compact skips table
+    assert "GitHub  https://github.com/alice_osint" in out
+    assert "0 not verified" in out
+    assert "USERNAME SUMMARY" not in out  # compact skips the legacy panels
+    assert "CACHED" not in out
     configure_display(compact=False, verbose=True, no_banner=True)
     print_result(result)
     verbose = capsys.readouterr().out
+    assert "USERNAME SUMMARY" in verbose
     assert "GitHub" in verbose
     assert "CACHED" in verbose
+    assert "0 not verified" in verbose
     configure_display()
 
 

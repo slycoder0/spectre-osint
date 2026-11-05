@@ -21,20 +21,20 @@ def test_cli_username_forwards_multiple_aliases(settings, monkeypatch) -> None:
 
     captured: dict[str, object] = {}
 
-    async def fake_investigate(target, **kwargs):
-        captured["target"] = target
-        captured["extra"] = kwargs.get("extra")
+    async def fake_run_investigation(request, **_kwargs):
+        captured["target"] = request.target
+        captured["extra"] = request.extra
         return InvestigationResult(
             case_id="c",
             case_name="n",
-            target=target,
+            target=request.target,
             target_type=EntityType.USERNAME,
             mode="PASSIVE_OSINT",
             started_at=utcnow(),
             finished_at=utcnow(),
         )
 
-    monkeypatch.setattr(cli_commands, "_investigate", fake_investigate)
+    monkeypatch.setattr(cli_commands, "run_investigation", fake_run_investigation)
     result = runner.invoke(
         cli_commands.app,
         [
