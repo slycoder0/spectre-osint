@@ -3,7 +3,7 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-05 — PR da Fase 1._
+_Última atualização: 2026-11-05 — PR da Fase 1 (correção pós-review do #16)._
 
 ## Fase atual
 
@@ -21,16 +21,18 @@ revisão. Não mergeado.
 Fase 1, em uma linha: título de página (`og:title` / `<title>`) não vira mais nome ativo;
 fica em `observed` com `rejected_by="page_title_unverified"`. Exceção única: `og:title` do
 Instagram com `(@handle)` exato. Detalhes em `docs/technical/enrichment.md` (B2-03B2).
+Correção pós-review (Grok): `og:title` bruto não eleva mais um `LIKELY` anônimo de `MEDIUM` para
+`HIGH` (`engine.py`, condição agora só com `json_name`).
 
 ## Próximo
 
 **Fase 2 — `fix/b2-06-discovery-page-chrome`** (A2): links de rodapé/navegação e contas
 oficiais da própria plataforma não viram links de perfil nem pivôs.
 
-## Últimos resultados dos portões (branch da Fase 1, 2026-11-05)
+## Últimos resultados dos portões (branch da Fase 1, 2026-11-05, após a correção de confiança)
 
 ```text
-pytest -q        923 passed in 84.20s
+pytest -q        925 passed in 95.80s
 ruff check       All checks passed!
 mypy             Success: no issues found in 125 source files
 pip check        No broken requirements found.
@@ -55,3 +57,10 @@ público real da conta `torvalds` no Hugging Face — mesmo username, outra pess
 - **Originais brutos por item de lista** (parte adiada de B2-03B2): não muda o que o usuário vê.
 - `page_title` (finding) e `title` (evidência) guardam o título bruto **com rótulo honesto**;
   não é defeito, só registro.
+- **Ramo `json_name` da elevação de confiança é código morto** (`engine.py`, ~linha 755):
+  `json_name` só é preenchido no caminho `json_api`, onde o status é `CONFIRMED` (ou negativo),
+  nunca `LIKELY`; e o caminho autenticado já é excluído por `not is_authenticated`. Mantido como
+  pedido (correção mínima), sem teste de guarda possível por esse ramo. Decidir remover a
+  elevação inteira numa fase própria.
+- **`~` no caminho não conta como identidade de URL** (`username_in_url_identity`): canonical
+  `…/~handle` (estilo Launchpad) não gera `canonical_match`. Fora do escopo; só registrado.

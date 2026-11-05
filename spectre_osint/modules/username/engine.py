@@ -755,8 +755,8 @@ async def _check_site(
     if (
         status == UsernameCheckStatus.LIKELY
         and not is_authenticated
-        and (json_name or public_name)
-        and username.lower() in str(json_name or public_name).lower()
+        and json_name
+        and username.lower() in str(json_name).lower()
     ):
         confidence = Confidence.HIGH
 

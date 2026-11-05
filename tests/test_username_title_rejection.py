@@ -344,3 +344,61 @@ async def test_engine_does_not_expose_raw_page_title_as_a_name(tmp_path) -> None
     report = json.loads(write_json_report(result, tmp_path / "reports").read_text(encoding="utf-8"))
     assert report["findings"][0]["data"]["display_name"] is None
     assert all(e.get("metadata", {}).get("public_name") is None for e in report["entities"])
+
+
+# Confidence must not be inflated by a rejected page title: the engine used to raise a
+# LIKELY anonymous profile from MEDIUM to HIGH when the handle appeared in the raw og:title.
+async def _check_launchpad(tmp_path, head: str):
+    body = (
+        f"<html><head>{head}</head>"
+        f'<body><div class="user-profile">~{HANDLE}</div></body></html>'
+    )
+    site = SiteDefinition.model_validate(
+        {
+            "name": "Launchpad Synthetic",
+            "category": "Development",
+            "profile_url": "https://launchpad.example/~{username}",
+            "check_method": "generic_html",
+            "confidence_strategy": "multi_signal",
+            "expected_status": [200],
+            "not_found_status": [404],
+            "profile_markers": ["user-profile"],
+            "success_patterns": ["user-profile"],
+        }
+    ).to_dict()
+    settings = _settings(tmp_path)
+    http = HttpClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200, text=body)))
+    entity = Entity.create(EntityType.USERNAME, HANDLE, "t", Confidence.CONFIRMED)
+    try:
+        return await _check_site(entity, site, http, asyncio.Semaphore(2))
+    finally:
+        await http.close()
+
+
+@pytest.mark.asyncio
+async def test_rejected_og_title_does_not_raise_anonymous_likely_confidence(tmp_path) -> None:
+    head = f'<meta property="og:title" content="{HANDLE} does not use Launchpad">'
+    res = await _check_launchpad(tmp_path, head)
+
+    finding = res["finding"]
+    assert finding.data["check_status"] == "LIKELY"
+    assert finding.data["observed"]["display_name"]["rejected_by"] == TOKEN
+    assert finding.confidence == Confidence.MEDIUM
+    assert finding.data["confidence"] == Confidence.MEDIUM.value
+    assert [ev.confidence for ev in res["evidence"]] == [Confidence.MEDIUM]
+    assert [e.confidence for e in res["entities"] if e.type == EntityType.SOCIAL_PROFILE] == [Confidence.MEDIUM]
+
+
+@pytest.mark.asyncio
+async def test_classifier_high_confidence_is_kept(tmp_path) -> None:
+    """Guard: a HIGH decided by classify_html (title + canonical) is not lowered."""
+    head = (
+        f'<meta property="og:title" content="{HANDLE} does not use Launchpad">'
+        f'<link rel="canonical" href="https://launchpad.example/{HANDLE}">'
+    )
+    res = await _check_launchpad(tmp_path, head)
+
+    assert res["finding"].data["check_status"] == "LIKELY"
+    assert res["finding"].confidence == Confidence.HIGH
+    assert [ev.confidence for ev in res["evidence"]] == [Confidence.HIGH]
+    assert [e.confidence for e in res["entities"] if e.type == EntityType.SOCIAL_PROFILE] == [Confidence.HIGH]
