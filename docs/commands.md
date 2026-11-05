@@ -298,6 +298,8 @@ spectre providers --probe --name github
 ### `spectre cache`
 Gerencia o cache local de resultados de investigação (`ResultCache`, em `data/cache/results.sqlite`). Este comando **não** atua sobre o cache de respostas HTTP usado pelo `HttpClient` (`ResponseCache`, em `data/cache/cache.sqlite`), que permanece intacto e pode continuar servindo respostas em cache dentro do respectivo TTL.
 
+O cache de resultados guarda dados **já processados** (`Finding.data`), então ele é versionado: a chave inclui `RESULT_SCHEMA_VERSION` e a versão do pacote, e ao abrir o cache as entradas de outro esquema e as expiradas são apagadas. Uma entrada gravada por uma versão anterior do SPECTRE nunca é servida; não é preciso rodar `spectre cache clear` depois de atualizar. Quem muda o formato ou o significado do que é cacheado (campos de `Finding.data`, transporte `observed`, regras de rejeição, status ou confiança) sobe `RESULT_SCHEMA_VERSION` no mesmo commit.
+
 ```bash
 # Exibir status e registros do cache de resultados
 spectre cache status
