@@ -297,7 +297,11 @@ class _TargetScope:
         return f"{kind}:{digest}"
 
     def register(self, values: Iterable[object]) -> bool:
-        """Add values; True the first time the scope reaches `MAX_SCOPE_FORMS`."""
+        """Add values; True the first time a value does not fit in `MAX_SCOPE_FORMS`.
+
+        A value's forms are reserved together or not at all: an e-mail never ends up
+        scrubbed raw while its `%40` form and its domain go through untouched.
+        """
         from spectre_osint.core.log_vocabulary import log_vocabulary
 
         vocabulary = log_vocabulary()
@@ -308,18 +312,22 @@ class _TargetScope:
                 text = str(value or "").strip()
                 if not text:
                     continue
-                ref = self.ref(text.casefold(), "t")
+                new_forms: dict[str, str] = {}  # casefolded key -> form, in order
                 for form in _scrub_forms(text, vocabulary):
                     key = form.casefold()
-                    if key in self._refs:
-                        continue
-                    if len(self._forms) >= MAX_SCOPE_FORMS:
-                        reached_limit = not self._full
-                        self._full = True
-                        break
+                    if key not in self._refs:
+                        new_forms.setdefault(key, form)
+                if not new_forms:
+                    continue
+                if len(self._forms) + len(new_forms) > MAX_SCOPE_FORMS:
+                    reached_limit = reached_limit or not self._full
+                    self._full = True
+                    continue
+                ref = self.ref(text.casefold(), "t")
+                for key, form in new_forms.items():
                     self._refs[key] = ref
                     self._forms.append(form)
-                    changed = True
+                changed = True
             if changed:
                 self._pattern = _compile_forms(self._forms)
         return reached_limit
@@ -361,6 +369,18 @@ def target_scope() -> Iterator[None]:
     investigation in the same process (the menu runs many) neither scrubs the previous
     target nor shares its references. A scope opened inside another one is the same
     scope: only the outermost discards.
+
+    Contract: **every task that logs the target must finish inside the scope.** The
+    scope travels in a `ContextVar`, so:
+
+    - a task created inside the scope but awaited after the `with` runs against a closed
+      scope: its log lines carry the target in clear (the safety net is empty) and
+      `target_ref` gives a different reference than inside (the salt was replaced);
+    - a task created before the `with` copied its context earlier and never sees the
+      scope at all.
+
+    `InvestigationRunner.run` awaits its whole gather inside the scope, so neither case
+    happens today; `tests/test_target_scope.py` pins both outcomes.
     """
     if _ACTIVE_SCOPE.get() is not None:
         yield

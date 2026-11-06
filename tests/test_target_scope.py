@@ -9,6 +9,7 @@ and no reference shared between investigations (a new salt per scope).
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from spectre_osint.core import redaction
@@ -74,6 +75,38 @@ def test_a_scope_holds_at_most_the_form_limit() -> None:
     assert redaction.registered_form_count() == 0
 
 
+class _Collect(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+def test_a_value_that_does_not_fit_is_registered_whole_or_not_at_all() -> None:
+    """With one slot left, an e-mail used to enter raw while `%40` and the domain stayed
+    out: the limit cut through the forms of one value (second review of PR #18)."""
+    redaction.clear_target_values()
+    limit = redaction.MAX_SCOPE_FORMS
+    collect = _Collect()
+    redaction.logger.addHandler(collect)
+    try:
+        with redaction.target_scope():
+            # One form each: no "_", ".", " " or reserved character to derive another.
+            register_target_values(*(f"fillvalue{index:05d}" for index in range(limit - 1)))
+            assert redaction.registered_form_count() == limit - 1
+            register_target_values("alice@example.com")
+            register_target_values("bob.other@example.org")
+            lines = ["mail=alice@example.com", "mail=alice%40example.com", "host=example.com"]
+            fates = [scrub_target_values(line) == line for line in lines]
+            assert len(set(fates)) == 1, [scrub_target_values(line) for line in lines]
+            assert redaction.registered_form_count() <= limit
+    finally:
+        redaction.logger.removeHandler(collect)
+    assert sum("log safety net full" in message for message in collect.messages) == 1
+
+
 def test_a_nested_scope_is_the_investigation_scope() -> None:
     """A pivot or a helper that opens a scope inside an investigation shares its values
     and its references; only the outermost scope discards them."""
@@ -100,3 +133,51 @@ def test_tasks_and_worker_threads_started_inside_a_scope_see_it() -> None:
             return [*from_task, from_thread]
 
     assert all(text.startswith("t:") for text in asyncio.run(inside()))
+
+
+# --- the contract of target_scope(): a task that logs the target ends inside the scope ------
+# These pin today's behavior (second review of PR #18); the pipeline awaits its gather
+# inside the scope, so neither case leaks now. A change here is a change of contract.
+
+
+def test_contract_a_task_awaited_after_the_scope_closes_logs_in_clear() -> None:
+    redaction.clear_target_values()
+
+    async def main() -> tuple[str, str, str]:
+        with redaction.target_scope():
+            register_target_values("alice_osint")
+            ref_inside = target_ref("alice_osint")
+
+            async def late() -> tuple[str, str]:
+                return scrub_target_values("alice_osint"), target_ref("alice_osint")
+
+            task = asyncio.create_task(late())  # created inside, not awaited inside
+        text, ref_after = await task
+        return ref_inside, text, ref_after
+
+    ref_inside, text, ref_after = asyncio.run(main())
+    assert text == "alice_osint", "the scope's values are gone once it closes"
+    assert ref_after != ref_inside, "the closed scope's salt was replaced"
+
+
+def test_contract_a_task_created_before_the_scope_never_sees_it() -> None:
+    redaction.clear_target_values()
+
+    async def main() -> tuple[str, str]:
+        gate = asyncio.Event()
+
+        async def early() -> str:
+            await gate.wait()
+            return scrub_target_values("alice_osint")
+
+        task = asyncio.create_task(early())  # copies the context before the scope exists
+        await asyncio.sleep(0)
+        with redaction.target_scope():
+            register_target_values("alice_osint")
+            in_scope = scrub_target_values("alice_osint")
+            gate.set()
+            return in_scope, await task
+
+    in_scope, from_task = asyncio.run(main())
+    assert in_scope.startswith("t:")
+    assert from_task == "alice_osint"
