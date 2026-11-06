@@ -35,6 +35,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import re
 import warnings
 import zlib
 from collections.abc import Iterable, Iterator
@@ -44,7 +45,7 @@ from urllib.parse import quote, quote_plus
 
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, field_validator
 from typer.testing import CliRunner
 
 import spectre_osint
@@ -54,7 +55,9 @@ from spectre_osint.core.database import init_db, reset_engine
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.logger import ROOT_LOGGER, get_logger, setup_logging
 from spectre_osint.core.pipeline import InvestigationRunner
+from spectre_osint.core.redaction import MIN_SCRUB_LENGTH
 from spectre_osint.core.types import EntityType
+from spectre_osint.modules.username.engine import load_sites
 from spectre_osint.services.investigations import username_request
 
 USERNAME = "alice_osint"
@@ -62,7 +65,9 @@ NAME = "Alice Example"
 EMAIL = "alice@example.com"
 DOMAIN = "example.com"
 PIVOT_IP = "93.184.216.34"  # A record of the synthetic domain; followed by auto-pivot
-SENTINELS = (USERNAME, NAME, EMAIL, DOMAIN, PIVOT_IP)
+DOC_IP = "192.0.2.10"  # TEST-NET-1, the `spectre ip` target
+TARGET_URL = f"https://{DOMAIN}/u/{USERNAME}"  # the `spectre url` target
+SENTINELS = (USERNAME, NAME, EMAIL, DOMAIN, PIVOT_IP, DOC_IP, TARGET_URL)
 
 # Pins every non-target host during the SSRF-enabled domain run. Not target data.
 PROVIDER_PIN_IP = "1.1.1.1"
@@ -75,7 +80,13 @@ TARGET_PRIVATE_IP = "10.0.0.5"
 
 
 def derived_forms(value: str) -> set[str]:
-    """Every shape a target value takes in a log line, case-folded for matching."""
+    """Every shape a target value takes in a log line, case-folded for matching.
+
+    Same floor as the production safety net (`MIN_SCRUB_LENGTH`), but stricter where the
+    net is lenient: the e-mail's local part and domain are looked for at any length, so a
+    call site that logs `alice` from `alice@example.com` fails here even though the net
+    would not scrub it (the net is a fallback; this detector is the rule).
+    """
     bases = {value, value.casefold(), value.upper()}
     forms: set[str] = set()
     for base in bases:
@@ -93,15 +104,19 @@ def derived_forms(value: str) -> set[str]:
                 base.replace("@", "%40"),
             }
         )
+    always: set[str] = set()
     if "@" in value:
         normalized = value.strip().lower().encode("utf-8")
         forms.add(hashlib.md5(normalized).hexdigest())  # noqa: S324 — gravatar-style id
         forms.add(hashlib.sha256(normalized).hexdigest())
+        local, _, domain = value.rpartition("@")
+        always.update(part for part in (local, domain) if part)
     try:
         forms.add(ipaddress.ip_address(value).reverse_pointer)
     except ValueError:
         pass
-    return {form.casefold() for form in forms if len(form) >= 4}
+    kept = {form for form in forms if len(form) >= MIN_SCRUB_LENGTH} | always
+    return {form.casefold() for form in kept}
 
 
 _FORMS = {sentinel: derived_forms(sentinel) for sentinel in SENTINELS}
@@ -410,6 +425,12 @@ def _crashing_progress(payload: dict[str, Any]) -> None:
         raise RuntimeError(f"progress sink broke on {json.dumps(payload, default=str)}")
 
 
+def _crash_site() -> dict[str, Any]:
+    """The site whose check is made to crash: taken from the live catalog (the first
+    anonymous one), so renaming or removing a site cannot silently disable the case."""
+    return next(site for site in load_sites() if not site.get("requires_auth"))
+
+
 @pytest.fixture
 def offline(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.setattr("spectre_osint.modules.dns.resolver._query_sync", _fake_dns)
@@ -453,10 +474,11 @@ async def test_username_investigation_with_leads_logs_no_target_data(
         raise httpx.ConnectError(f"cannot reach https://{entity.normalized_value}/ for {EMAIL}")
 
     real_check_site = engine._check_site
+    crash_site = _crash_site()
 
     async def sometimes_crashing_check_site(entity: Any, site: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
-        if str(site.get("name") or "") == "GitLab":
-            raise RuntimeError(f"site check crashed for https://gitlab.com/{entity.normalized_value}")
+        if site.get("slug") == crash_site["slug"]:
+            raise RuntimeError(f"site check crashed for {crash_site['url_template']} {entity.normalized_value}")
         return await real_check_site(entity, site, *args, **kwargs)
 
     offline.setattr(pipeline, "analyze_email", failing_email)
@@ -610,8 +632,12 @@ def _patch_cli_runner(monkeypatch: pytest.MonkeyPatch) -> None:
             False,
         ),
         (["--debug", "domain", DOMAIN, "--auto-pivot", "--depth", "2"], True),
+        (["--debug", "email", EMAIL], True),
+        # TEST-NET-1 is a reserved range: the SSRF policy would refuse it up front.
+        (["--debug", "ip", DOC_IP], False),
+        (["--debug", "url", TARGET_URL], True),
     ],
-    ids=["username-with-leads", "domain-auto-pivot"],
+    ids=["username-with-leads", "domain-auto-pivot", "email", "ip", "url"],
 )
 def test_cli_debug_run_keeps_target_data_out_of_stderr_and_log_file(
     argv: list[str],
@@ -637,9 +663,25 @@ def test_cli_debug_run_keeps_target_data_out_of_stderr_and_log_file(
 # --- 2. static guard -------------------------------------------------------------------------
 
 _LOG_METHODS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
-# Wrapping a value in one of these makes it safe to log.
-_SAFE_WRAPPERS = {"exc_label", "target_ref", "host_ref", "len", "bool", "int", "float", "round"}
-# Bare names / subscript keys that hold target data in this code base.
+# A log call is `<receiver>.<method>(...)` where the receiver is a name or attribute ending
+# in one of these (`logger`, `self.logger`, `_log`, `LOGGER`, `sink`), a `get_logger(...)` /
+# `logging.getLogger(...)` call, or the `logging` module itself.
+_LOGGER_SUFFIXES = ("log", "logger", "sink")
+_LOGGER_FACTORIES = {"get_logger", "getLogger"}
+# Wrapping a value in one of these makes it safe to log. `validation_label` is built only
+# from the error count, pydantic type codes and the exception class (`observed.py`).
+_SAFE_WRAPPERS = {
+    "exc_label",
+    "target_ref",
+    "host_ref",
+    "validation_label",
+    "len",
+    "bool",
+    "int",
+    "float",
+    "round",
+}
+# Bare names / subscript keys / `.get()` keys that hold target data in this code base.
 _DENY_NAMES = {
     "url",
     "urls",
@@ -671,16 +713,14 @@ _DENY_NAMES = {
     "detail",
 }
 # Attribute names that hold target data (`spec.display_name` is a platform name, so the
-# attribute list is narrower than the bare-name list).
-_DENY_ATTRS = {"normalized_value", "username", "email", "url", "host", "hostname", "target", "query"}
-
-
-def _is_logger_call(node: ast.Call) -> bool:
-    func = node.func
-    if not isinstance(func, ast.Attribute) or func.attr not in _LOG_METHODS:
-        return False
-    owner = func.value
-    return isinstance(owner, ast.Name) and owner.id in {"logger", "log", "_log", "LOGGER"}
+# attribute list is narrower than the bare-name list). `.error` is a validation result's
+# message (`ObservedAuthority.error`): bounded today, but never a log argument.
+_DENY_ATTRS = {"normalized_value", "username", "email", "url", "host", "hostname", "target", "query", "error"}
+# Objects whose str() / repr() embeds URLs, payloads or the target: never logged whole,
+# with %s or %r, unless the name only ever holds a safe wrapper's result.
+_DOMAIN_OBJECTS = {"finding", "request", "response", "entity", "hit", "item", "err"}
+_STDERR_ATTRS = {"stderr", "__stderr__"}
+_PLACEHOLDER = re.compile(r"%(\([^)]*\))?[#0\- +]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[hlL]?([diouxXeEfFgGcrsa%])")
 
 
 def _call_name(func: ast.AST) -> str:
@@ -689,6 +729,27 @@ def _call_name(func: ast.AST) -> str:
     if isinstance(func, ast.Attribute):
         return func.attr
     return ""
+
+
+def _is_logger_receiver(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == "logging" or node.id.casefold().endswith(_LOGGER_SUFFIXES)
+    if isinstance(node, ast.Attribute):
+        return node.attr.casefold().endswith(_LOGGER_SUFFIXES)
+    if isinstance(node, ast.Call):
+        return _call_name(node.func) in _LOGGER_FACTORIES
+    return False
+
+
+def _is_logger_call(node: ast.Call) -> bool:
+    func = node.func
+    return isinstance(func, ast.Attribute) and func.attr in _LOG_METHODS and _is_logger_receiver(func.value)
+
+
+def _is_stderr(node: ast.AST | None) -> bool:
+    if isinstance(node, ast.Attribute):
+        return node.attr in _STDERR_ATTRS and isinstance(node.value, ast.Name) and node.value.id == "sys"
+    return isinstance(node, ast.Name) and node.id == "stderr"
 
 
 # Booleans and counters that only *mention* a target-shaped field.
@@ -701,20 +762,35 @@ def _denied(name: str) -> bool:
     return name in _DENY_NAMES or name.endswith("_url") or name.endswith("_urls")
 
 
-def _unsafe_parts(node: ast.AST, exc_names: set[str]) -> list[str]:
+class _Scope:
+    """What one function (or the module body) knows about its names."""
+
+    def __init__(self) -> None:
+        self.exc_names: set[str] = set()  # except-bound, or items of gather(return_exceptions=True)
+        self.tainted: set[str] = set()  # assigned from target data, str(exc), an f-string, ...
+        self.sanitized: set[str] = set()  # only ever assigned a safe wrapper's result
+
+
+def _unsafe_parts(node: ast.AST, scope: _Scope) -> list[str]:
     if isinstance(node, ast.Call) and _call_name(node.func) in _SAFE_WRAPPERS:
         return []
     if isinstance(node, ast.Attribute) and node.attr == "__name__":
         return []  # type(exc).__name__
-    if isinstance(node, ast.Call) and _call_name(node.func) in {"str", "repr", "format"}:
-        inner = [arg for arg in node.args if isinstance(arg, ast.Name) and arg.id in exc_names]
-        if inner:
-            return [f"{_call_name(node.func)}({inner[0].id})"]
+    if isinstance(node, ast.Call) and _call_name(node.func) in {"str", "repr", "format", "ascii"}:
+        for arg in node.args:
+            if isinstance(arg, ast.Name) and (
+                arg.id in scope.exc_names or (arg.id in _DOMAIN_OBJECTS and arg.id not in scope.sanitized)
+            ):
+                return [f"{_call_name(node.func)}({arg.id})"]
     if isinstance(node, ast.JoinedStr):
         return ["f-string argument (pass safe values as separate args)"]
     if isinstance(node, ast.Name):
-        if node.id in exc_names:
+        if node.id in scope.exc_names:
             return [f"exception object {node.id!r} (use exc_label)"]
+        if node.id in scope.tainted:
+            return [f"name {node.id!r} is built from target data or an exception message"]
+        if node.id in _DOMAIN_OBJECTS and node.id not in scope.sanitized:
+            return [f"domain object {node.id!r} (its str/repr carries URLs and payloads)"]
         if _denied(node.id):
             return [f"target-shaped name {node.id!r}"]
         return []
@@ -723,42 +799,230 @@ def _unsafe_parts(node: ast.AST, exc_names: set[str]) -> list[str]:
     ):
         return [f"target-shaped attribute .{node.attr}"]
     if (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.slice, ast.Constant)
-        and isinstance(node.slice.value, str)
-        and _denied(node.slice.value)
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in _DOMAIN_OBJECTS
+        and node.value.id not in scope.exc_names | scope.tainted
     ):
-        return [f"target-shaped key [{node.slice.value!r}]"]
+        return []  # `finding.id`, `response.status_code`: the attribute name is what is checked
+    if _denied_key(node):
+        return [f"target-shaped key {_denied_key(node)}"]
     found: list[str] = []
     for child in ast.iter_child_nodes(node):
-        found.extend(_unsafe_parts(child, exc_names))
+        found.extend(_unsafe_parts(child, scope))
     return found
 
 
-def log_call_violations(source: str, filename: str = "<string>") -> list[str]:
-    tree = ast.parse(source, filename=filename)
-    exc_names = {
-        handler.name for handler in ast.walk(tree) if isinstance(handler, ast.ExceptHandler) and handler.name
-    }
-    problems: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not _is_logger_call(node):
+def _denied_key(node: ast.AST) -> str:
+    """`x["final_url"]` / `x.get("profile_url")` with a target-shaped key, as text.
+    A constant table (`WEIGHTS["same_avatar_url"]`) holds no target data."""
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id.isupper():
+        return ""
+    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+        key = node.slice.value
+        return f"[{key!r}]" if isinstance(key, str) and _denied(key) else ""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and _denied(node.args[0].value)
+    ):
+        return f".get({node.args[0].value!r})"
+    return ""
+
+
+def _taints(value: ast.AST, scope: _Scope) -> bool:
+    """An assigned value that makes its name unsafe to log: `str(exc)` / `repr(exc)` (or
+    of a domain object), an f-string with data, a target-shaped key, or a plain alias,
+    slice, concatenation or string method of one of those. A value merely *computed from*
+    target data by some other call (`status = classify(url)`) does not count."""
+    if isinstance(value, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue) for part in value.values)
+    if isinstance(value, ast.Name):
+        return value.id in scope.tainted or value.id in scope.exc_names or _denied(value.id)
+    if _denied_key(value):
+        return True
+    if isinstance(value, ast.Call):
+        name = _call_name(value.func)
+        if name in _SAFE_WRAPPERS:
+            return False
+        if name in {"str", "repr", "format", "ascii"}:
+            return any(
+                _taints(arg, scope)
+                or (isinstance(arg, ast.Name) and arg.id in _DOMAIN_OBJECTS and arg.id not in scope.sanitized)
+                for arg in value.args
+            )
+        if isinstance(value.func, ast.Attribute):
+            receiver = value.func.value
+            if isinstance(receiver, ast.Constant) and isinstance(receiver.value, str):
+                return any(_taints(arg, scope) for arg in value.args)  # "...".format(url), ", ".join(urls)
+            return _taints(receiver, scope)  # reason.strip(), url.lower()
+        return False
+    if isinstance(value, ast.BoolOp):
+        return any(_taints(part, scope) for part in value.values)
+    if isinstance(value, ast.IfExp):
+        return _taints(value.body, scope) or _taints(value.orelse, scope)
+    if isinstance(value, ast.BinOp):
+        return _taints(value.left, scope) or _taints(value.right, scope)
+    if isinstance(value, (ast.Subscript, ast.Await)):
+        return _taints(value.value, scope)
+    return False
+
+
+def _target_names(target: ast.AST) -> set[str]:
+    """Names bound by an assignment target (`a`, `a, b`, `*rest`), not `self.x` / `d[k]`."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(_target_names(element) for element in target.elts))
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    return set()
+
+
+def _is_gather_with_exceptions(node: ast.AST | None) -> bool:
+    if isinstance(node, ast.Await):
+        node = node.value
+    return (
+        isinstance(node, ast.Call)
+        and _call_name(node.func) == "gather"
+        and any(
+            kw.arg == "return_exceptions" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+            for kw in node.keywords
+        )
+    )
+
+
+def _scope_nodes(tree: ast.Module) -> list[list[ast.AST]]:
+    """The module body and each outermost function, as flat node lists (nested functions
+    belong to their outer function)."""
+    functions: list[ast.AST] = []
+    module: list[ast.AST] = []
+    stack: list[ast.AST] = list(ast.iter_child_nodes(tree))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.append(node)
             continue
+        module.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return [module, *(list(ast.walk(function)) for function in functions)]
+
+
+def _analyse(nodes: list[ast.AST]) -> _Scope:
+    scope = _Scope()
+    scope.exc_names = {node.name for node in nodes if isinstance(node, ast.ExceptHandler) and node.name}
+    assignments: list[tuple[set[str], ast.AST]] = []
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            names = set().union(*(_target_names(target) for target in node.targets))
+            assignments.append((names, node.value))
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+            assignments.append((_target_names(node.target), node.value))
+        elif isinstance(node, ast.NamedExpr):
+            assignments.append((_target_names(node.target), node.value))
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            assignments.append((_target_names(node.target), node.iter))
+    gathered = {name for names, value in assignments if _is_gather_with_exceptions(value) for name in names}
+    for node in nodes:
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)) and (
+            _is_gather_with_exceptions(node.iter) or (isinstance(node.iter, ast.Name) and node.iter.id in gathered)
+        ):
+            scope.exc_names |= _target_names(node.target)
+    by_name: dict[str, list[ast.AST]] = {}
+    for names, value in assignments:
+        for name in names:
+            by_name.setdefault(name, []).append(value)
+    scope.sanitized = {
+        name
+        for name, values in by_name.items()
+        if all(
+            isinstance(value, ast.Constant)
+            or (isinstance(value, ast.Call) and _call_name(value.func) in _SAFE_WRAPPERS)
+            for value in values
+        )
+    }
+    changed = True
+    while changed:
+        changed = False
+        for names, value in assignments:
+            if names - scope.tainted and _taints(value, scope):
+                scope.tainted |= names
+                changed = True
+    return scope
+
+
+def _placeholder_mismatch(message: ast.AST, rest: list[ast.AST]) -> str | None:
+    if not rest or not (isinstance(message, ast.Constant) and isinstance(message.value, str)):
+        return None
+    if any(isinstance(arg, ast.Starred) for arg in rest):
+        return None
+    matches = [m for m in _PLACEHOLDER.finditer(message.value) if m.group(2) != "%"]
+    if any(m.group(1) for m in matches):  # %(name)s takes one mapping
+        return None
+    if len(matches) != len(rest):
+        return f"{len(matches)} placeholder(s) but {len(rest)} argument(s)"
+    return None
+
+
+def _warn_aliases(tree: ast.Module) -> set[str]:
+    return {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "warnings"
+        for alias in node.names
+        if alias.name == "warn"
+    }
+
+
+def _check_call(node: ast.Call, scope: _Scope, warn_names: set[str], where: str) -> list[str]:
+    func = node.func
+    problems: list[str] = []
+    if _is_logger_call(node) or (
+        (isinstance(func, ast.Name) and func.id in warn_names)
+        or (isinstance(func, ast.Attribute) and func.attr == "warn" and _call_name(func.value) == "warnings")
+    ):
         args = list(node.args)
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "log" and args:
+        if isinstance(func, ast.Attribute) and func.attr == "log" and args:
             args = args[1:]
         if not args:
-            continue
+            return []
         message, *rest = args
-        where = f"{filename}:{node.lineno}"
         if not (isinstance(message, ast.Constant) and isinstance(message.value, str)):
-            problems.append(f"{where}: message is not a constant string (f-string / concatenation)")
-        for arg in rest:
-            for part in _unsafe_parts(arg, exc_names):
-                problems.append(f"{where}: {part}")
-        for keyword in node.keywords:
-            if keyword.arg == "extra":
+            problems.append(f"{where}: message is not a constant string (f-string / concatenation / variable)")
+        if _is_logger_call(node):
+            for arg in rest:
+                problems.extend(f"{where}: {part}" for part in _unsafe_parts(arg, scope))
+            mismatch = _placeholder_mismatch(message, rest)
+            if mismatch:
+                problems.append(f"{where}: {mismatch}")
+            if any(keyword.arg == "extra" for keyword in node.keywords):
                 problems.append(f"{where}: extra= is not checked; pass safe positional args")
+        return problems
+    to_stderr = (isinstance(func, ast.Name) and func.id == "print" and any(
+        keyword.arg == "file" and _is_stderr(keyword.value) for keyword in node.keywords
+    )) or (isinstance(func, ast.Attribute) and func.attr == "write" and _is_stderr(func.value))
+    if to_stderr:
+        for arg in node.args:
+            if isinstance(arg, ast.Constant):
+                continue
+            problems.extend(f"{where}: stderr {part}" for part in _unsafe_parts(arg, scope))
+    return problems
+
+
+def log_call_violations(source: str, filename: str = "<string>") -> list[str]:
+    """Every log / warning / stderr call in `source` that could carry target data."""
+    tree = ast.parse(source, filename=filename)
+    warn_names = _warn_aliases(tree)
+    problems: list[str] = []
+    for nodes in _scope_nodes(tree):
+        scope = _analyse(nodes)
+        for node in nodes:
+            if isinstance(node, ast.Call):
+                problems.extend(_check_call(node, scope, warn_names, f"{filename}:{node.lineno}"))
     return problems
 
 
@@ -777,6 +1041,29 @@ def test_no_log_call_in_the_package_passes_target_shaped_values() -> None:
         problems.extend(log_call_violations(source, str(path.relative_to(root))))
     assert calls > 50, "the scan found almost no log calls; it is not looking at the package"
     assert problems == []
+
+
+def test_the_log_vocabulary_holds_every_word_of_every_log_template() -> None:
+    """The safety net never registers a word of the log's own templates. Its vocabulary
+    is a fast regex scan of the sources; this checks it against the AST, so a new log
+    line (multi-line, `logger.log(LEVEL, ...)`, a `sink` receiver) cannot slip past it."""
+    from spectre_osint.core.log_vocabulary import log_vocabulary
+
+    vocabulary = log_vocabulary()
+    missing: set[str] = set()
+    templates = 0
+    for path in _package_sources():
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and _is_logger_call(node)):
+                continue
+            assert isinstance(node.func, ast.Attribute)
+            args = node.args[1:] if node.func.attr == "log" else node.args
+            if args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str):
+                templates += 1
+                words = re.findall(r"[A-Za-z][A-Za-z0-9_]*", args[0].value)
+                missing |= {f"{path.name}: {word}" for word in words if word.casefold() not in vocabulary}
+    assert templates > 50
+    assert missing == set()
 
 
 def test_the_package_never_calls_warnings_warn_with_dynamic_text() -> None:
@@ -864,14 +1151,175 @@ def test_static_guard_accepts_the_safe_helpers() -> None:
     source = '''
 from spectre_osint.core.redaction import exc_label, host_ref, target_ref
 import logging
+import sys
 logger = logging.getLogger("spectre.x")
 
-def f(url, entity, provider, status):
+def f(url, entity, provider, status, results):
     try:
         pass
     except Exception as exc:
         logger.warning("failed provider=%s host=%s err=%s", provider, host_ref(url), exc_label(exc))
         logger.warning("failed %s", type(exc).__name__)
         logger.info("pivot target=%s status=%s", target_ref(entity.normalized_value), status.value)
+        err = exc_label(exc)
+        logger.warning("provider=%s err=%s", provider, err)
+    logger.info("items=%s done=%d%%", len(results), 100)
+    logging.getLogger("spectre.y").debug("provider=%s", provider)
+    sys.stderr.write("progress\\n")
+    print("done", file=sys.stderr)
 '''
     assert log_call_violations(source) == []
+
+
+# Each snippet slipped past the first version of the guard (PR #18 review, item 3).
+_GUARD_ESCAPES = {
+    "message built in a variable": """
+def f(url):
+    msg = f"request failed for {url}"
+    logger.warning("%s", msg)
+""",
+    "self.logger receiver": """
+class Client:
+    def f(self, url):
+        self.logger.warning("url=%s", url)
+""",
+    "logging.getLogger(...) receiver": """
+import logging
+def f(url):
+    logging.getLogger("spectre.http").warning("url=%s", url)
+""",
+    "logging module receiver": """
+import logging
+def f(url):
+    logging.warning("url=%s", url)
+""",
+    "sink parameter": """
+def f(sink, url):
+    sink.warning("url=%s", url)
+""",
+    "gather(return_exceptions=True) items": """
+import asyncio
+async def f(jobs):
+    for item in await asyncio.gather(*jobs, return_exceptions=True):
+        logger.warning("%s", item)
+""",
+    ".get() of a denied key": """
+def f(data):
+    logger.warning("%s", data.get("profile_url"))
+""",
+    "str() of an error outside except": """
+def f():
+    err = make_error()
+    logger.warning("%s", str(err))
+""",
+    "%r of a finding": """
+def f(finding):
+    logger.debug("%r", finding)
+""",
+    "%r of a request": """
+def f(request):
+    logger.debug("%r", request)
+""",
+    "print to stderr": """
+import sys
+def f(url):
+    print("failed", url, file=sys.stderr)
+""",
+    "sys.stderr.write": """
+import sys
+def f(url):
+    sys.stderr.write(f"failed {url}\\n")
+""",
+    "warn imported from warnings": """
+from warnings import warn
+def f(url):
+    warn(f"failed {url}")
+""",
+    "reason = str(exc)": """
+def f():
+    try:
+        pass
+    except Exception as exc:
+        reason = str(exc)
+        logger.warning("%s", reason)
+""",
+    "str(exc) under a name the deny list does not know": """
+def f():
+    try:
+        pass
+    except Exception as exc:
+        why = str(exc)
+        logger.warning("%s", why)
+""",
+    "validation result .error": """
+def f(data):
+    authority = read_observed(data)
+    logger.warning("%s", authority.error)
+""",
+    "placeholders and arguments disagree": """
+def f(provider):
+    logger.warning("%s failed: %s", provider)
+""",
+}
+
+
+@pytest.mark.parametrize("snippet", list(_GUARD_ESCAPES.values()), ids=list(_GUARD_ESCAPES))
+def test_static_guard_flags_what_the_first_version_missed(snippet: str) -> None:
+    assert log_call_violations(snippet), "the guard let this leak through"
+
+
+# --- the authority.error path (identity correlation) ----------------------------------------
+
+
+class _Handle(BaseModel):
+    handle: str
+
+    @field_validator("handle")
+    @classmethod
+    def _always_fails(cls, value: str) -> str:
+        raise ValueError(f"unexpected handle {value} at https://github.com/{value}")
+
+
+def _validation_error_naming_the_target() -> ValidationError:
+    try:
+        _Handle(handle=USERNAME)
+    except ValidationError as exc:
+        assert USERNAME in str(exc)  # the message really carries the target
+        return exc
+    raise AssertionError("expected a validation error")
+
+
+def test_invalid_observed_payload_logs_no_target_data(
+    tmp_path: Path, capture: _Capture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`authority.error` comes from a ValidationError whose message names the target;
+    identity correlation logs it. Only the error count and type codes may reach the log."""
+    from spectre_osint.core.entities import Finding
+    from spectre_osint.core.types import FindingStatus
+    from spectre_osint.modules.username import observed
+    from spectre_osint.modules.username.identity import records_from_findings
+
+    def failing_parse(_raw: Any) -> Any:
+        raise _validation_error_naming_the_target()
+
+    monkeypatch.setattr(observed, "parse_observed", failing_parse)
+    setup_logging("DEBUG", tmp_path / "logs", console_level="DEBUG")
+    finding = Finding(
+        module="username",
+        title="GitHub",
+        status=FindingStatus.FOUND,
+        summary="profile",
+        data={
+            "check_status": "CONFIRMED",
+            "platform": "GitHub",
+            "username": USERNAME,
+            "profile_url": f"https://github.com/{USERNAME}",
+            "observed": {"display_name": {"value": NAME}},
+        },
+    )
+    authority = observed.read_observed(finding.data)
+    assert authority.error and authority.fields is None
+    (record,) = records_from_findings([finding])
+    assert record.platform == "GitHub"
+    raw = _assert_no_leaks(capture, tmp_path / "logs", capsys.readouterr().err, [])
+    _assert_exercised(raw, ("observed enrichment failed validation", "value_error"))

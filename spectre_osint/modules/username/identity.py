@@ -26,6 +26,7 @@ from spectre_osint.modules.username.observed import (
     field_is_active,
     read_observed,
     transport_row_is_active,
+    validation_label,
 )
 
 logger = get_logger("spectre.username")
@@ -421,13 +422,13 @@ def records_from_findings(findings: list[Finding]) -> list[IdentityRecord]:
         else:
             # Present and invalid: enrichment fails closed, the checked profile survives.
             # The reason is a bounded count plus pydantic type codes: no payload value and
-            # no payload-controlled mapping key reaches the log. See _validation_summary().
+            # no payload-controlled mapping key reaches the log. See validation_label().
             logger.warning(
                 "observed enrichment failed validation for %s (finding %s); "
                 "enrichment suppressed, profile record kept: %s",
                 platform,
                 finding.id,
-                authority.error,
+                validation_label(authority),
             )
             attributes = _blank_observed_attributes()
         rows.append(
