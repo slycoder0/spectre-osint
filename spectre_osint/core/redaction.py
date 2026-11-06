@@ -7,11 +7,13 @@ Two separate concerns live here:
   pivot values) belongs in reports and the database, never in a log line or warning
   (B2-07). Call sites log what is not identifying — provider slug, HTTP status, counts,
   durations, the exception class (`exc_label`) — and, when lines about one value must be
-  correlated, a per-run reference (`target_ref` / `host_ref`): a truncated HMAC-SHA256
-  under a random salt that exists only in this process's memory, so it cannot be
-  reversed or matched across runs. As a safety net, the log formatter also replaces the
-  run's known target values (`register_target_values`) wherever they still appear.
-  `tests/test_logs_no_target_data.py` is the guard.
+  correlated, a per-investigation reference (`target_ref` / `host_ref`): a truncated
+  HMAC-SHA256 under a random salt that exists only in memory and is replaced when the
+  investigation ends (`target_scope`), so it cannot be reversed or matched across
+  investigations. As a safety net, the log formatter also replaces the investigation's
+  known target values (`register_target_values`) wherever they still stand alone in a
+  line — never inside a longer word, and never a word of the log's own vocabulary
+  (`core/log_vocabulary.py`). `tests/test_logs_no_target_data.py` is the guard.
 """
 
 from __future__ import annotations
@@ -20,12 +22,17 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import re
 import secrets
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 from urllib.parse import quote, quote_plus, urlparse
+
+logger = logging.getLogger("spectre.redaction")
 
 _SENSITIVE_KEYS = {
     "api_key",
@@ -146,13 +153,24 @@ def safe_json(data: Any) -> str:
 
 # --- target data in logs (B2-07) -------------------------------------------------------------
 
-# Random per process, never written anywhere: references cannot be reversed by guessing
-# candidate values, and the same value gets a different reference in the next run.
-_RUN_SALT = secrets.token_bytes(32)
 _REF_HEX = 8
-# Shorter values are not scrubbed: replacing every "jo" or "ab" in a log line would
-# destroy it, and a one- or two-character value identifies no one on its own.
-MIN_SCRUB_LENGTH = 3
+# Hard cap on the forms one investigation can register (a value has ~10 forms; a username
+# run with every lead and a domain run with the pivot budget stay far below it). Past the
+# cap later values are not scrubbed and one warning says so: the regex is rebuilt on every
+# registration and runs on every log line, so it must stay small.
+MAX_SCOPE_FORMS = 256
+# The safety net only registers forms at least this long: a short value ("git", "user",
+# "error") is a word of every other log line, and replacing it would destroy the log
+# while the call-site rule is what actually keeps it out. The full e-mail always counts.
+MIN_SCRUB_LENGTH = 6
+# An e-mail's local part and domain are registered on their own only from this length:
+# "info@gmail.com" must not turn "information" or "AUTHENTICATED" into references.
+MIN_EMAIL_PART_LENGTH = 8
+# A form is replaced only where it stands alone: not inside a longer word, identifier or
+# class name (`ReadTimeout`, `username_in_final_url`). A percent-escape (`%22`, `%2F`)
+# before it counts as a delimiter, so URL-encoded query strings are still covered.
+_BEFORE = r"(?:(?<![A-Za-z0-9_])|(?<=%[0-9A-Fa-f]{2}))"
+_AFTER = r"(?![A-Za-z0-9_])"
 
 
 def exc_label(exc: object) -> str:
@@ -166,16 +184,17 @@ def exc_label(exc: object) -> str:
 
 
 def target_ref(value: object, *, kind: str = "t") -> str:
-    """A short, non-reversible reference for correlating log lines within one run.
+    """A short, non-reversible reference for correlating log lines within one investigation.
 
     `t:` marks a target value, `h:` a host. The same text gets the same digest under
-    both prefixes, so a host can be seen to be "the target" without being named.
+    both prefixes, so a host can be seen to be "the target" without being named. The
+    digest is an HMAC under the current `target_scope()`'s random salt, so the same value
+    gets a different reference in the next investigation, even in the same process.
     """
     text = str(value or "").strip().casefold()
     if not text:
         return "-"
-    digest = hmac.new(_RUN_SALT, text.encode("utf-8"), hashlib.sha256).hexdigest()[:_REF_HEX]
-    return f"{kind}:{digest}"
+    return _current_scope().ref(text, kind)
 
 
 def host_ref(url_or_host: object) -> str:
@@ -188,9 +207,16 @@ def host_ref(url_or_host: object) -> str:
     return target_ref(host.strip().rstrip(".").lower(), kind="h")
 
 
-def _scrub_forms(value: str) -> set[str]:
-    """The shapes a target value takes inside a log line (matched case-insensitively)."""
-    forms = {
+def _scrub_forms(value: str, vocabulary: frozenset[str]) -> list[str]:
+    """The shapes a target value takes inside a log line (matched case-insensitively).
+
+    Most specific first. A form shorter than the floor, or one that is a word of the
+    log's own vocabulary (`core/log_vocabulary.py`), is left out; the full e-mail is not.
+    """
+    is_email = "@" in value
+    if not is_email and len(value) < MIN_SCRUB_LENGTH:
+        return []
+    candidates = [
         value,
         quote(value, safe=""),
         quote(value),
@@ -200,53 +226,91 @@ def _scrub_forms(value: str) -> set[str]:
         value.replace(" ", "_"),
         value.replace("_", "-"),
         value.replace(".", "-"),
-    }
-    if "@" in value:
+    ]
+    email_parts: set[str] = set()
+    if is_email:
         local, _, domain = value.rpartition("@")
-        forms.update({local, domain})
+        email_parts = {local, domain}
         normalized = value.lower().encode("utf-8")
-        forms.add(hashlib.md5(normalized).hexdigest())  # noqa: S324 — gravatar-style identifier
-        forms.add(hashlib.sha256(normalized).hexdigest())
+        candidates.append(hashlib.md5(normalized).hexdigest())  # noqa: S324 — gravatar-style identifier
+        candidates.append(hashlib.sha256(normalized).hexdigest())
+        candidates.extend([local, domain])
     if "://" in value:
         host = urlparse(value).hostname or ""
         if host:
-            forms.add(host)
+            candidates.append(host)
     try:
-        forms.add(ipaddress.ip_address(value).reverse_pointer)
+        candidates.append(ipaddress.ip_address(value).reverse_pointer)
     except ValueError:
         pass
-    return {form for form in forms if len(form) >= MIN_SCRUB_LENGTH}
+    forms: list[str] = []
+    for form in candidates:
+        if not form or form in forms:
+            continue
+        if is_email and form == value:
+            forms.append(form)  # the full e-mail always counts
+            continue
+        floor = MIN_EMAIL_PART_LENGTH if form in email_parts else MIN_SCRUB_LENGTH
+        if len(form) < floor or form.casefold() in vocabulary:
+            continue
+        forms.append(form)
+    return forms
 
 
-class _TargetScrubber:
-    """The process-wide set of known target values, compiled into one pattern."""
+def _compile_forms(forms: Iterable[str]) -> re.Pattern[str] | None:
+    alternatives = sorted({variant for form in forms for variant in (form, form.casefold())}, key=len, reverse=True)
+    if not alternatives:
+        return None
+    body = "|".join(re.escape(form) for form in alternatives)
+    return re.compile(f"{_BEFORE}(?:{body}){_AFTER}", re.IGNORECASE)
+
+
+class _TargetScope:
+    """One investigation's target values, compiled into one pattern, and its salt."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.salt = secrets.token_bytes(32)
         self._refs: dict[str, str] = {}
+        self._forms: list[str] = []
         self._pattern: re.Pattern[str] | None = None
+        self._full = False
 
-    def register(self, values: Iterable[object]) -> None:
+    @property
+    def form_count(self) -> int:
+        return len(self._forms)
+
+    def ref(self, folded: str, kind: str) -> str:
+        digest = hmac.new(self.salt, folded.encode("utf-8"), hashlib.sha256).hexdigest()[:_REF_HEX]
+        return f"{kind}:{digest}"
+
+    def register(self, values: Iterable[object]) -> bool:
+        """Add values; True the first time the scope reaches `MAX_SCOPE_FORMS`."""
+        from spectre_osint.core.log_vocabulary import log_vocabulary
+
+        vocabulary = log_vocabulary()
+        reached_limit = False
         with self._lock:
             changed = False
             for value in values:
                 text = str(value or "").strip()
-                if len(text) < MIN_SCRUB_LENGTH:
+                if not text:
                     continue
-                ref = target_ref(text)
-                for form in _scrub_forms(text):
+                ref = self.ref(text.casefold(), "t")
+                for form in _scrub_forms(text, vocabulary):
                     key = form.casefold()
-                    if key not in self._refs:
-                        self._refs[key] = ref
-                        changed = True
+                    if key in self._refs:
+                        continue
+                    if len(self._forms) >= MAX_SCOPE_FORMS:
+                        reached_limit = not self._full
+                        self._full = True
+                        break
+                    self._refs[key] = ref
+                    self._forms.append(form)
+                    changed = True
             if changed:
-                ordered = sorted(self._refs, key=len, reverse=True)
-                self._pattern = re.compile("|".join(re.escape(form) for form in ordered), re.IGNORECASE)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._refs = {}
-            self._pattern = None
+                self._pattern = _compile_forms(self._forms)
+        return reached_limit
 
     def scrub(self, text: str) -> str:
         pattern, refs = self._pattern, self._refs
@@ -254,20 +318,79 @@ class _TargetScrubber:
             return text
         return pattern.sub(lambda match: refs.get(match.group(0).casefold(), "t:redacted"), text)
 
+    def close(self) -> None:
+        """Forget every value, drop the pattern and replace the salt."""
+        with self._lock:
+            self._refs = {}
+            self._forms = []
+            self._pattern = None
+            self._full = False
+            self.salt = secrets.token_bytes(32)
 
-_SCRUBBER = _TargetScrubber()
+
+# The investigation in progress in this context (asyncio tasks and `asyncio.to_thread`
+# workers inherit it). Outside any `target_scope()` values go to a process-level scope,
+# bounded the same way, so a code path that forgot to open one still scrubs.
+_ACTIVE_SCOPE: ContextVar[_TargetScope | None] = ContextVar("spectre_target_scope", default=None)
+_PROCESS_SCOPE = _TargetScope()
+
+
+def _current_scope() -> _TargetScope:
+    return _ACTIVE_SCOPE.get() or _PROCESS_SCOPE
+
+
+@contextmanager
+def target_scope() -> Iterator[None]:
+    """The lifetime of one investigation's target values in the log safety net.
+
+    `InvestigationRunner.run` (and the active recon) open one; the values registered
+    inside, pivots included, are scrubbed from log lines until it closes. On exit the
+    values are discarded, the pattern is emptied and the salt is replaced, so the next
+    investigation in the same process (the menu runs many) neither scrubs the previous
+    target nor shares its references. A scope opened inside another one is the same
+    scope: only the outermost discards.
+    """
+    if _ACTIVE_SCOPE.get() is not None:
+        yield
+        return
+    scope = _TargetScope()
+    token = _ACTIVE_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _ACTIVE_SCOPE.reset(token)
+        scope.close()
 
 
 def register_target_values(*values: object) -> None:
-    """Add this run's target values (and their URL-encoded / slug / hashed forms) to the
-    log safety net. Kept for the life of the process: more scrubbing, never less."""
-    _SCRUBBER.register(values)
+    """Add target values (and their URL-encoded / slug / hashed forms) to the current
+    investigation's log safety net. See `target_scope()`."""
+    if _current_scope().register(values):
+        logger.warning(
+            "log safety net full: limit=%s forms; later target values are not scrubbed",
+            MAX_SCOPE_FORMS,
+        )
 
 
 def clear_target_values() -> None:
-    _SCRUBBER.clear()
+    """Forget every registered value (tests). Scopes do this on exit by themselves."""
+    _PROCESS_SCOPE.close()
+    active = _ACTIVE_SCOPE.get()
+    if active is not None:
+        active.close()
+
+
+def registered_form_count() -> int:
+    """How many forms the log safety net holds right now (current scope + process scope)."""
+    active = _ACTIVE_SCOPE.get()
+    return (active.form_count if active is not None else 0) + _PROCESS_SCOPE.form_count
 
 
 def scrub_target_values(text: str) -> str:
     """Replace every registered target value in `text` with its `target_ref`."""
-    return _SCRUBBER.scrub(text)
+    if not text:
+        return text
+    active = _ACTIVE_SCOPE.get()
+    if active is not None:
+        text = active.scrub(text)
+    return _PROCESS_SCOPE.scrub(text)

@@ -118,11 +118,13 @@ def test_safety_net_scrubs_tracebacks_too(tmp_path: Path) -> None:
     register_target_values("alice_osint")
     setup_logging("DEBUG", tmp_path / "logs")
 
-    def alice_osint_helper() -> None:  # a frame whose *code* names the value
-        raise RuntimeError("boom")
+    # A frame whose *source line* names the value as a standalone word (the safety net
+    # only replaces delimited occurrences; an identifier that merely contains it is code).
+    def helper() -> None:
+        raise RuntimeError("boom")  # looked up alice_osint
 
     try:
-        alice_osint_helper()
+        helper()
     except RuntimeError:
         get_logger("spectre").debug("failed", exc_info=True)
     assert "alice_osint" not in _read(tmp_path / "logs" / LOG_FILENAME)

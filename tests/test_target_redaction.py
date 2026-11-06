@@ -119,3 +119,46 @@ def test_clear_forgets_every_value() -> None:
     register_target_values("alice_osint")
     clear_target_values()
     assert scrub_target_values("alice_osint") == "alice_osint"
+
+
+# --- the safety net never eats the log's own vocabulary (PR #18 review, item 1) -------------
+
+_VOCABULARY_LINE = (
+    "HTTP timeout provider=github err=ReadTimeout username_in_final_url=True AUTHENTICATED_PUBLIC"
+)
+
+
+def test_common_and_short_targets_leave_the_log_vocabulary_intact() -> None:
+    """A target that happens to be a site, a log word, a field fragment or a common word
+    must not turn `provider=github` into `provider=t:…` or `ReadTimeout` into `Readt:…`."""
+    register_target_values("github", "user", "timeout", "error", "the@company.com")
+    assert scrub_target_values(_VOCABULARY_LINE) == _VOCABULARY_LINE
+
+
+def test_only_delimited_occurrences_are_replaced() -> None:
+    register_target_values("git")
+    assert scrub_target_values("provider=GitHub status=404") == "provider=GitHub status=404"
+    register_target_values("alice_osint")
+    scrubbed = scrub_target_values("GET https://github.com/alice_osint status=200")
+    assert scrubbed == f"GET https://github.com/{target_ref('alice_osint')} status=200"
+
+
+def test_the_log_vocabulary_comes_from_the_catalog_enums_exceptions_and_templates() -> None:
+    from spectre_osint.core.log_vocabulary import log_vocabulary
+    from spectre_osint.core.types import AccessMode, Confidence
+    from spectre_osint.modules.username.engine import load_sites
+
+    vocabulary = log_vocabulary()
+    sites = load_sites()
+    assert {str(site["name"]).casefold() for site in sites} <= vocabulary
+    assert {str(site["slug"]).casefold() for site in sites} <= vocabulary
+    assert {member.value.casefold() for member in (*Confidence, *AccessMode)} <= vocabulary
+    assert {"readtimeout", "connecterror", "ssrfblocked", "validationerror"} <= vocabulary
+    assert {"timeout", "provider", "retry_after", "pivot"} <= vocabulary
+    assert "alice_osint" not in vocabulary
+
+
+def test_email_parts_do_not_split_ordinary_words() -> None:
+    register_target_values("info@gmail.com")
+    assert scrub_target_values("information about the provider") == "information about the provider"
+    assert "info@gmail.com" not in scrub_target_values("mail=info@gmail.com")

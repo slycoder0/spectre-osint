@@ -25,7 +25,7 @@ from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.logger import get_logger
 from spectre_osint.core.paths import report_path, slugify
 from spectre_osint.core.progress import ProgressEvent, ProgressPhase, ProgressState
-from spectre_osint.core.redaction import exc_label, register_target_values, target_ref
+from spectre_osint.core.redaction import exc_label, register_target_values, target_ref, target_scope
 from spectre_osint.core.registry import ProviderRegistry, default_registry
 from spectre_osint.core.scoring import score_investigation
 from spectre_osint.core.ssrf import is_blocked_ip, validate_url_syntax
@@ -126,11 +126,38 @@ class InvestigationRunner:
         refresh: bool = False,
         progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> InvestigationResult:
+        # Safety net for the log sinks (B2-07): every value the operator named for this
+        # investigation (and every pivot) is scrubbed from log lines even if a call site
+        # slips, and forgotten when it ends. Call sites still must not log it;
+        # tests/test_logs_no_target_data.py checks them before this net.
+        with target_scope():
+            return await self._run_in_scope(
+                target,
+                force_type=force_type,
+                case_name=case_name,
+                auto_pivot=auto_pivot,
+                depth=depth,
+                write_report=write_report,
+                extra=extra,
+                refresh=refresh,
+                progress=progress,
+            )
+
+    async def _run_in_scope(
+        self,
+        target: str,
+        *,
+        force_type: EntityType | None,
+        case_name: str | None,
+        auto_pivot: bool,
+        depth: int,
+        write_report: bool,
+        extra: dict[str, Any] | None,
+        refresh: bool,
+        progress: Callable[[dict[str, Any]], None] | None,
+    ) -> InvestigationResult:
         started = utcnow()
         self._progress = progress
-        # Safety net for the log sinks (B2-07): every value the operator named for this run
-        # is scrubbed from log lines even if a call site slips. Call sites still must not
-        # log it; tests/test_logs_no_target_data.py checks them before this net.
         register_target_values(*_operator_values(target, extra))
         entity_type = force_type or detect_entity_type(target)
         self._emit_progress(ProgressPhase.INITIALIZING, ProgressState.RUNNING, target=target)
