@@ -18,7 +18,8 @@ What the formatter guarantees for every sink (file and terminal):
 - a malformed call (`logger.warning("%s: %s", url)`) reports one line naming the logger
   and the error class, never Python's "Message: ... Arguments: (...)" dump;
 - WARNING+ records of third-party libraries reach the log file through the same
-  formatter, never raw on stderr; httpx / httpcore stay capped at WARNING.
+  formatter, never raw on stderr; httpx / httpcore stay capped at WARNING;
+- `warnings.warn` is captured (`logging.captureWarnings`) and takes the same path.
 """
 
 from __future__ import annotations
@@ -204,6 +205,10 @@ def setup_logging(
     root = logging.getLogger()
     if not any(isinstance(handler, _ThirdPartyToLogFile) for handler in root.handlers):
         root.addHandler(_ThirdPartyToLogFile())
+    # `warnings.warn` prints raw on stderr by default (a library warning can quote the URL
+    # it fetched). Captured, it becomes a "py.warnings" WARNING record, which the root
+    # handler above sends to the log file through the RedactingFormatter, never stderr.
+    logging.captureWarnings(True)
 
     formatter = RedactingFormatter(
         fmt="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",

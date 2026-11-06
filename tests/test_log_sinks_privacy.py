@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -169,6 +171,32 @@ def test_third_party_warnings_go_to_the_log_file_redacted_and_never_raw_to_stder
     assert "alice_osint" not in text
     assert "SPECTRE_CANARY_SECRET_abc123" not in text
     assert "lib chatter" not in text  # below WARNING
+
+
+def test_python_warnings_go_to_the_log_file_scrubbed_and_never_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without `logging.captureWarnings(True)`, `warnings.warn` prints raw on stderr."""
+    sentinel = "alice" + "_osint"  # kept out of the source line the warning quotes
+    def raw_to_stderr(message, category, filename, lineno, file=None, line=None) -> None:  # noqa: ANN001
+        sys.stderr.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+    with warnings.catch_warnings():  # restores `showwarning` and the filters on exit
+        warnings.simplefilter("always")
+        logging.captureWarnings(False)  # forget a capture left by another test
+        warnings.showwarning = raw_to_stderr  # Python's behavior outside pytest's recorder
+        try:
+            setup_logging("INFO", tmp_path / "logs")
+            with target_scope():
+                register_target_values(sentinel)
+                warnings.warn(f"lib fetched https://github.com/{sentinel}", UserWarning, stacklevel=1)
+        finally:
+            logging.captureWarnings(False)
+    assert capsys.readouterr().err == ""
+    text = _read(tmp_path / "logs" / LOG_FILENAME)
+    assert "| WARNING | py.warnings |" in text
+    assert "UserWarning: lib fetched https://github.com/t:" in text
+    assert sentinel not in text
 
 
 def test_url_echoing_third_party_loggers_are_capped_at_warning(tmp_path: Path) -> None:
