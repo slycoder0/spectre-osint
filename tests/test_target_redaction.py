@@ -160,7 +160,9 @@ def test_the_log_vocabulary_comes_from_the_catalog_enums_exceptions_and_template
 
     vocabulary = log_vocabulary()
     sites = load_sites()
-    assert {str(site["name"]).casefold() for site in sites} <= vocabulary
+    token = re.compile(r"[A-Za-z0-9_]+")
+    names = {str(site["name"]) for site in sites}
+    assert {name.casefold() for name in names if token.fullmatch(name)} <= vocabulary
     assert {str(site["slug"]).casefold() for site in sites} <= vocabulary
     assert {member.value.casefold() for member in (*Confidence, *AccessMode)} <= vocabulary
     assert {"readtimeout", "connecterror", "ssrfblocked", "validationerror"} <= vocabulary
@@ -172,3 +174,57 @@ def test_email_parts_do_not_split_ordinary_words() -> None:
     register_target_values("info@gmail.com")
     assert scrub_target_values("information about the provider") == "information about the provider"
     assert "info@gmail.com" not in scrub_target_values("mail=info@gmail.com")
+
+
+# --- second review of PR #18 ----------------------------------------------------------------
+
+
+def test_the_log_vocabulary_holds_only_plain_tokens() -> None:
+    """A catalog name such as "Chess.com", "Docker Hub" or "Ko-fi" is not a log word: a
+    vocabulary entry is never registered, so it would let a real domain through raw."""
+    from spectre_osint.core.log_vocabulary import log_vocabulary
+
+    vocabulary = log_vocabulary()
+    assert all(re.fullmatch(r"[a-z0-9_]+", word) for word in vocabulary), sorted(
+        word for word in vocabulary if not re.fullmatch(r"[a-z0-9_]+", word)
+    )
+    for name in ("chess.com", "wordpress.org", "about.me", "dev.to", "last.fm", "crates.io", "itch.io"):
+        assert name not in vocabulary
+    assert {"docker hub", "hugging face", "ko-fi"}.isdisjoint(vocabulary)
+    assert {"chess_com", "wordpress_org", "docker_hub", "hugging_face"} <= vocabulary
+
+
+@pytest.mark.parametrize(("domain", "slug"), [("chess.com", "chess_com"), ("wordpress.org", "wordpress_org")])
+def test_a_domain_that_is_also_a_catalog_site_name_is_scrubbed(domain: str, slug: str) -> None:
+    register_target_values(domain)
+    ref = target_ref(domain)
+    assert scrub_target_values(f"host={domain}") == f"host={ref}"
+    assert scrub_target_values(f"GET https://{domain}/members") == f"GET https://{ref}/members"
+    assert scrub_target_values(f"provider={slug} status=200") == f"provider={slug} status=200"
+
+
+@pytest.mark.parametrize("line", ["xxalice_osint", "alice_osintyy", "user=xxalice_osint", "alice_osintyy=1"])
+def test_a_registered_value_inside_a_longer_word_is_left_intact(line: str) -> None:
+    """Fails without the lookaround: the value is long enough, only the boundary keeps it."""
+    register_target_values("alice_osint")
+    assert scrub_target_values(line) == line
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("pre-alice_osint", "pre-{ref}"),
+        ("q=%2Falice_osint", "q=%2F{ref}"),
+        ("alice_osint.example.com", "{ref}.example.com"),
+    ],
+)
+def test_a_registered_value_next_to_a_delimiter_is_replaced(line: str, expected: str) -> None:
+    register_target_values("alice_osint")
+    assert scrub_target_values(line) == expected.format(ref=target_ref("alice_osint"))
+
+
+def test_an_email_local_part_is_replaced_only_where_it_stands_alone() -> None:
+    register_target_values("longlocal@example.com")
+    ref = target_ref("longlocal@example.com")
+    assert scrub_target_values("longlocalextra") == "longlocalextra"
+    assert scrub_target_values("user longlocal here") == f"user {ref} here"

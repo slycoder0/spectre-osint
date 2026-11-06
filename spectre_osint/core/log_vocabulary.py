@@ -10,7 +10,8 @@ or common target out of a line is the call site's job, checked by the canary
 
 Everything is read from the code, not kept as a list:
 
-- site names and slugs of the bundled catalog (`load_sites()`);
+- site slugs of the bundled catalog (`load_sites()`), and site names that are plain
+  tokens (`GitHub`; not `Chess.com`, `Docker Hub`, which are real domains / phrases);
 - names and values of the `Enum`s defined in the package (`Confidence`, `AccessMode`, ...);
 - names of the exception classes loaded in the process (`ReadTimeout`, `SSRFBlocked`, ...);
 - every word of every log message template in the package: the constant format strings
@@ -39,6 +40,8 @@ _LOG_TEMPLATE = re.compile(
     r"((?:[rRuU]?(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*')\s*)+)"
 )
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+# What a vocabulary entry may look like: nothing with ".", "-" or a space.
+_TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
 
 def template_words(source: str) -> set[str]:
@@ -113,6 +116,11 @@ def _catalog_words() -> set[str]:
 
 @functools.lru_cache(maxsize=1)
 def log_vocabulary() -> frozenset[str]:
-    """Case-folded words the safety net never registers. Built once per process."""
+    """Case-folded words the safety net never registers. Built once per process.
+
+    Only plain tokens (`[A-Za-z0-9_]+`) count. A catalog name such as "Chess.com",
+    "Docker Hub" or "Ko-fi" is a real domain or phrase, not a log word: its slug
+    (`chess_com`) is the vocabulary entry, and the name itself stays registrable.
+    """
     words = _catalog_words() | _enum_words() | _exception_words() | _package_template_words()
-    return frozenset(word.casefold() for word in words if word)
+    return frozenset(word.casefold() for word in words if _TOKEN.fullmatch(word))
