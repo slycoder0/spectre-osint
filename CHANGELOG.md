@@ -186,6 +186,7 @@ The format is based on Keep a Changelog.
   durante a investigação; IPv6 ganha referência própria; avisos de bibliotecas vão para o arquivo
   de log, nunca crus no terminal; a linha "Logs antigos" do `spectre doctor` passa a ser `[INFO]`
   e não muda mais o resultado geral.
+- **Segunda revisão do PR #18:** alvos que são nome de site do catálogo (`spectre domain chess.com`) e `warnings.warn` não saem mais crus no log nem no terminal.
 - **Logs antigos podem conter dados do alvo.** Versões anteriores gravavam em
   `SPECTRE_LOGS_DIR/spectre.log` (padrão `./logs/spectre.log`, relativo à pasta onde o
   `spectre` roda) e esse arquivo pode ter usernames, URLs de perfil e domínios investigados.

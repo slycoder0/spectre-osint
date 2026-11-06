@@ -3,13 +3,32 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-06 — PR #18 (Fase 2.5): ajustes da revisão aplicados._
+_Última atualização: 2026-11-06 — PR #18 (Fase 2.5): segunda revisão do Grok aplicada._
 
 ## Fase atual
 
 **Fase 2.5 — `fix/b2-07-logs-no-target-data`** (logs e avisos sem dados do alvo em todo o
-pacote): **PR #18 aberto; ajustes das duas revisões aplicados, aguardando nova revisão.** Não
-mergeado. A Fase 2 (PR #17) foi mergeada em `main` (merge `b2f8d89`).
+pacote): **PR #18 aberto; ajustes da primeira e da segunda revisão aplicados, aguardando
+merge (só com pedido explícito).** Não mergeado. A Fase 2 (PR #17) foi mergeada em `main`
+(merge `b2f8d89`).
+
+### Segunda revisão do PR #18 (Grok, 2026-11-06) — aplicada, sem blocker
+
+1. **Vocabulário engolia domínios reais.** `log_vocabulary()` só aceita tokens
+   `[A-Za-z0-9_]+`: `Chess.com`, `WordPress.org`, `About.me`, `Dev.to`, `Last.fm`, `crates.io`,
+   `itch.io`, `Docker Hub`, `Hugging Face`, `Ko-fi` saíram; o slug (`chess_com`) fica. Antes, com
+   alvo `chess.com`, a forma crua era descartada e `GET https://chess.com/member/1` ia ao log.
+2. **Teto de 256 formas** reserva todas as formas de um valor ou nenhuma (antes, com 255
+   ocupadas, o e-mail entrava cru e `%40` / domínio ficavam de fora). Aviso de teto: uma vez.
+3. **Contrato de `target_scope()`** documentado na docstring e fixado por testes, sem mudar o
+   comportamento: tarefa criada no escopo e aguardada depois loga em claro (e o `target_ref`
+   muda); tarefa criada antes do `with` nunca vê o escopo. "Toda tarefa que loga o alvo
+   precisa terminar dentro do escopo."
+4. **Testes da fronteira** que caem sem o lookaround (`xxalice_osint` / `alice_osintyy`
+   intactos; `pre-`, `%2F`, `.example.com` trocados; `longlocalextra` × `longlocal`), validados
+   por mutação manual.
+5. **`warnings.warn`** capturado (`logging.captureWarnings(True)`): vai para o arquivo pelo
+   `RedactingFormatter`, nunca cru no stderr.
 
 ### Ajustes da revisão do PR #18 (2026-11-06)
 
@@ -20,7 +39,7 @@ Cada item começou por um teste de regressão que falhou antes da correção.
    (`(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])`; um `%XX` antes também delimita, para query strings
    codificadas); piso de 6 caracteres (parte local / domínio do e-mail: 8; e-mail completo
    sempre); nunca registra uma palavra do vocabulário do log, derivado do código em
-   `core/log_vocabulary.py` (nomes/slugs do catálogo, nomes/valores de enums do pacote, classes
+   `core/log_vocabulary.py` (slugs do catálogo e nomes que são token — ver 2ª revisão, nomes/valores de enums do pacote, classes
    de exceção carregadas, palavras de todos os templates de log — conferidas contra a AST).
 2. **Escopo por investigação:** `target_scope()` (contextvar) em `InvestigationRunner.run` e no
    recon ativo; ao sair descarta valores, esvazia o padrão e troca o sal; aninhado = o mesmo
@@ -118,7 +137,7 @@ Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da corre�
 | 0 | `chore/b2-05-resume-hygiene` (Pillow `>=13,<14`, strings `0.1.0b1`, UA) | #15 | mergeado |
 | 1 | `fix/b2-03b2-display-name-rejection` | #16 | mergeado (`5ee5fd7`) |
 | 2 | `feat/b2-06-presentation-i18n` | #17 | mergeado (`b2f8d89`) |
-| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | aberto; ajustes da revisão aplicados |
+| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | aberto; 1ª e 2ª revisão aplicadas |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -133,7 +152,7 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-1. Nova revisão do PR #18 → merge (só com pedido explícito).
+1. Merge do PR #18 (só com pedido explícito).
 2. **`fix/b2-08-tldextract-offline`** (PR próprio, antes da Fase 3): `tldextract` busca a lista
    de sufixos fora do `HttpClient` (ver Follow-ups).
 3. **Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual.** `spectre` sem
@@ -141,10 +160,10 @@ argumentos abre o menu sobre a mesma camada `services/` e as mesmas views; tela 
 Configurações grava o idioma com `core.i18n.save_language()`. O plano da Fase 3 foi entregue
 ao arquiteto junto com o PR #18 (texto, sem branch) e espera revisão antes de começar.
 
-## Últimos resultados dos portões (PR #18 com os ajustes da revisão, 2026-11-06)
+## Últimos resultados dos portões (PR #18 com a segunda revisão, 2026-11-06)
 
 ```text
-pytest -q        1163 passed in 110.22s
+pytest -q        1178 passed in 115.95s   (local: --basetemp por PermissionError no %TEMP%)
 ruff check       All checks passed!
 mypy             Success: no issues found in 135 source files
 pip check        No broken requirements found.
@@ -152,7 +171,14 @@ pip-audit        No known vulnerabilities found
                  (spectre-osint: not on PyPI, skipped — esperado)
 ```
 
-Verificação ao vivo depois dos ajustes (dentro do repo, rede real, só os bytes desta execução):
+Ao vivo depois da segunda revisão: `spectre --debug domain chess.com` → saída 0; 6 linhas de log
+nesta execução; `chess.com` (sem diferenciar caixa) no log: **0**; no stderr: **0**; stdout: 15.
+As 6 linhas usam `host=h:…` no call site, então não passam pela rede de segurança; o cenário da
+revisão foi conferido em A/B pelo `FileHandler` real (alvo `chess.com` registrado, linha
+`GET https://chess.com/member/1 host=chess.com provider=chess_com`): HEAD `1483d9d` → 2
+ocorrências cruas; esta branch → 0, `provider=chess_com` intacto.
+
+Verificação ao vivo depois dos ajustes da primeira revisão (dentro do repo, rede real, só os bytes desta execução):
 
 - `spectre --debug username torvalds` → saída 0; 281 linhas; `torvalds` no log: **0**; stderr:
   **0**; stdout: 19.
@@ -223,6 +249,11 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   de log dos `.py` do pacote; sem fontes no bundle o vocabulário perde essas palavras e a rede
   troca mais (só legibilidade, nunca vazamento). Incluir as fontes ou gerar o vocabulário no
   build.
+- **Rede de segurança: variantes que ela não gera** (segunda revisão do PR #18, sem correção
+  nesta fase). Só as formas do `quote` / `quote_plus` padrão entram: escapes de caracteres não
+  reservados (`%5F` para `_`, `%2D` para `-`, `%2E` para `.`), codificação dupla (`%252F`,
+  `alice%2540example.com`) e Unicode em outra normalização (NFD × NFC) passam crus se chegarem
+  ao log por um call site errado. O guarda real continua sendo a regra do call site.
 - **`spectre search <consulta>`** não abre `target_scope()` nem registra a consulta: só a regra
   do call site (guarda AST) protege esse comando. Abrir um escopo quando o menu chamar a busca.
 - **Avisos de bibliotecas de terceiros** vão só para o arquivo de log (decisão desta revisão);
