@@ -13,8 +13,12 @@ What the formatter guarantees for every sink (file and terminal):
 - secrets are masked (`redact_text`);
 - tracebacks keep their frames but never the exception message (`str(exc)` of httpx,
   pydantic or OSError carries URLs, payload values and report paths);
-- the run's registered target values are replaced by their `target_ref` in the message
-  and traceback (a safety net behind the call-site rule; see `core/redaction.py`).
+- the investigation's registered target values are replaced by their `target_ref` in the
+  message and traceback (a safety net behind the call-site rule; see `core/redaction.py`);
+- a malformed call (`logger.warning("%s: %s", url)`) reports one line naming the logger
+  and the error class, never Python's "Message: ... Arguments: (...)" dump;
+- WARNING+ records of third-party libraries reach the log file through the same
+  formatter, never raw on stderr; httpx / httpcore stay capped at WARNING.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TextIO
 
-from spectre_osint.core.redaction import redact_text, scrub_target_values
+from spectre_osint.core.redaction import exc_label, redact_text, scrub_target_values
 
 ROOT_LOGGER = "spectre"
 LOG_FILENAME = "spectre-osint.log"
@@ -110,7 +114,28 @@ def legacy_log_files(logs_dir: Path) -> list[Path]:
     return [base / name for name in LEGACY_LOG_FILENAMES if (base / name).is_file()]
 
 
-class _CurrentStderrHandler(logging.StreamHandler):
+class _QuietHandlerErrors:
+    """`handleError` that names the logger and the error class, and nothing else.
+
+    Python's `Handler.handleError` prints the record's message *and its arguments* to
+    stderr when formatting fails (`logger.warning("%s failed: %s", url)`), which is the
+    target data a malformed call site was about to log. One line, no traceback.
+    """
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802 — logging API name
+        if not logging.raiseExceptions or sys.stderr is None:
+            return
+        try:
+            print("SPECTRE logging error in", record.name + ":", exc_label(sys.exc_info()[1]), file=sys.stderr)
+        except Exception:  # noqa: BLE001, S110 — the error report must never raise
+            pass
+
+
+class _SpectreFileHandler(_QuietHandlerErrors, logging.FileHandler):
+    """The log file handler."""
+
+
+class _CurrentStderrHandler(_QuietHandlerErrors, logging.StreamHandler):
     """Writes to whatever `sys.stderr` is *now*, never to the stream seen at creation.
 
     CLI runners and test harnesses replace `sys.stderr` per invocation; a handler bound
@@ -127,6 +152,25 @@ class _CurrentStderrHandler(logging.StreamHandler):
     @stream.setter
     def stream(self, _value: TextIO) -> None:
         return None
+
+
+class _ThirdPartyToLogFile(_QuietHandlerErrors, logging.Handler):
+    """On the root logger: WARNING+ records of other libraries go to SPECTRE's log file.
+
+    Without a handler on the root, Python's last-resort handler prints them raw on stderr
+    (a library warning can quote the URL it fetched). Here they pass through the
+    `RedactingFormatter` of the file handler instead, and never reach the terminal.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name == ROOT_LOGGER or record.name.startswith(ROOT_LOGGER + "."):
+            return  # SPECTRE's own records have their handlers already
+        for handler in logging.getLogger(ROOT_LOGGER).handlers:
+            if isinstance(handler, logging.FileHandler) and record.levelno >= handler.level:
+                handler.handle(record)
 
 
 def _is_console_handler(handler: logging.Handler) -> bool:
@@ -157,6 +201,9 @@ def setup_logging(
         noisy = logging.getLogger(name)
         if noisy.level < logging.WARNING:
             noisy.setLevel(logging.WARNING)
+    root = logging.getLogger()
+    if not any(isinstance(handler, _ThirdPartyToLogFile) for handler in root.handlers):
+        root.addHandler(_ThirdPartyToLogFile())
 
     formatter = RedactingFormatter(
         fmt="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
@@ -181,7 +228,7 @@ def setup_logging(
                 file_handler = handler
                 break
         if file_handler is None:
-            file_handler = logging.FileHandler(log_path, encoding="utf-8")
+            file_handler = _SpectreFileHandler(log_path, encoding="utf-8")
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         file_handler.setLevel(file_level)

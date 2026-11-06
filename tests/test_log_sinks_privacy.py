@@ -28,7 +28,12 @@ from spectre_osint.core.logger import (
     legacy_log_files,
     setup_logging,
 )
-from spectre_osint.core.redaction import clear_target_values, register_target_values, target_ref
+from spectre_osint.core.redaction import (
+    clear_target_values,
+    register_target_values,
+    target_ref,
+    target_scope,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +133,42 @@ def test_safety_net_scrubs_tracebacks_too(tmp_path: Path) -> None:
     except RuntimeError:
         get_logger("spectre").debug("failed", exc_info=True)
     assert "alice_osint" not in _read(tmp_path / "logs" / LOG_FILENAME)
+
+
+@pytest.mark.parametrize("console_level", [None, "INFO"], ids=["file-only", "file-and-terminal"])
+def test_a_malformed_log_call_never_prints_its_arguments(
+    console_level: str | None, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Python's Handler.handleError prints "Message: ... Arguments: (...)" on stderr."""
+    sentinel = "https://github.com/" + "alice" + "_osint"
+    setup_logging("INFO", tmp_path / "logs", console_level=console_level)
+    get_logger("spectre.canary").warning("%s failed: %s", sentinel)  # one argument short
+    err = capsys.readouterr().err
+    assert "alice_osint" not in err
+    assert "Arguments" not in err
+    assert "SPECTRE logging error in spectre.canary: TypeError" in err
+
+
+def test_third_party_warnings_go_to_the_log_file_redacted_and_never_raw_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A library logger outside `spectre.*` has no handler; with none on the root either,
+    Python's last-resort handler prints its WARNINGs raw on stderr."""
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])  # production: no root handler
+    setup_logging("INFO", tmp_path / "logs")
+    library = logging.getLogger("thirdparty.lib")
+    with target_scope():
+        register_target_values("alice_osint")
+        library.warning("lib saw https://github.com/%s token=SPECTRE_CANARY_SECRET_abc123", "alice_osint")
+        library.info("lib chatter about alice_osint")
+    err = capsys.readouterr().err
+    assert "alice_osint" not in err
+    assert "SPECTRE_CANARY_SECRET" not in err
+    text = _read(tmp_path / "logs" / LOG_FILENAME)
+    assert "| WARNING | thirdparty.lib | lib saw https://github.com/t:" in text
+    assert "alice_osint" not in text
+    assert "SPECTRE_CANARY_SECRET_abc123" not in text
+    assert "lib chatter" not in text  # below WARNING
 
 
 def test_url_echoing_third_party_loggers_are_capped_at_warning(tmp_path: Path) -> None:
