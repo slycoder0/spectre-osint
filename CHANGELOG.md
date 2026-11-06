@@ -173,6 +173,9 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Validação de domínio 100% offline (B2-08):** o SPECTRE não baixa mais a Public Suffix List
+  por conta própria (nem imprime traceback no stderr sem rede); usa só a lista embutida no
+  pacote `tldextract`.
 - **Logs sem dados do alvo (B2-07):** o arquivo de log e as linhas de `--verbose` / `--debug`
   não registram mais username, e-mail, nome, domínio / IP / URL investigados, URLs de perfil,
   valores de pivô, caminhos de relatório nem a mensagem de exceções (`str(exc)` do httpx, de

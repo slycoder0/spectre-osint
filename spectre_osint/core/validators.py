@@ -20,6 +20,16 @@ import tldextract
 from spectre_osint.core.exceptions import ValidationError
 from spectre_osint.core.types import EntityType
 
+# Offline by construction: no suffix-list URLs (so no `requests` fetch outside HttpClient / SSRF
+# policy) and no disk cache (so no stale or planted cache is trusted). With nothing to fetch,
+# tldextract falls back to the Public Suffix List snapshot bundled in the package. The list is
+# as fresh as the pinned tldextract release; refresh it by upgrading the dependency.
+_TLD_EXTRACT = tldextract.TLDExtract(
+    suffix_list_urls=(),
+    cache_dir=None,
+    fallback_to_snapshot=True,
+)
+
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 _HASH_RE = re.compile(r"^[A-Fa-f0-9]+$")
@@ -91,14 +101,14 @@ def normalize_domain(value: str) -> str:
     if raw.startswith("www."):
         # Keep www as a distinct hostname; callers may also store the registrable domain.
         pass
-    extracted = tldextract.extract(raw)
+    extracted = _TLD_EXTRACT(raw)
     if not extracted.suffix:
         raise ValidationError(f"Not a valid domain: {value}")
     return raw
 
 
 def registrable_domain(value: str) -> str:
-    extracted = tldextract.extract(normalize_domain(value))
+    extracted = _TLD_EXTRACT(normalize_domain(value))
     if not extracted.domain or not extracted.suffix:
         raise ValidationError(f"Cannot derive registrable domain from: {value}")
     return f"{extracted.domain}.{extracted.suffix}"
