@@ -52,6 +52,7 @@ MESSAGES: dict[str, str] = {
     "doctor.state.ok": "OK",
     "doctor.state.optional": "OPTIONAL",
     "doctor.state.action": "ACTION",
+    "doctor.state.info": "INFO",
     "doctor.group.core": "Core",
     "doctor.group.browser": "Browser",
     "doctor.group.search": "Search",
@@ -103,6 +104,8 @@ MESSAGES: dict[str, str] = {
     "doctor.hint.searxng_offline": "URL is set; instance did not respond. Optional.",
     "doctor.hint.settings": "Check .env syntax. Do not paste secrets into issues.",
     "doctor.hint.legacy_logs": (
-        "Written by an earlier version; may contain target data. Delete it when you no longer need it."
+        "Written by an earlier version; may contain target data. Delete it when you no longer "
+        "need it. The default ./logs is relative to the folder spectre runs from, so other "
+        "folders may have their own."
     ),
 }

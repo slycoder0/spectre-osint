@@ -20,6 +20,8 @@ from spectre_osint.modules.search.providers import is_loopback_searxng, searxng_
 OK = "ok"
 OPTIONAL = "optional"
 ACTION = "action"
+# Shown, never counted: it does not change the overall status.
+INFO = "info"
 
 READY = "READY"
 READY_OPTIONAL = "READY WITH OPTIONAL FEATURES MISSING"
@@ -252,8 +254,20 @@ def _providers(settings: Settings) -> list[dict[str, str]]:
     return checks
 
 
+_LEGACY_LOGS_HINT = (
+    "Written by an earlier version; may contain target data. Delete it when you no longer "
+    "need it. The default ./logs is relative to the folder spectre runs from, so other "
+    "folders may have their own."
+)
+
+
 def _legacy_logs(settings: Settings) -> dict[str, str]:
-    """Logs from before B2-07 may hold target data. Pointed at, never opened or deleted."""
+    """Logs from before B2-07 may hold target data. Pointed at, never opened or deleted.
+
+    Informative (`INFO`): it never changes the overall status. Only the configured logs
+    directory is looked at; with the default relative `./logs`, that is the one under the
+    folder the command runs from.
+    """
     found = legacy_log_files(Path(settings.logs_dir))
     if not found:
         return _check("security", "Legacy logs", "none", OK)
@@ -261,8 +275,8 @@ def _legacy_logs(settings: Settings) -> dict[str, str]:
         "security",
         "Legacy logs",
         ", ".join(str(path) for path in found),
-        OPTIONAL,
-        hint="Written by an earlier version; may contain target data. Delete it when you no longer need it.",
+        INFO,
+        hint=_LEGACY_LOGS_HINT,
     )
 
 
@@ -401,9 +415,7 @@ _HINT_KEYS = {
     "Instance responded with a server error. Optional.": "doctor.hint.searxng_error",
     "URL is set; instance did not respond. Optional.": "doctor.hint.searxng_offline",
     "Check .env syntax. Do not paste secrets into issues.": "doctor.hint.settings",
-    "Written by an earlier version; may contain target data. Delete it when you no longer need it.": (
-        "doctor.hint.legacy_logs"
-    ),
+    _LEGACY_LOGS_HINT: "doctor.hint.legacy_logs",
 }
 _STATUS_KEYS = {
     READY: "doctor.status.ready",

@@ -54,6 +54,7 @@ MESSAGES: dict[str, str] = {
     "doctor.state.ok": "OK",
     "doctor.state.optional": "OPCIONAL",
     "doctor.state.action": "AÇÃO",
+    "doctor.state.info": "INFO",
     "doctor.group.core": "Núcleo",
     "doctor.group.browser": "Navegador",
     "doctor.group.search": "Busca",
@@ -107,6 +108,8 @@ MESSAGES: dict[str, str] = {
     "doctor.hint.searxng_offline": "A URL está definida, mas a instância não respondeu. Opcional.",
     "doctor.hint.settings": "Confira a sintaxe do .env. Não cole segredos em issues.",
     "doctor.hint.legacy_logs": (
-        "Gravado por uma versão anterior; pode conter dados do alvo. Apague quando não precisar mais."
+        "Gravado por uma versão anterior; pode conter dados do alvo. Apague quando não precisar "
+        "mais. O padrão ./logs é relativo à pasta onde o spectre roda; outras pastas podem ter o "
+        "seu próprio."
     ),
 }

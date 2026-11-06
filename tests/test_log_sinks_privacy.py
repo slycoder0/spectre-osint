@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 from spectre_osint.cli import doctor as doctor_mod
 from spectre_osint.cli.commands import app
-from spectre_osint.cli.doctor import OK, OPTIONAL, render_doctor, run_doctor
+from spectre_osint.cli.doctor import INFO, OK, READY, render_doctor, run_doctor
 from spectre_osint.core.i18n import set_language
 from spectre_osint.core.logger import (
     LEGACY_LOG_FILENAMES,
@@ -203,13 +203,38 @@ def test_doctor_reports_no_legacy_logs(settings) -> None:
     assert "Legacy logs" not in render_doctor(run_doctor(settings))
 
 
+def test_legacy_logs_are_informative_and_never_change_the_overall_status(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Everything else ready: the overall line must still say READY with a legacy log."""
+    for name in ("_chrome", "_searxng", "_sessions", "_providers"):
+        monkeypatch.setattr(doctor_mod, name, lambda _cfg: [])
+    before = run_doctor(settings)
+    assert before["status"] == READY, [c for c in before["checks"] if c["state"] != OK]
+    (Path(settings.logs_dir) / "spectre.log").write_text("old\n", encoding="utf-8")
+    after = run_doctor(settings)
+    (check,) = _legacy_checks(after)
+    assert check["state"] == INFO
+    assert (after["status"], after["ready"]) == (READY, True)
+    set_language("en")
+    text = render_doctor(after)
+    assert "[INFO] Legacy logs: " in text
+    assert "relative to the folder spectre runs from" in text
+    assert text.splitlines()[-1] == "Overall: READY"
+    set_language("pt-BR")
+    text = render_doctor(after)
+    assert "[INFO] Logs antigos: " in text
+    assert "relativo à pasta onde o spectre roda" in text
+    assert text.splitlines()[-1] == "Resultado geral: PRONTO"
+
+
 def test_doctor_points_at_legacy_logs_without_touching_them(settings) -> None:
     legacy = Path(settings.logs_dir) / "spectre.log"
     legacy.write_text("old line with alice_osint\n", encoding="utf-8")
     before = legacy.stat().st_mtime_ns
     report = run_doctor(settings)
     (check,) = _legacy_checks(report)
-    assert check["state"] == OPTIONAL
+    assert check["state"] == INFO
     assert check["group"] == "security"
     assert check["value"] == str(legacy)
     assert check["hint"]
