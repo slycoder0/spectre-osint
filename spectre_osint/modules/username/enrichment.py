@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from spectre_osint.core.logger import get_logger
+from spectre_osint.core.redaction import target_ref
 from spectre_osint.core.types import AccessMode
 from spectre_osint.modules.username.identity import (
     _PLATFORM_HOSTS,
@@ -534,7 +535,7 @@ def enrich_profile(
         logger.debug(
             "profile enrichment provider=%s username=%s fields=%s sources=%s",
             platform,
-            handle,
+            target_ref(handle),
             ",".join(fields),
             ",".join(sources),
         )

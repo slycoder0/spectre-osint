@@ -560,17 +560,41 @@ def _validation_summary(exc: Exception) -> str:
     raised deeper in the walk could interpolate transport into its own message, and this
     helper should not be the thing that has to be re-audited when one does.
     """
-    if isinstance(exc, ValidationError):
-        codes: list[str] = []
-        for error in exc.errors(include_url=False, include_context=False, include_input=False):
-            code = str(error.get("type") or "validation_error")
-            if code not in codes:
-                codes.append(code)
-        shown = codes[:3]
-        if len(codes) > len(shown):
-            shown.append("...")
-        return f"{exc.error_count()} validation error(s): {', '.join(shown)}"[:200]
-    return f"invalid observed transport ({type(exc).__name__})"
+    return _label_from_parts(*_validation_parts(exc))
+
+
+def _validation_parts(exc: Exception) -> tuple[int, tuple[str, ...], str]:
+    """(error count, deduplicated pydantic type codes capped at three, exception class)."""
+    if not isinstance(exc, ValidationError):
+        return 1, (), type(exc).__name__
+    codes: list[str] = []
+    for error in exc.errors(include_url=False, include_context=False, include_input=False):
+        code = str(error.get("type") or "validation_error")
+        if code not in codes:
+            codes.append(code)
+    shown = codes[:3]
+    if len(codes) > len(shown):
+        shown.append("...")
+    return exc.error_count(), tuple(shown), type(exc).__name__
+
+
+def _label_from_parts(count: int, codes: tuple[str, ...], error_class: str) -> str:
+    if codes:
+        return f"{count} validation error(s): {', '.join(codes)}"[:200]
+    return f"invalid observed transport ({error_class})"
+
+
+def validation_label(authority: ObservedAuthority) -> str:
+    """What a log line may say about a failed `observed` channel (B2-07).
+
+    Built only from the typed parts `read_observed()` kept — the error count, pydantic's
+    type codes (a fixed pydantic-core vocabulary) and the exception class — never from
+    `authority.error` or any message, so it is safe by construction like `exc_label`.
+    `tests/test_logs_no_target_data.py` refuses `.error` as a log argument.
+    """
+    if not authority.failed:
+        return "-"
+    return _label_from_parts(authority.error_count, authority.error_codes, authority.error_class)
 
 
 @dataclass(frozen=True)
@@ -597,6 +621,11 @@ class ObservedAuthority:
     present: bool
     fields: ObservedFields | None = None
     error: str = ""
+    # The parts `error` is built from, kept typed so a log line can use them without
+    # trusting a free-text field (see `validation_label()`).
+    error_count: int = 0
+    error_codes: tuple[str, ...] = ()
+    error_class: str = ""
 
     @property
     def failed(self) -> bool:
@@ -638,7 +667,14 @@ def read_observed(data: Mapping[str, Any] | None) -> ObservedAuthority:
     try:
         fields = parse_observed(payload[OBSERVED_KEY])
     except (ValueError, TypeError) as exc:
-        return ObservedAuthority(present=True, error=_validation_summary(exc))
+        count, codes, error_class = _validation_parts(exc)
+        return ObservedAuthority(
+            present=True,
+            error=_label_from_parts(count, codes, error_class),
+            error_count=count,
+            error_codes=codes,
+            error_class=error_class,
+        )
     return ObservedAuthority(present=True, fields=fields)
 
 

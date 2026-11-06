@@ -116,7 +116,7 @@ Limites que o operador precisa conhecer:
 - **Desde a B2-06 o banner só aparece com `--verbose`.** A saída padrão é compacta e não tem banner; as variáveis acima e `--no-banner` o suprimem também no modo verbose.
 - **O valor não é interpretado como booleano.** Apenas a presença de uma string não vazia é testada, portanto `SPECTRE_NO_BANNER=0` e `SPECTRE_NO_BANNER=false` **também suprimem** o banner. Para manter o banner, deixe a variável indefinida (ou com string vazia).
 - **Basta uma das três formas.** `--no-banner`, `SPECTRE_NO_BANNER` e `NO_BANNER` são verificadas de forma independente; qualquer uma delas ativa é suficiente.
-- **O escopo é apenas o banner.** Suprimi-lo não altera o resultado, o nível de log, nem a apresentação controlada por `--verbose`. Logs vão só para `SPECTRE_LOGS_DIR/spectre.log`; no terminal, apenas com `--verbose` (INFO) ou `--debug` (DEBUG), sempre em stderr.
+- **O escopo é apenas o banner.** Suprimi-lo não altera o resultado, o nível de log, nem a apresentação controlada por `--verbose`. Logs vão só para `SPECTRE_LOGS_DIR/spectre-osint.log` (sem dados do alvo; o `spectre.log` de versões anteriores pode conter e nunca é tocado); no terminal, apenas com `--verbose` (INFO) ou `--debug` (DEBUG), sempre em stderr.
 
 ---
 

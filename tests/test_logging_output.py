@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from spectre_osint.core.logger import get_logger, setup_logging
+from spectre_osint.core.logger import LOG_FILENAME, get_logger, setup_logging
 
 
 def _console_handlers() -> list[logging.Handler]:
@@ -35,7 +35,7 @@ def test_default_setup_writes_the_file_and_not_the_terminal(tmp_path: Path, caps
     assert captured.err == ""
     assert captured.out == ""
     assert _console_handlers() == []
-    text = (tmp_path / "logs" / "spectre.log").read_text(encoding="utf-8")
+    text = (tmp_path / "logs" / LOG_FILENAME).read_text(encoding="utf-8")
     assert "status=429" in text
 
 
@@ -55,7 +55,7 @@ def test_console_level_filters_below_threshold(tmp_path: Path, capsys) -> None:
     captured = capsys.readouterr()
     assert "visible info line" in captured.err
     assert "hidden debug line" not in captured.err
-    text = (tmp_path / "logs" / "spectre.log").read_text(encoding="utf-8")
+    text = (tmp_path / "logs" / LOG_FILENAME).read_text(encoding="utf-8")
     assert "hidden debug line" in text
 
 

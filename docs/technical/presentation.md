@@ -86,13 +86,41 @@ As seções detalhadas ainda estão só em inglês (follow-up registrado em
 | stdout | resultado compacto | detalhes + resultado | resultado compacto |
 | stderr — progresso | barra Rich transitória, **só se stderr for TTY** | linhas factuais por fase | barra (se TTY) |
 | stderr — logs | nada | `INFO` | `DEBUG` |
-| `logs/spectre.log` | sempre | sempre | sempre (nível `DEBUG`) |
+| `logs/spectre-osint.log` | sempre | sempre | sempre (nível `DEBUG`) |
 
 - A barra mostra a fase traduzida e contagens reais quando o pipeline as informa
   (sites consultados no catálogo). Fases sem total conhecido pulsam; nenhuma porcentagem
   é inventada (contrato de `core/progress.py`).
 - Com saída redirecionada ou em pipe, stderr não é TTY: nenhuma barra é desenhada.
-- Logs passam pelo `RedactingFormatter` em qualquer destino (`core/redaction.py`).
+- Logs passam pelo `RedactingFormatter` em qualquer destino (`core/logger.py`): segredos
+  mascarados, mensagens de exceção retidas nos tracebacks e valores do alvo da execução
+  trocados por referência (`core/redaction.py`).
+- **Logs nunca contêm dados do alvo (B2-07).** Uma chamada de log registra slug do provedor,
+  status HTTP, contagens, duração e a classe da exceção (`exc_label`). Para ligar linhas do
+  mesmo valor use `target_ref(valor)` / `host_ref(url)`: HMAC-SHA256 truncado (8 hex) com sal
+  aleatório que só existe na memória — não reversível e diferente a cada investigação, mesmo no
+  mesmo processo (o menu roda várias). Quando o host é o alvo (domínio, IP, URL investigados)
+  ele também só aparece como `h:…`; IPv6 sem `://` é lido como endereço, não cortado no `:`.
+- **Rede de segurança por investigação.** `InvestigationRunner.run` (e o recon ativo) abrem um
+  `target_scope()` (contextvar; tarefas asyncio e `asyncio.to_thread` herdam). Dentro dele o
+  alvo, as pistas do operador e cada pivô vão para `register_target_values()`, e o formatter
+  troca o que ainda escapar (rede de segurança, não licença para logar). Ao sair: valores
+  descartados, padrão vazio, sal novo. Limite duro de 256 formas por escopo. Só troca
+  ocorrências delimitadas (nunca dentro de palavra/identificador), só formas com 6+ caracteres
+  (parte local / domínio do e-mail: 8+; e-mail completo sempre) e nunca uma palavra do
+  vocabulário do log, derivado do código em `core/log_vocabulary.py` (sites do catálogo,
+  valores de enums, classes de exceção, palavras dos templates de log). Alvo curto ou comum
+  é responsabilidade do call site e do canário, não da rede.
+- O guarda é `tests/test_logs_no_target_data.py` (canário dinâmico + varredura AST de toda
+  chamada de log, `print(file=sys.stderr)`, `sys.stderr.write` e `warn`).
+- Erros de formatação (`logger.warning("%s: %s", url)`) viram uma linha
+  `SPECTRE logging error in <logger>: <Classe>`, sem mensagem nem argumentos. Avisos
+  (WARNING+) de bibliotecas de terceiros vão para o arquivo pelo mesmo formatter, nunca crus
+  para o stderr.
+- Logs de versões anteriores ficam em `logs/spectre.log` e nunca são tocados; o `spectre
+  doctor` aponta para eles com uma linha `[INFO]` que não muda o resultado geral (o padrão
+  `./logs` é relativo à pasta onde o `spectre` roda). `httpx` / `httpcore` (que logam URLs
+  completas em INFO) ficam limitados a WARNING.
 - O arquivo segue `SPECTRE_LOG_LEVEL` (exceto com `--debug`, que grava DEBUG); o terminal segue a
   flag. Com `SPECTRE_LOG_LEVEL=WARNING` e `--verbose`, o INFO aparece no stderr e não no arquivo.
   As flags valem para todo comando que configura logs (`username`, demais investigações, `auth`)

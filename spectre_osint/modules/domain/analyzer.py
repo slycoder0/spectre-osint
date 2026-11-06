@@ -12,6 +12,7 @@ from spectre_osint.core.entities import Entity, Finding, Relationship
 from spectre_osint.core.evidence import make_evidence
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.logger import get_logger
+from spectre_osint.core.redaction import exc_label
 from spectre_osint.core.registry import ProviderRegistry
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus, RelationType
 from spectre_osint.modules.dns.resolver import resolve_dns
@@ -100,7 +101,8 @@ async def _http_fingerprint(entity: Entity, http: HttpClient) -> dict[str, Any] 
             accept_statuses=set(range(200, 500)),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.info("Public HTTP fingerprint skipped: %s", exc)
+        # The host here *is* the target; SSRFBlocked / httpx messages name it.
+        logger.info("Public HTTP fingerprint skipped: %s", exc_label(exc))
         return None
 
     headers_l = {k.lower(): v for k, v in response.headers.items()}

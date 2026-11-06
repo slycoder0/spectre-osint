@@ -13,7 +13,7 @@ from spectre_osint.core.config import Settings, get_settings
 from spectre_osint.core.entities import Entity, Finding, utcnow
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.logger import get_logger
-from spectre_osint.core.redaction import redact_text
+from spectre_osint.core.redaction import host_ref, redact_text
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus
 from spectre_osint.modules.mentions.engine import (
     PER_PROVIDER_LIMIT,
@@ -328,9 +328,10 @@ async def _run_queries(
                             },
                         )
                     )
+                    # The candidate's host can embed the handle (alice.example.dev).
                     logger.debug(
                         "discovered profile host=%s input=username relevance=%s match_type=%s",
-                        host,
+                        host_ref(host),
                         relevance,
                         match_type,
                     )

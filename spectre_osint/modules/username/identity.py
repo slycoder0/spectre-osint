@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from spectre_osint.core.entities import Entity, Finding, Relationship
 from spectre_osint.core.logger import get_logger
+from spectre_osint.core.redaction import target_ref
 from spectre_osint.core.types import (
     Confidence,
     EntityType,
@@ -25,6 +26,7 @@ from spectre_osint.modules.username.observed import (
     field_is_active,
     read_observed,
     transport_row_is_active,
+    validation_label,
 )
 
 logger = get_logger("spectre.username")
@@ -420,13 +422,13 @@ def records_from_findings(findings: list[Finding]) -> list[IdentityRecord]:
         else:
             # Present and invalid: enrichment fails closed, the checked profile survives.
             # The reason is a bounded count plus pydantic type codes: no payload value and
-            # no payload-controlled mapping key reaches the log. See _validation_summary().
+            # no payload-controlled mapping key reaches the log. See validation_label().
             logger.warning(
                 "observed enrichment failed validation for %s (finding %s); "
                 "enrichment suppressed, profile record kept: %s",
                 platform,
                 finding.id,
-                authority.error,
+                validation_label(authority),
             )
             attributes = _blank_observed_attributes()
         rows.append(
@@ -673,9 +675,11 @@ def compare_records(left: IdentityRecord, right: IdentityRecord) -> dict[str, An
     if not explain:
         explain = ["+ same_username only" if "same_username" in evidence else "no comparable public fields"]
     logger.debug(
-        "identity correlation %s <-> %s score=%s evidence=%s conflicts=%s",
-        f"{left.platform.lower()}::{left.username}",
-        f"{right.platform.lower()}::{right.username}",
+        "identity correlation %s::%s <-> %s::%s score=%s evidence=%s conflicts=%s",
+        left.platform.lower(),
+        target_ref(left.username),
+        right.platform.lower(),
+        target_ref(right.username),
         score,
         ",".join(evidence) or "none",
         ",".join(conflicts) or "none",

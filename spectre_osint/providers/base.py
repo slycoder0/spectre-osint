@@ -18,6 +18,7 @@ from spectre_osint.core.exceptions import (
     RateLimitExceeded,
 )
 from spectre_osint.core.logger import get_logger
+from spectre_osint.core.redaction import exc_label
 from spectre_osint.core.types import EntityType, FindingStatus, ProviderKeyType
 
 logger = get_logger("spectre.providers")
@@ -224,8 +225,11 @@ class Provider(ABC):
             error="Provider not configured",
         )
 
-    def _unavailable(self, reason: str) -> ProviderResult:
-        logger.warning("[!] %s unavailable Reason: %s Continuing investigation...", self.name, reason)
+    def _unavailable(self, reason: str, exc: BaseException | None = None) -> ProviderResult:
+        # `reason` is usually str(exc): it names the queried URL / host, so it goes to the
+        # finding (report) and never to the log (B2-07).
+        error_class = exc_label(exc) if exc is not None else "no detail"
+        logger.warning("[!] %s unavailable (%s); continuing investigation", self.name, error_class)
         return ProviderResult(
             provider=self.name,
             status=FindingStatus.PROVIDER_UNAVAILABLE,
@@ -255,6 +259,6 @@ class Provider(ABC):
         except ProviderNotConfigured:
             return self._not_configured()
         except (ProviderUnavailable, RateLimitExceeded) as exc:
-            return self._unavailable(str(exc))
+            return self._unavailable(str(exc), exc)
         except Exception as exc:  # noqa: BLE001 — providers must never kill the pipeline
-            return self._unavailable(str(exc))
+            return self._unavailable(str(exc), exc)

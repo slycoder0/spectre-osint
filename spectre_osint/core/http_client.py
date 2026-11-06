@@ -30,7 +30,7 @@ from spectre_osint.core.rate_limit import (
     RateLimiter,
     compute_backoff,
 )
-from spectre_osint.core.redaction import redact_mapping, redact_text
+from spectre_osint.core.redaction import exc_label, host_ref, redact_mapping, redact_text
 from spectre_osint.core.ssrf import MAX_REDIRECTS, SSRFPolicy
 
 logger = get_logger("spectre.http")
@@ -244,18 +244,21 @@ class HttpClient:
         if host:
             open_reason = self.circuit.allow(host)
             if open_reason:
-                logger.warning("provider=%s host=%s circuit=open reason=%s", provider, host, open_reason)
+                logger.warning(
+                    "provider=%s host=%s circuit=open reason=%s", provider, host_ref(host), open_reason
+                )
                 if open_reason == "rate_limit":
                     raise RateLimitExceeded(f"{provider} circuit open ({host})", retry_after=None)
                 raise ProviderUnavailable(f"{provider} circuit open ({host}): {open_reason}")
             cooled = self.cooldown.remaining(host)
             if cooled > 0:
+                cooldown_reason = self.cooldown.reason(host) or "rate_limit"
                 logger.debug(
                     "provider=%s host=%s cooldown=%.2fs reason=%s",
                     provider,
-                    host,
+                    host_ref(host),
                     cooled,
-                    self.cooldown.reason(host) or "rate_limit",
+                    cooldown_reason,
                 )
                 raise RateLimitExceeded(
                     f"{provider} host cooldown ({host})",
@@ -301,9 +304,10 @@ class HttpClient:
                 last_error = exc
                 if host:
                     self.circuit.record_failure(host, "rate_limit")
+                retry_hint = parse_retry_after(exc.retry_after)
                 delay = compute_backoff(
                     attempt,
-                    retry_after=parse_retry_after(exc.retry_after),
+                    retry_after=retry_hint,
                     jitter=self._jitter(),
                     cap=cap,
                 )
@@ -316,9 +320,9 @@ class HttpClient:
                 logger.debug(
                     "provider=%s host=%s attempt=%s status=429 retry_after=%s backoff=%.2f",
                     provider,
-                    host or "-",
+                    host_ref(host),
                     attempt + 1,
-                    exc.retry_after or "-",
+                    retry_hint if retry_hint is not None else "-",
                     delay,
                 )
                 await self._sleep_for(delay)
@@ -337,7 +341,7 @@ class HttpClient:
                 logger.debug(
                     "provider=%s host=%s attempt=%s status=unavailable retry_after=- backoff=%.2f",
                     provider,
-                    host or "-",
+                    host_ref(host),
                     attempt + 1,
                     delay,
                 )
@@ -397,58 +401,63 @@ class HttpClient:
                     follow_redirects=False,
                     **kwargs,
                 )
+            # Log lines name the provider, a per-run host reference and the exception class
+            # only: the URL carries the username / investigated host, and httpx / ssl
+            # messages repeat it ("certificate is not valid for 'example.com'"). The raised
+            # exception keeps its detail for the finding and the report (B2-07).
             except httpx.TimeoutException as exc:
                 logger.warning(
-                    "HTTP timeout provider=%s url=%s err=%s",
+                    "HTTP timeout provider=%s host=%s err=%s",
                     provider,
-                    redact_text(url),
-                    redact_text(str(exc)),
+                    host_ref(host),
+                    exc_label(exc),
                 )
                 raise ProviderUnavailable(f"{provider} timeout") from exc
             except (ssl.SSLError, ssl.CertificateError) as exc:
                 if _is_tls_verification_error(exc):
                     logger.warning(
-                        "TLS certificate verification failed provider=%s url=%s err=%s",
+                        "TLS certificate verification failed provider=%s host=%s err=%s",
                         provider,
-                        redact_text(url),
-                        redact_text(str(exc)),
+                        host_ref(host),
+                        exc_label(exc),
                     )
                     raise TlsVerificationError(
                         f"{provider} TLS certificate verification failed: {redact_text(str(exc))}"
                     ) from exc
                 logger.warning(
-                    "SSL error provider=%s url=%s err=%s",
+                    "SSL error provider=%s host=%s err=%s",
                     provider,
-                    redact_text(url),
-                    redact_text(str(exc)),
+                    host_ref(host),
+                    exc_label(exc),
                 )
                 raise ProviderUnavailable(f"{provider} unavailable: {redact_text(str(exc))}") from exc
             except (httpx.HTTPError, UnicodeError) as exc:
                 if _is_tls_verification_error(exc):
                     logger.warning(
-                        "TLS certificate verification failed provider=%s url=%s err=%s",
+                        "TLS certificate verification failed provider=%s host=%s err=%s",
                         provider,
-                        redact_text(url),
-                        redact_text(str(exc)),
+                        host_ref(host),
+                        exc_label(exc),
                     )
                     raise TlsVerificationError(
                         f"{provider} TLS certificate verification failed: {redact_text(str(exc))}"
                     ) from exc
                 logger.warning(
-                    "HTTP error provider=%s url=%s err=%s",
+                    "HTTP error provider=%s host=%s err=%s",
                     provider,
-                    redact_text(url),
-                    redact_text(str(exc)),
+                    host_ref(host),
+                    exc_label(exc),
                 )
                 raise ProviderUnavailable(f"{provider} unavailable: {redact_text(str(exc))}") from exc
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After", "")
+            retry_seconds = parse_retry_after(retry_after)
             logger.warning(
                 "provider=%s host=%s status=429 retry_after=%s",
                 provider,
-                host or "-",
-                retry_after or "-",
+                host_ref(host),
+                retry_seconds if retry_seconds is not None else "-",
             )
             raise RateLimitExceeded(
                 f"{provider} rate limited (Retry-After={retry_after})",
@@ -459,7 +468,7 @@ class HttpClient:
             logger.warning(
                 "provider=%s host=%s unofficial HTTP %s (peer/proxy; not synthesized)",
                 provider,
-                host or "-",
+                host_ref(host),
                 response.status_code,
             )
             raise UnofficialHttpStatus(
@@ -470,7 +479,7 @@ class HttpClient:
             logger.debug(
                 "provider=%s host=%s attempt=- status=%s retry_after=- backoff=-",
                 provider,
-                host or "-",
+                host_ref(host),
                 response.status_code,
             )
             raise ProviderUnavailable(f"{provider} HTTP {response.status_code}")

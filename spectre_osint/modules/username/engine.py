@@ -21,7 +21,7 @@ from spectre_osint.core.exceptions import (
 )
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.logger import get_logger
-from spectre_osint.core.redaction import redact_text
+from spectre_osint.core.redaction import exc_label, redact_text
 from spectre_osint.core.result_cache import ResultCache
 from spectre_osint.core.types import (
     AccessMode,
@@ -447,7 +447,7 @@ async def analyze_username(
     hits = []
     for item in results:
         if not isinstance(item, dict):
-            logger.warning("Username site check failed: %s", item)
+            logger.warning("Username site check failed: %s", exc_label(item))
             continue
         findings.append(item["finding"])
         evidence.extend(item["evidence"])
@@ -970,14 +970,7 @@ async def _authenticated_public(
         access: AccessMode,
         session: str,
     ) -> tuple[UsernameCheckStatus, str, Confidence | None, AccessMode, str, dict[str, str]]:
-        _log_authenticated_public_evidence(
-            site,
-            username,
-            profile_url,
-            outcome,
-            classified=classified,
-            reason=reason,
-        )
+        _log_authenticated_public_evidence(site, username, outcome, classified=classified)
         return classified, reason, conf, access, session, _auth_meta(outcome)
 
     if outcome.redirected_to_login or outcome.status == UsernameCheckStatus.SESSION_EXPIRED.value:
@@ -1092,11 +1085,9 @@ async def _authenticated_public(
 def _log_authenticated_public_evidence(
     site: dict[str, Any],
     username: str,
-    profile_url: str,
     outcome: Any,
     *,
     classified: UsernameCheckStatus,
-    reason: str,
 ) -> None:
     public_site = dict(site)
     public_site["check_method"] = "generic_html"
@@ -1112,38 +1103,44 @@ def _log_authenticated_public_evidence(
         og_title=str(getattr(outcome, "og_title", "") or ""),
         content_length=int(getattr(outcome, "content_length", 0) or 0),
     )
+    # Flags, counts and rule kinds only (B2-07). URLs, titles and og:* values name the
+    # profile (and so the username); the classification reason can quote page text.
     logger.debug(
-        "AUTHENTICATED_PUBLIC evidence platform=%s requested_url=%s final_url=%s http_status=%s "
-        "title=%s canonical=%s og_url=%s og_title=%s username_in_final_url=%s username_in_canonical=%s "
-        "username_in_og_url=%s username_in_title=%s username_in_og_title=%s login_wall=%s captcha=%s "
-        "challenge=%s not_found=%s success_pattern=%s positive_rules=%s negative_rules=%s "
-        "classification=%s reason=%s content_length=%s metadata_waited=%s metadata_ready=%s",
+        "AUTHENTICATED_PUBLIC evidence platform=%s http_status=%s final_url_present=%s "
+        "canonical_present=%s og_url_present=%s title_present=%s og_title_present=%s "
+        "username_in_final_url=%s username_in_canonical=%s username_in_og_url=%s "
+        "username_in_title=%s username_in_og_title=%s login_wall=%s captcha=%s challenge=%s "
+        "not_found=%s success_pattern=%s positive_rules=%s negative_rules=%s classification=%s "
+        "content_length=%s metadata_waited=%s metadata_ready=%s",
         redact_text(str(site.get("name") or "")),
-        redact_text(profile_url),
-        redact_text(str(report["final_url"])),
         report["http_status"],
-        redact_text(str(report["title"])),
-        redact_text(str(report["canonical_url"])),
-        redact_text(str(report["og_url"])),
-        redact_text(str(report["og_title"])),
+        bool(report["final_url"]),
+        bool(report["canonical_url"]),
+        bool(report["og_url"]),
+        bool(report["title"]),
+        bool(report["og_title"]),
         report["username_in_final_url"],
         report["username_in_canonical"],
         report["username_in_og_url"],
         report["username_in_title"],
         report["username_in_og_title"],
-        report["login_wall"],
-        report["captcha"],
-        report["challenge"],
-        report["not_found"],
-        report["success_pattern"] or "-",
-        ",".join(report["positive_rules"]) or "-",
-        ",".join(report["negative_rules"]) or "-",
+        bool(report["login_wall"]),
+        bool(report["captcha"]),
+        bool(report["challenge"]),
+        bool(report["not_found"]),
+        bool(report["success_pattern"]),
+        _rule_kinds(report["positive_rules"]),
+        _rule_kinds(report["negative_rules"]),
         classified.value,
-        redact_text(reason),
         report["content_length"],
         bool(getattr(outcome, "metadata_waited", False)),
         bool(getattr(outcome, "metadata_ready", False)),
     )
+
+
+def _rule_kinds(rules: list[str]) -> str:
+    """`captcha:<matched text>` -> `captcha`: the rule that fired, not what it matched."""
+    return ",".join(str(rule).split(":", 1)[0] for rule in rules) or "-"
 
 
 def _bundle_from_cached(entity: Entity, payload: dict[str, Any], cached: Any) -> dict[str, Any]:
