@@ -3,14 +3,37 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-06 — PR #18 (Fase 2.5): segunda revisão do Grok aplicada._
+_Última atualização: 2026-11-06 — `fix/b2-08-tldextract-offline` (PR aberto, aguardando merge)._
 
 ## Fase atual
 
-**Fase 2.5 — `fix/b2-07-logs-no-target-data`** (logs e avisos sem dados do alvo em todo o
-pacote): **PR #18 aberto; ajustes da primeira e da segunda revisão aplicados, aguardando
-merge (só com pedido explícito).** Não mergeado. A Fase 2 (PR #17) foi mergeada em `main`
-(merge `b2f8d89`).
+**Marco B2-08 — `fix/b2-08-tldextract-offline`** (validação de domínio sem rede): **PR aberto,
+aguardando merge (só com pedido explícito).** A Fase 2.5 (PR #18) foi mergeada em `main`
+(merge `be2d943`); a Fase 2 (PR #17), em `b2f8d89`. Próxima: **Fase 3** (ver "Próximo").
+
+### B2-08 — `tldextract` offline
+
+- **Problema (pré-existente):** `core/validators.py` chamava `tldextract.extract()`. Com o cache
+  em disco vazio, a biblioteca baixava a Public Suffix List sozinha (`requests` →
+  `publicsuffix.org` / `raw.githubusercontent.com`): fora do `HttpClient` (sem política SSRF, sem
+  UA honesto), testes dependentes de rede e, sem rede, traceback "Exception reading Public Suffix
+  List url…" no stderr.
+- **Correção:** extrator de módulo `_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=(),
+  cache_dir=None, fallback_to_snapshot=True)`. Conferido no código do `tldextract` 5.4.0: sem URLs,
+  `find_first_response` levanta `SuffixListNotFound` sem abrir conexão e cai no snapshot embutido;
+  com `cache_dir=None` o `DiskCache` fica desligado (nada lido nem gravado em disco). Nada muda
+  para quem usa a CLI.
+- **Regressões:** `tests/test_validators_offline.py` (3 testes; todos falharam antes da correção):
+  cache frio + `getaddrinfo` / `requests.Session.send` registrando tentativas (zero), sem log do
+  `tldextract`, sem stderr, sem cache gravado; configuração do extrator; processo novo offline com
+  stderr vazio.
+- **Varredura de rede fora do `HttpClient` em `spectre_osint/`** (grep de `tldextract`, `requests`,
+  `urllib.request`, `socket`, `http.client`, `aiohttp`, `dns.resolver`): o `tldextract` era o único
+  caso do mesmo tipo (HTTP externo escondido numa dependência). O resto é deliberado ou outra
+  classe: `browser/chrome.py` (`urlopen` só em loopback, CDP), `cli/doctor.py` (`urlopen` na
+  instância SearXNG, que precisa ser loopback; `create_connection` em `127.0.0.1:9222`),
+  `core/ssrf.py` (`getaddrinfo` para decidir o bloqueio) e `modules/dns/resolver.py` (consultas DNS
+  via `dnspython`, protocolo próprio — ver follow-ups).
 
 ### Segunda revisão do PR #18 (Grok, 2026-11-06) — aplicada, sem blocker
 
@@ -137,7 +160,8 @@ Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da corre�
 | 0 | `chore/b2-05-resume-hygiene` (Pillow `>=13,<14`, strings `0.1.0b1`, UA) | #15 | mergeado |
 | 1 | `fix/b2-03b2-display-name-rejection` | #16 | mergeado (`5ee5fd7`) |
 | 2 | `feat/b2-06-presentation-i18n` | #17 | mergeado (`b2f8d89`) |
-| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | aberto; 1ª e 2ª revisão aplicadas |
+| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | mergeado (`be2d943`) |
+| — | `fix/b2-08-tldextract-offline` | #19 | aberto, aguardando merge |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -152,15 +176,28 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-1. Merge do PR #18 (só com pedido explícito).
-2. **`fix/b2-08-tldextract-offline`** (PR próprio, antes da Fase 3): `tldextract` busca a lista
-   de sufixos fora do `HttpClient` (ver Follow-ups).
-3. **Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual.** `spectre` sem
-argumentos abre o menu sobre a mesma camada `services/` e as mesmas views; tela de
-Configurações grava o idioma com `core.i18n.save_language()`. O plano da Fase 3 foi entregue
-ao arquiteto junto com o PR #18 (texto, sem branch) e espera revisão antes de começar.
+1. Merge do PR de B2-08 (só com pedido explícito).
+2. **Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual — PRÓXIMA.**
+   `spectre` sem argumentos abre o menu sobre a mesma camada `services/` e as mesmas views; tela
+   de Configurações grava o idioma com `core.i18n.save_language()`. O plano da Fase 3 foi entregue
+   ao arquiteto junto com o PR #18 (texto, sem branch) e espera revisão antes de começar.
 
-## Últimos resultados dos portões (PR #18 com a segunda revisão, 2026-11-06)
+## Últimos resultados dos portões (B2-08, 2026-11-06)
+
+```text
+pytest -q        1181 passed in 112.71s   (local: --basetemp fora do repo; dentro do repo
+                                           test_session_not_in_sqlite_or_git falha por desenho)
+ruff check       All checks passed!
+mypy             Success: no issues found in 135 source files
+pip check        No broken requirements found.
+pip-audit        No known vulnerabilities found
+                 (spectre-osint: not on PyPI, skipped — esperado)
+```
+
+Ao vivo, com `TLDEXTRACT_CACHE` apontando para uma pasta vazia: `spectre domain example.co.uk` →
+saída 0; stderr 0 bytes (nenhum "Public Suffix"); a pasta do cache continuou vazia.
+
+## Portões anteriores (PR #18 com a segunda revisão, 2026-11-06)
 
 ```text
 pytest -q        1178 passed in 115.95s   (local: --basetemp por PermissionError no %TEMP%)
@@ -235,11 +272,15 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   `modules/search` chamam o callback de progresso direto; se ele lançar, a passada inteira é
   pulada ("Search intelligence skipped"). O pipeline e o catálogo já protegem. Proteger no
   pipeline (passar um wrapper seguro) — achado pelo canário da Fase 2.5.
-- **`tldextract` fora do `HttpClient` → próximo PR `fix/b2-08-tldextract-offline` (antes da
-  Fase 3).** `core/validators.py` (~linhas 94 e 101) chama `tldextract.extract()`, que com cache
-  frio busca a lista de sufixos públicos na rede sozinho: fura a política SSRF e o UA do
-  `HttpClient` e faz teste depender de rede. Usar a lista embutida (sem fetch) ou um extrator
-  configurado offline.
+- ~~`tldextract` fora do `HttpClient`~~ — **resolvido em B2-08** (extrator offline).
+- **Lista de sufixos públicos embutida é antiga:** o snapshot do `tldextract` 5.4.0 é de
+  `2025-04-07`. TLDs / sufixos criados depois podem não ser reconhecidos (`normalize_domain`
+  rejeitaria um TLD novo). Atualizar a PSL junto com a dependência (subir `tldextract` no
+  `pyproject.toml` e rodar `pip-audit`); não há download próprio por decisão.
+- **DNS fora do `HttpClient`:** `modules/dns/resolver.py` consulta nameservers direto via
+  `dnspython` (UDP/TCP 53) e `core/ssrf.py` resolve nomes com `getaddrinfo`. Não é HTTP e é
+  deliberado, mas fica fora da política SSRF / UA; decidir se o resolvedor precisa de política
+  própria (ex.: bloquear IP privado nas respostas) numa fase de segurança.
 - **`_cli_fail` / stderr com `str(exc)` → Fase 3**, junto com as mensagens de erro do menu:
   `SSRFBlocked` mostra o IP, `ConnectError` mostra a URL. Não é log (não é gravado), mas aparece
   no terminal. Mensagens de exceção continuam nos achados e relatórios por desenho.
