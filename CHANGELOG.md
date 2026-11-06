@@ -178,8 +178,14 @@ The format is based on Keep a Changelog.
   valores de pivô, caminhos de relatório nem a mensagem de exceções (`str(exc)` do httpx, de
   validação ou de arquivo). Ficam o provedor, o status HTTP, contagens e a classe da exceção;
   quando é preciso ligar linhas do mesmo alvo ou host, aparece uma referência curta
-  (`t:1a2b3c4d`, `h:…`) que muda a cada execução e não pode ser revertida. Tracebacks mantêm
-  os frames e escondem a mensagem. Relatórios e banco continuam completos.
+  (`t:1a2b3c4d`, `h:…`) que muda a cada investigação (mesmo no mesmo processo) e não pode ser
+  revertida. Tracebacks mantêm os frames e escondem a mensagem. Relatórios e banco continuam
+  completos.
+- **Revisão do PR #18:** a troca de segurança nos logs não deforma mais o texto do log
+  (`provider=github`, `ReadTimeout` ficam legíveis mesmo com alvo `github` / `timeout`) e vale só
+  durante a investigação; IPv6 ganha referência própria; avisos de bibliotecas vão para o arquivo
+  de log, nunca crus no terminal; a linha "Logs antigos" do `spectre doctor` passa a ser `[INFO]`
+  e não muda mais o resultado geral.
 - **Logs antigos podem conter dados do alvo.** Versões anteriores gravavam em
   `SPECTRE_LOGS_DIR/spectre.log` (padrão `./logs/spectre.log`, relativo à pasta onde o
   `spectre` roda) e esse arquivo pode ter usernames, URLs de perfil e domínios investigados.

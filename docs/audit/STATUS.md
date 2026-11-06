@@ -3,13 +3,45 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-05 — PR #18 (Fase 2.5, logs sem dados do alvo) aberto._
+_Última atualização: 2026-11-06 — PR #18 (Fase 2.5): ajustes da revisão aplicados._
 
 ## Fase atual
 
 **Fase 2.5 — `fix/b2-07-logs-no-target-data`** (logs e avisos sem dados do alvo em todo o
-pacote): **PR #18 aberto, em revisão.** Não mergeado. A Fase 2 (PR #17) foi mergeada em
-`main` (merge `b2f8d89`).
+pacote): **PR #18 aberto; ajustes das duas revisões aplicados, aguardando nova revisão.** Não
+mergeado. A Fase 2 (PR #17) foi mergeada em `main` (merge `b2f8d89`).
+
+### Ajustes da revisão do PR #18 (2026-11-06)
+
+Duas revisões independentes: nenhum vazamento ativo; 1 blocker funcional e alguns importantes.
+Cada item começou por um teste de regressão que falhou antes da correção.
+
+1. **Blocker — a rede de segurança deformava o log.** Agora só troca ocorrências delimitadas
+   (`(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])`; um `%XX` antes também delimita, para query strings
+   codificadas); piso de 6 caracteres (parte local / domínio do e-mail: 8; e-mail completo
+   sempre); nunca registra uma palavra do vocabulário do log, derivado do código em
+   `core/log_vocabulary.py` (nomes/slugs do catálogo, nomes/valores de enums do pacote, classes
+   de exceção carregadas, palavras de todos os templates de log — conferidas contra a AST).
+2. **Escopo por investigação:** `target_scope()` (contextvar) em `InvestigationRunner.run` e no
+   recon ativo; ao sair descarta valores, esvazia o padrão e troca o sal; aninhado = o mesmo
+   escopo; limite de 256 formas. Referência muda a cada investigação, não "a cada execução".
+3. **Guarda AST e canário:** 17 trechos que escapavam viraram casos do teste (receptores
+   `self.logger` / `sink` / `getLogger()` / `logging`, nomes contaminados, itens de
+   `gather(return_exceptions=True)`, `.get()` de chave negada, objetos de domínio, `.error`,
+   `print`/`sys.stderr.write`/`warn`, placeholders × argumentos). A correlação de identidade
+   loga `validation_label(authority)` (mesmo texto, montado só de contagem + códigos). Canário:
+   `authority.error` a partir de `ValidationError` com o alvo, piso alinhado + parte local do
+   e-mail, CLI também com `email` / `ip` / `url`, site da falha vindo de `load_sites()`.
+4. **`handleError`:** chamada mal formada imprime só `SPECTRE logging error in <logger>: <Classe>`.
+5. **Terceiros:** WARNING+ de bibliotecas vai para o arquivo pelo `RedactingFormatter`, nunca cru
+   no stderr (handler na raiz); teto de `httpx` / `httpcore` mantido.
+6. **IPv6:** `host_ref("2001:db8::1") != host_ref("2001:db8::2")`.
+7. **Doctor:** "Logs antigos" é `[INFO]` (estado `info`), não muda o resultado geral; a dica diz
+   que o padrão `./logs` é relativo à pasta onde o `spectre` roda.
+
+Regressões: `tests/test_target_redaction.py`, `tests/test_target_scope.py`,
+`tests/test_log_sinks_privacy.py`, `tests/test_logs_no_target_data.py`. Os acréscimos do canário
+que passaram de primeira foram validados com mutantes (vazamento injetado → teste falha).
 
 ### O que a Fase 2.5 fez
 
@@ -86,7 +118,7 @@ Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da corre�
 | 0 | `chore/b2-05-resume-hygiene` (Pillow `>=13,<14`, strings `0.1.0b1`, UA) | #15 | mergeado |
 | 1 | `fix/b2-03b2-display-name-rejection` | #16 | mergeado (`5ee5fd7`) |
 | 2 | `feat/b2-06-presentation-i18n` | #17 | mergeado (`b2f8d89`) |
-| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | aberto, em revisão |
+| 2.5 | `fix/b2-07-logs-no-target-data` | #18 | aberto; ajustes da revisão aplicados |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -101,23 +133,41 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-**Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual.** `spectre` sem
+1. Nova revisão do PR #18 → merge (só com pedido explícito).
+2. **`fix/b2-08-tldextract-offline`** (PR próprio, antes da Fase 3): `tldextract` busca a lista
+   de sufixos fora do `HttpClient` (ver Follow-ups).
+3. **Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual.** `spectre` sem
 argumentos abre o menu sobre a mesma camada `services/` e as mesmas views; tela de
 Configurações grava o idioma com `core.i18n.save_language()`. O plano da Fase 3 foi entregue
 ao arquiteto junto com o PR #18 (texto, sem branch) e espera revisão antes de começar.
 
-## Últimos resultados dos portões (PR #18, Fase 2.5, 2026-11-05)
+## Últimos resultados dos portões (PR #18 com os ajustes da revisão, 2026-11-06)
 
 ```text
-pytest -q        1127 passed in 118.06s
+pytest -q        1163 passed in 110.22s
 ruff check       All checks passed!
-mypy             Success: no issues found in 134 source files
+mypy             Success: no issues found in 135 source files
 pip check        No broken requirements found.
 pip-audit        No known vulnerabilities found
                  (spectre-osint: not on PyPI, skipped — esperado)
 ```
 
-Verificação ao vivo **dentro do repo** (`logs/spectre-osint.log`, só os bytes desta execução):
+Verificação ao vivo depois dos ajustes (dentro do repo, rede real, só os bytes desta execução):
+
+- `spectre --debug username torvalds` → saída 0; 281 linhas; `torvalds` no log: **0**; stderr:
+  **0**; stdout: 19.
+- `spectre --debug domain example.com` → saída 0; `example.com` no log: **0**; stderr: **0**;
+  stdout: 10 (`example` sozinho: 0 / 0).
+- `spectre --debug username github` → saída 0; 477 linhas; nenhuma palavra deformada
+  (`provider=t:`, `Readt:`, `AUt:`: 0). As 37 ocorrências de `github` são vocabulário
+  (`provider=GitHub`, `github::t:dbd48626` na correlação, `github-search`, `github_api.*`); o
+  username só aparece como `t:…`. Com `SPECTRE_HTTP_TIMEOUT=0.3 --refresh`: 33 linhas
+  `HTTP timeout provider=<Site> host=h:… err=ReadTimeout`, todas legíveis.
+- `logs/spectre.log` antigo intacto (2915 bytes); `spectre doctor` mostra
+  `[INFO] Logs antigos: logs\spectre.log — …` (o resultado geral do repo continua "com recursos
+  opcionais ausentes" por causa dos 20 opcionais, não dessa linha).
+
+Verificação ao vivo anterior (2026-11-05, antes dos ajustes):
 
 - `spectre --debug username torvalds` → saída 0; 244 linhas de log; `torvalds` no log desta
   execução: **0**; no stderr (`--debug`): **0**; no stdout (resultado): 19 (esperado).
@@ -159,11 +209,24 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   `modules/search` chamam o callback de progresso direto; se ele lançar, a passada inteira é
   pulada ("Search intelligence skipped"). O pipeline e o catálogo já protegem. Proteger no
   pipeline (passar um wrapper seguro) — achado pelo canário da Fase 2.5.
-- **Mensagens de exceção continuam nos achados e relatórios** (por desenho: relatório pode
-  ter dado do alvo) e em `_cli_fail` / traceback de crash no terminal (texto que o operador
-  digitou, nunca gravado). Não são logs; registrado para a revisão.
-- **Rede de segurança de logs é por processo e nunca é limpa em produção:** no menu (Fase 3)
-  vários alvos no mesmo processo acumulam — mais redação, nunca menos. Avaliar limite.
+- **`tldextract` fora do `HttpClient` → próximo PR `fix/b2-08-tldextract-offline` (antes da
+  Fase 3).** `core/validators.py` (~linhas 94 e 101) chama `tldextract.extract()`, que com cache
+  frio busca a lista de sufixos públicos na rede sozinho: fura a política SSRF e o UA do
+  `HttpClient` e faz teste depender de rede. Usar a lista embutida (sem fetch) ou um extrator
+  configurado offline.
+- **`_cli_fail` / stderr com `str(exc)` → Fase 3**, junto com as mensagens de erro do menu:
+  `SSRFBlocked` mostra o IP, `ConnectError` mostra a URL. Não é log (não é gravado), mas aparece
+  no terminal. Mensagens de exceção continuam nos achados e relatórios por desenho.
+- ~~Rede de segurança por processo, nunca limpa~~ — **resolvido na revisão do PR #18**
+  (`target_scope()` por investigação, limite de 256 formas).
+- **Build congelado (.exe, fase futura):** `core/log_vocabulary.py` lê as palavras dos templates
+  de log dos `.py` do pacote; sem fontes no bundle o vocabulário perde essas palavras e a rede
+  troca mais (só legibilidade, nunca vazamento). Incluir as fontes ou gerar o vocabulário no
+  build.
+- **`spectre search <consulta>`** não abre `target_scope()` nem registra a consulta: só a regra
+  do call site (guarda AST) protege esse comando. Abrir um escopo quando o menu chamar a busca.
+- **Avisos de bibliotecas de terceiros** vão só para o arquivo de log (decisão desta revisão);
+  com `--debug` eles não aparecem no terminal.
 - **Guarda AST é heurística** (nomes/chaves/atributos com cara de alvo); o canário dinâmico
   cobre os caminhos exercitados. Caminhos de navegador/autenticação só pela varredura AST e
   por `test_username_auth_evidence.py`.

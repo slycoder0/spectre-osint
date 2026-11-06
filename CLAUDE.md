@@ -43,7 +43,9 @@ Se `pytest` falhar com `PermissionError` no diretório temporário, rode com
   validação, URLs com PII). Use `core/redaction.py`.
 - Logs nunca contêm dados do alvo — o teste canário `tests/test_logs_no_target_data.py` é o
   guarda. Registre provider, status, contagens e `exc_label(exc)`; para correlacionar use
-  `target_ref()` / `host_ref()` (nunca o valor, nem o host quando ele é o alvo).
+  `target_ref()` / `host_ref()` (nunca o valor, nem o host quando ele é o alvo). A rede de
+  segurança (`register_target_values`) vale por investigação: registre dentro de
+  `target_scope()` (o `InvestigationRunner.run` já abre um).
 - Mudou o formato do que é cacheado → suba `RESULT_SCHEMA_VERSION` em `core/result_cache.py`.
 - Toda requisição sai pelo `HttpClient` com a política SSRF (`core/ssrf.py`).
 - Nada de CAPTCHA solving, stealth, proxy rotation, scraping de conteúdo privado.
