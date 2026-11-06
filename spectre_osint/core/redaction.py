@@ -203,8 +203,20 @@ def host_ref(url_or_host: object) -> str:
     if "://" in text:
         host = urlparse(text).hostname or ""
     else:
-        host = text.split("/", 1)[0].rsplit("@", 1)[-1].split(":", 1)[0]
+        authority = text.split("/", 1)[0].rsplit("@", 1)[-1]
+        host = _ip_text(authority.strip("[]")) or _ip_text(authority.split("]", 1)[0].lstrip("["))
+        if not host:
+            host = authority.split(":", 1)[0]  # host:port
+    host = _ip_text(host) or host
     return target_ref(host.strip().rstrip(".").lower(), kind="h")
+
+
+def _ip_text(text: str) -> str:
+    """The canonical text of an IP address (`2001:0db8::0001` -> `2001:db8::1`), or ""."""
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return ""
 
 
 def _scrub_forms(value: str, vocabulary: frozenset[str]) -> list[str]:

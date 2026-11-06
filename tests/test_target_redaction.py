@@ -63,6 +63,16 @@ def test_host_ref_names_no_host_and_matches_the_target_digest() -> None:
     assert "example" not in ref
 
 
+def test_host_ref_keeps_ipv6_hosts_apart() -> None:
+    """A bare IPv6 address must not be cut at its first colon (every 2001:db8::/32 host
+    would share the reference of "2001")."""
+    assert host_ref("2001:db8::1") != host_ref("2001:db8::2")
+    assert host_ref("2001:db8::1") != host_ref("2001")
+    assert host_ref("2001:db8::1") == host_ref("[2001:db8::1]") == host_ref("http://[2001:DB8::1]:8080/x")
+    assert host_ref("2001:0db8:0000::0001") == host_ref("2001:db8::1")
+    assert host_ref("example.com:8443/path") == host_ref("example.com")
+
+
 @pytest.fixture(autouse=True)
 def _clean_scrubber():
     clear_target_values()
