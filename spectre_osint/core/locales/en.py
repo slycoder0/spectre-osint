@@ -6,6 +6,11 @@ MESSAGES: dict[str, str] = {
     # --- global CLI --------------------------------------------------------------------
     "cli.lang_invalid": "Unsupported language: {value}. Use one of: {supported}.",
     "cli.banner.tagline": "passive-first, public sources only",
+    # --- spectre config ---------------------------------------------------------------
+    "cli.config.lang_saved": "Language saved: {language} ({path})",
+    "cli.config.lang_env_override": (
+        "Note: SPECTRE_LANG={value} is set in this environment and still takes precedence."
+    ),
     # --- CLI errors (stderr): by error type, never the exception text ------------------
     "cli.error.label": "Error",
     "cli.error.ssrf": (
@@ -48,6 +53,10 @@ MESSAGES: dict[str, str] = {
     "cli.error.reports_dir": (
         "the reports folder is not writable ({error}). Set SPECTRE_REPORTS_DIR and run "
         "`spectre doctor`."
+    ),
+    "cli.error.config_write": (
+        "cannot save the preference ({error}). Check SPECTRE_CONFIG_FILE or the folder's "
+        "permissions."
     ),
     "cli.error.generic": (
         "SPECTRE could not finish ({error}). Run `spectre doctor` or retry with --debug."

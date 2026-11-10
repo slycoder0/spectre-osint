@@ -6,6 +6,11 @@ MESSAGES: dict[str, str] = {
     # --- CLI global --------------------------------------------------------------------
     "cli.lang_invalid": "Idioma não suportado: {value}. Use um destes: {supported}.",
     "cli.banner.tagline": "passive-first, apenas fontes públicas",
+    # --- spectre config ---------------------------------------------------------------
+    "cli.config.lang_saved": "Idioma salvo: {language} ({path})",
+    "cli.config.lang_env_override": (
+        "Aviso: SPECTRE_LANG={value} está definida neste ambiente e continua tendo prioridade."
+    ),
     # --- erros da CLI (stderr): pelo tipo do erro, nunca o texto da exceção -------------
     "cli.error.label": "Erro",
     "cli.error.ssrf": (
@@ -53,6 +58,10 @@ MESSAGES: dict[str, str] = {
     "cli.error.reports_dir": (
         "a pasta de relatórios não aceita gravação ({error}). Defina SPECTRE_REPORTS_DIR e "
         "rode `spectre doctor`."
+    ),
+    "cli.error.config_write": (
+        "não foi possível salvar a preferência ({error}). Confira SPECTRE_CONFIG_FILE ou as "
+        "permissões da pasta."
     ),
     "cli.error.generic": (
         "o SPECTRE não conseguiu terminar ({error}). Rode `spectre doctor` ou tente de novo "

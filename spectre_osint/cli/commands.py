@@ -29,7 +29,15 @@ from spectre_osint.core.database import init_db
 from spectre_osint.core.entities import InvestigationResult
 from spectre_osint.core.exceptions import AuthorizationRequired, SpectreError
 from spectre_osint.core.http_client import HttpClient
-from spectre_osint.core.i18n import SUPPORTED_LANGUAGES, resolve_language, set_language, t
+from spectre_osint.core.i18n import (
+    LANG_ENV,
+    SUPPORTED_LANGUAGES,
+    normalize_language,
+    resolve_language,
+    save_language,
+    set_language,
+    t,
+)
 from spectre_osint.core.inputs import parse_target_inputs
 from spectre_osint.core.redaction import exc_label
 from spectre_osint.core.registry import default_registry
@@ -53,6 +61,8 @@ app = typer.Typer(
 )
 case_app = typer.Typer(help="Investigation case management.")
 app.add_typer(case_app, name="case")
+config_app = typer.Typer(help="Saved preferences (language).", no_args_is_help=True)
+app.add_typer(config_app, name="config")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
 
@@ -461,6 +471,30 @@ def network(
     for finding in bundle["findings"]:
         typer.echo(finding.summary)
         typer.echo(finding.data)
+
+
+@config_app.command("lang")
+def config_lang(
+    language: str = typer.Argument(..., help="pt_br (pt-BR) or en"),
+) -> None:
+    """Save the output language. `--lang` and SPECTRE_LANG still win when given."""
+    import os
+
+    normalized = normalize_language(language)
+    if normalized is None:
+        raise typer.BadParameter(
+            t("cli.lang_invalid", value=language, supported=", ".join(SUPPORTED_LANGUAGES)),
+            param_hint="LANGUAGE",
+        )
+    try:
+        path = save_language(normalized)
+    except OSError as exc:
+        _cli_fail(t("cli.error.config_write", error=exc_label(exc)))
+    set_language(normalized)
+    typer.echo(t("cli.config.lang_saved", language=normalized, path=path))
+    env_value = os.environ.get(LANG_ENV)
+    if env_value and normalize_language(env_value) not in (None, normalized):
+        typer.echo(t("cli.config.lang_env_override", value=env_value))
 
 
 @case_app.command("create")
