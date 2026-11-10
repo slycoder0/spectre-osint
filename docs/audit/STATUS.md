@@ -3,13 +3,15 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-10 — `feat/b2-09-visual-identity` (PR aberto, aguardando revisão)._
+_Última atualização: 2026-11-10 — Fase 3A mergeada (PR #20, `753f227`); nota do `--plain` em `docs/b2-09-plain-progress-note`._
 
 ## Fase atual
 
-**Fase 3A — `feat/b2-09-visual-identity`** (identidade visual, sem menu): **PR aberto,
-aguardando revisão do arquiteto e merge (só com pedido explícito).** O B2-08 (PR #19) foi
-mergeado em `main` (merge `b5798a4`). A Fase 3 foi dividida: **3A** (este PR) e **3B** (menu
+**Fase 3A — `feat/b2-09-visual-identity`** (identidade visual, sem menu): **mergeada em
+`main` (PR #20, merge `753f227`).** O ajuste da revisão do Codex (texto do `--plain`: só cor,
+banner e ícones ficam simples sozinhos; a barra de progresso só some com `--plain`) chegou
+depois do merge e vai num PR pequeno (`docs/b2-09-plain-progress-note`). O B2-08 (PR #19) foi
+mergeado em `main` (merge `b5798a4`). A Fase 3 foi dividida: **3A** (PR #20) e **3B** (menu
 TUI com questionary, PR separado — ver "Próximo").
 
 ### O que a Fase 3A fez
@@ -199,7 +201,8 @@ Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da corre�
 | 2 | `feat/b2-06-presentation-i18n` | #17 | mergeado (`b2f8d89`) |
 | 2.5 | `fix/b2-07-logs-no-target-data` | #18 | mergeado (`be2d943`) |
 | — | `fix/b2-08-tldextract-offline` | #19 | mergeado (`b5798a4`) |
-| 3A | `feat/b2-09-visual-identity` | (este PR) | aberto, aguardando revisão |
+| 3A | `feat/b2-09-visual-identity` | #20 | mergeado (`753f227`) |
+| 3A | `docs/b2-09-plain-progress-note` (ajuste da revisão do #20) | — | aberto, aguardando merge |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -214,7 +217,7 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-1. Revisão do arquiteto e merge do PR da Fase 3A (só com pedido explícito).
+1. Merge do PR pequeno `docs/b2-09-plain-progress-note` (só com pedido explícito).
 2. **Fase 3B — menu TUI (questionary)**: `spectre` sem argumentos abre o menu sobre a mesma
    camada `services/`, as mesmas views e o mesmo tema (`cli/theme.py`); tela de
    Configurações grava o idioma com `core.i18n.save_language()`; mensagens de erro do menu
@@ -223,7 +226,7 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 ## Últimos resultados dos portões (Fase 3A, 2026-11-10)
 
 ```text
-pytest -q        1251 passed in 139.17s   (local: --basetemp fora do repo)
+pytest -q        1252 passed in 127.73s   (local: --basetemp fora do repo; após o ajuste da revisão do PR #20)
 ruff check       All checks passed!
 mypy             Success: no issues found in 137 source files
 pip check        No broken requirements found.

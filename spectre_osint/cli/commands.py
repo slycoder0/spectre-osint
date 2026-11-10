@@ -171,7 +171,8 @@ def _root(
         False,
         "--plain",
         help="Plain output: no color, no banner, ASCII icons, no progress bar. "
-        "Also automatic with NO_COLOR or when stdout is not a terminal.",
+        "Color, banner and icons are also plain with NO_COLOR or when stdout is not a "
+        "terminal; the stderr progress bar then still follows stderr.",
     ),
     compact: bool = typer.Option(
         False, "--compact", hidden=True, help="Deprecated: compact output is the default."

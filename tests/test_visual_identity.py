@@ -232,3 +232,20 @@ def test_no_module_keeps_a_stale_reference_to_the_display_console() -> None:
                 if any(alias.name == "console" for alias in node.names):
                     offenders.append(path.name)
     assert offenders == []
+
+
+def test_automatic_plain_keeps_the_progress_bar_and_help_says_so(monkeypatch) -> None:
+    """Only an explicit --plain turns the stderr bar off. NO_COLOR / a redirected stdout
+    change color, banner and icons only (PR #20 review)."""
+    from spectre_osint.cli.progress_bar import LiveProgress, make_progress_display
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    display = make_progress_display(verbose=False)
+    assert isinstance(display, LiveProgress)
+    assert display.enabled == bool(display.console.is_terminal)
+    import typer.main
+
+    command = typer.main.get_command(app)
+    help_text = next(param.help for param in command.params if param.name == "plain")
+    assert "no progress bar" in help_text
+    assert "Color, banner and icons are also plain with NO_COLOR" in help_text
