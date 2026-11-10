@@ -215,3 +215,20 @@ def test_plain_disables_the_live_progress_bar() -> None:
     display = make_progress_display(verbose=False, plain=True)
     assert isinstance(display, LiveProgress)
     assert display.enabled is False
+
+
+def test_no_module_keeps_a_stale_reference_to_the_display_console() -> None:
+    """`configure_display(plain=True)` rebuilds the console; importing it by name would
+    keep the colored one. Modules call `get_console()` instead."""
+    import ast
+    from pathlib import Path
+
+    package = Path(commands.__file__).resolve().parents[1]
+    offenders = []
+    for path in package.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "spectre_osint.cli.display":
+                if any(alias.name == "console" for alias in node.names):
+                    offenders.append(path.name)
+    assert offenders == []
