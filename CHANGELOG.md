@@ -10,8 +10,9 @@ The format is based on Keep a Changelog.
 - **Identidade visual (B2-09, Fase 3A):** em terminal, `spectre username` abre com um banner
   pequeno de 3 linhas e marca os perfis com ícones (`✔` encontrado, `◐` provável, `?` não
   verificados), com cor só nesses pontos. Console sem Unicode recebe `[+] [~] [?]`.
-- **`--plain`** (global): sem cor, sem banner, ícones ASCII e sem barra de progresso. O mesmo
-  vale automaticamente com `NO_COLOR` ou quando a saída não é um terminal (pipes e scripts).
+- **`--plain`** (global): sem cor, sem banner, ícones ASCII e sem barra de progresso. Cor, banner e
+  ícones também ficam simples automaticamente com `NO_COLOR` ou quando a saída não é um
+  terminal (pipes e scripts); a barra de progresso em stderr só some com `--plain`.
 - **`spectre config lang <pt_br|en>`** salva o idioma preferido.
 - **Saída em português e inglês (B2-06):** `--lang en|pt-BR`, a variável `SPECTRE_LANG` e a
   config persistida escolhem o idioma do terminal; sem nenhuma delas vale o locale do sistema,
