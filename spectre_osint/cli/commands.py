@@ -39,7 +39,7 @@ from spectre_osint.core.i18n import (
     t,
 )
 from spectre_osint.core.inputs import parse_target_inputs
-from spectre_osint.core.redaction import exc_label
+from spectre_osint.core.redaction import exc_label, register_target_values, target_scope
 from spectre_osint.core.registry import default_registry
 from spectre_osint.core.types import EntityType
 from spectre_osint.modules.metadata import analyze_metadata
@@ -433,14 +433,18 @@ def search_cmd(query: str = typer.Argument(..., help="Public web search query"))
     _bootstrap()
 
     async def _run_search():
-        settings = get_settings()
-        http = HttpClient(settings)
-        try:
-            from spectre_osint.modules.search.engine import SearchEngine
+        # The query is the target here: register it in the log safety net for this
+        # command only, like an investigation does (B2-07 / Phase 3A).
+        with target_scope():
+            register_target_values(query)
+            settings = get_settings()
+            http = HttpClient(settings)
+            try:
+                from spectre_osint.modules.search.engine import SearchEngine
 
-            return await SearchEngine(http, settings).search(query)
-        finally:
-            await http.close()
+                return await SearchEngine(http, settings).search(query)
+            finally:
+                await http.close()
 
     finding = _run(_run_search())
     typer.echo(f"{finding.status}: {finding.summary}")
