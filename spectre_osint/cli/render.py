@@ -16,7 +16,8 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from spectre_osint.cli.theme import Theme
+from spectre_osint import __version__
+from spectre_osint.cli.theme import BANNER_ART, BANNER_SEPARATOR, Theme
 from spectre_osint.core.i18n import t, tn
 from spectre_osint.services.views import UsernameView
 
@@ -34,6 +35,31 @@ def clean_text(value: object) -> str:
 
 def _print(console: Console, *parts: str | tuple[str, str]) -> None:
     console.print(Text.assemble(*parts), soft_wrap=True)
+
+
+def _banner_rows(theme: Theme) -> list[tuple[str, str]]:
+    """(art, text) per banner line: Unicode art on capable terminals, ASCII otherwise."""
+    tagline = t("cli.banner.tagline")
+    if theme.unicode:
+        return [
+            (BANNER_ART[0], ""),
+            (BANNER_ART[1], f"  OSINT {BANNER_SEPARATOR} v{__version__}"),
+            (BANNER_ART[2], f"  {tagline}"),
+        ]
+    title = f"SPECTRE // OSINT  v{__version__}"
+    return [(title, ""), ("", tagline), ("-" * max(len(title), len(tagline)), "")]
+
+
+def banner_lines(theme: Theme) -> list[str]:
+    """The 3-line banner as plain text."""
+    return [art + text for art, text in _banner_rows(theme)]
+
+
+def render_banner(console: Console, theme: Theme) -> None:
+    """Print the banner and one blank line. Callers decide whether it is wanted."""
+    for art, text in _banner_rows(theme):
+        _print(console, (art, theme.style("banner")), (text, theme.style("muted")))
+    console.print()
 
 
 def _unverified_line(view: UsernameView, *, verbose: bool) -> str:

@@ -98,7 +98,8 @@ def _execute(request: InvestigationRequest) -> InvestigationResult:
 
     async def _go() -> InvestigationResult:
         _bootstrap()
-        with make_progress_display(verbose=display_options().verbose) as progress:
+        options = display_options()
+        with make_progress_display(verbose=options.verbose, plain=options.plain) as progress:
             return await run_investigation(request, progress=progress)
 
     return _run(_go())
@@ -154,7 +155,13 @@ def _root(
     ),
     debug: bool = typer.Option(False, "--debug", help="DEBUG logs on stderr (always in the log file)."),
     no_banner: bool = typer.Option(
-        False, "--no-banner", help="Never print the ASCII banner (shown only with --verbose)."
+        False, "--no-banner", help="Never print the small banner (shown on a terminal only)."
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Plain output: no color, no banner, ASCII icons, no progress bar. "
+        "Also automatic with NO_COLOR or when stdout is not a terminal.",
     ),
     compact: bool = typer.Option(
         False, "--compact", hidden=True, help="Deprecated: compact output is the default."
@@ -169,7 +176,7 @@ def _root(
             t("cli.lang_invalid", value=lang, supported=", ".join(SUPPORTED_LANGUAGES)),
             param_hint="--lang",
         ) from exc
-    configure_display(no_banner=no_banner, compact=compact, verbose=verbose, debug=debug)
+    configure_display(no_banner=no_banner, compact=compact, verbose=verbose, debug=debug, plain=plain)
 
 
 @app.command()
@@ -221,6 +228,7 @@ def username(
         case_name=case_name,
         refresh=refresh,
     )
+    print_banner(command=True)
     print_result(_execute(request))
 
 

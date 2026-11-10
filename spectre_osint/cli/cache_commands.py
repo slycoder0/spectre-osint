@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 from rich.table import Table
 
-from spectre_osint.cli.display import console, print_banner
+from spectre_osint.cli.display import get_console, print_banner
 from spectre_osint.core.config import get_settings
 from spectre_osint.core.result_cache import ResultCache
 
@@ -15,6 +15,7 @@ cache_app = typer.Typer(help="OSINT result cache. Distinct from authenticated se
 @cache_app.command("status")
 def cache_status() -> None:
     print_banner()
+    console = get_console()
     settings = get_settings()
     cache = ResultCache(settings)
     rows = cache.status()
@@ -50,6 +51,7 @@ def cache_clear(
     cache = ResultCache(settings)
     deleted = cache.clear(provider)
     cache.close()
+    console = get_console()
     if provider:
         console.print(f"Cleared {deleted} result-cache rows for provider {provider}.")
     else:

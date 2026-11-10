@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
+from spectre_osint.cli import theme as theme_mod
 from spectre_osint.cli.commands import app
-from spectre_osint.cli.display import BANNER_WIDE, configure_display, print_banner, print_result
+from spectre_osint.cli.display import configure_display, print_banner, print_result
 from spectre_osint.core.entities import Entity, Finding, InvestigationResult, utcnow
 from spectre_osint.core.types import Confidence, EntityType, FindingStatus
 
@@ -26,21 +27,26 @@ def test_help_lists_auth_and_no_banner() -> None:
 
 
 def test_banner_respects_no_color(capsys, monkeypatch) -> None:
-    monkeypatch.setenv("NO_COLOR", "1")
+    """Phase 3A: the small banner never shows with NO_COLOR or on a non-terminal stdout."""
+    monkeypatch.setattr(theme_mod, "is_tty", lambda _stream: True)
+    monkeypatch.delenv("SPECTRE_NO_BANNER", raising=False)
+    monkeypatch.delenv("NO_BANNER", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
     configure_display()
     print_banner()
-    assert capsys.readouterr().out.strip() == "", "no banner by default (B2-06)"
+    assert capsys.readouterr().out.strip() == "", "no banner by default outside username (B2-06)"
     configure_display(no_banner=False, verbose=True)
     print_banner()
     out = capsys.readouterr().out
-    assert "I N T E L L I G E N C E" in out
     assert "passive-first" in out
+    assert "█" not in out, "no big ASCII art"
     configure_display(no_banner=True, verbose=True)
     print_banner()
-    skipped = capsys.readouterr().out
-    assert skipped.strip() == ""
-    assert "I N T E L L I G E N C E" in BANNER_WIDE
-    assert BANNER_WIDE.count("█") > 20
+    assert capsys.readouterr().out.strip() == ""
+    monkeypatch.setenv("NO_COLOR", "1")
+    configure_display(verbose=True)
+    print_banner()
+    assert capsys.readouterr().out.strip() == ""
 
 
 def test_compact_username_summary(capsys) -> None:

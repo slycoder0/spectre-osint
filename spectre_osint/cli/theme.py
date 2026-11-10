@@ -48,8 +48,16 @@ STYLES: dict[str, str] = {
     "accent": "green",
 }
 
-# The characters a Unicode theme prints: icons plus the banner's box-drawing glyphs.
-_UNICODE_PROBE = "".join(UNICODE_ICONS.values()) + "┌─┐└┘├┤┬┴·"
+# Small 3-line banner (shown by `spectre username` on a terminal). No big ASCII art.
+BANNER_ART: tuple[str, str, str] = (
+    "┌─┐┌─┐┌─┐┌─┐┌┬┐┬─┐┌─┐",
+    "└─┐├─┘├┤ │   │ ├┬┘├┤ ",
+    "└─┘┴  └─┘└─┘ ┴ ┴└─└─┘",
+)
+BANNER_SEPARATOR = "·"
+
+# Everything a Unicode theme prints besides translated words.
+_UNICODE_PROBE = "".join(UNICODE_ICONS.values()) + "".join(BANNER_ART) + BANNER_SEPARATOR
 
 
 @dataclass(frozen=True)

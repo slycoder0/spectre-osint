@@ -5,6 +5,7 @@ from __future__ import annotations
 MESSAGES: dict[str, str] = {
     # --- CLI global --------------------------------------------------------------------
     "cli.lang_invalid": "Idioma não suportado: {value}. Use um destes: {supported}.",
+    "cli.banner.tagline": "passive-first, apenas fontes públicas",
     # --- progresso ao vivo (stderr, só em TTY) -----------------------------------------
     "progress.initializing": "Iniciando",
     "progress.catalog": "Consultando perfis públicos",
