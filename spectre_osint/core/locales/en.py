@@ -6,6 +6,52 @@ MESSAGES: dict[str, str] = {
     # --- global CLI --------------------------------------------------------------------
     "cli.lang_invalid": "Unsupported language: {value}. Use one of: {supported}.",
     "cli.banner.tagline": "passive-first, public sources only",
+    # --- CLI errors (stderr): by error type, never the exception text ------------------
+    "cli.error.label": "Error",
+    "cli.error.ssrf": (
+        "the target points to a private, local or reserved address. SPECTRE only queries "
+        "public destinations (SSRF policy)."
+    ),
+    "cli.error.validation": (
+        "the input is not a valid target for this command. Check the format; "
+        "`spectre <command> --help` shows what is accepted."
+    ),
+    "cli.error.rate_limited": (
+        "a remote service limited the requests (rate limit). Wait and try again; "
+        "SPECTRE does not bypass limits."
+    ),
+    "cli.error.tls": (
+        "the secure connection could not be verified (TLS certificate). SPECTRE does not "
+        "skip certificate checks."
+    ),
+    "cli.error.network": (
+        "a remote service could not be reached ({error}). Check your connection and try again."
+    ),
+    "cli.error.not_configured": "an optional provider is not configured. Run `spectre doctor`.",
+    "cli.error.path_safety": (
+        "a file or browser profile path was refused for safety (outside SPECTRE folders or "
+        "a personal profile)."
+    ),
+    "cli.error.authorization": "active recon requires --authorized after confirming legal authorization.",
+    "cli.error.auth": "the authenticated session could not be used ({error}). Run `spectre auth status`.",
+    "cli.error.filesystem": (
+        "filesystem error ({error}). Fix permissions or paths, then run `spectre doctor`."
+    ),
+    "cli.error.storage": (
+        "cannot write SPECTRE data, logs or reports ({error}). Set SPECTRE_DATA_DIR / "
+        "SPECTRE_REPORTS_DIR / SPECTRE_LOGS_DIR and run `spectre doctor`."
+    ),
+    "cli.error.database": (
+        "the database is not writable ({error}). Set SPECTRE_DATA_DIR / "
+        "SPECTRE_DATABASE_URL and run `spectre doctor`."
+    ),
+    "cli.error.reports_dir": (
+        "the reports folder is not writable ({error}). Set SPECTRE_REPORTS_DIR and run "
+        "`spectre doctor`."
+    ),
+    "cli.error.generic": (
+        "SPECTRE could not finish ({error}). Run `spectre doctor` or retry with --debug."
+    ),
     # --- live progress (stderr, TTY only) ----------------------------------------------
     "progress.initializing": "Starting",
     "progress.catalog": "Checking public profiles",

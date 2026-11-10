@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import NoReturn
 
+import httpx
 import typer
 from rich.prompt import Confirm
 
@@ -19,6 +21,7 @@ from spectre_osint.cli.display import (
     print_providers,
     print_result,
 )
+from spectre_osint.cli.errors import error_message
 from spectre_osint.cli.progress_bar import make_progress_display
 from spectre_osint.core.case_manager import CaseManager
 from spectre_osint.core.config import get_settings
@@ -28,6 +31,7 @@ from spectre_osint.core.exceptions import AuthorizationRequired, SpectreError
 from spectre_osint.core.http_client import HttpClient
 from spectre_osint.core.i18n import SUPPORTED_LANGUAGES, resolve_language, set_language, t
 from spectre_osint.core.inputs import parse_target_inputs
+from spectre_osint.core.redaction import exc_label
 from spectre_osint.core.registry import default_registry
 from spectre_osint.core.types import EntityType
 from spectre_osint.modules.metadata import analyze_metadata
@@ -53,8 +57,10 @@ app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
 
 
-def _cli_fail(message: str) -> None:
-    typer.echo(message, err=True)
+def _cli_fail(message: str) -> NoReturn:
+    """End the command with a translated message on stderr. `message` is catalog text
+    (`error_message()` or `t("cli.error.*")`), never `str(exc)` (Phase 3A)."""
+    typer.echo(f"{t('cli.error.label')}: {message}", err=True)
     raise typer.Exit(1)
 
 
@@ -66,18 +72,12 @@ def _bootstrap() -> None:
         configure_cli_logging(settings.log_level, settings.logs_dir)
         init_db(settings)
     except OSError as exc:
-        _cli_fail(
-            f"Cannot write SPECTRE data/logs/reports ({exc.__class__.__name__}). "
-            "Set SPECTRE_DATA_DIR / SPECTRE_REPORTS_DIR / SPECTRE_LOGS_DIR and run `spectre doctor`."
-        )
+        _cli_fail(t("cli.error.storage", error=exc_label(exc)))
     except Exception as exc:
         from sqlalchemy.exc import OperationalError
 
         if isinstance(exc, OperationalError):
-            _cli_fail(
-                f"Database is not writable ({type(exc).__name__}). "
-                "Set SPECTRE_DATA_DIR / SPECTRE_DATABASE_URL and run `spectre doctor`."
-            )
+            _cli_fail(t("cli.error.database", error=exc_label(exc)))
         raise
 
 
@@ -85,12 +85,12 @@ def _run(coro):
     try:
         return asyncio.run(coro)
     except SpectreError as exc:
-        _cli_fail(str(exc))
+        _cli_fail(error_message(exc))
     except OSError as exc:
-        _cli_fail(
-            f"Filesystem error ({exc.__class__.__name__}). "
-            "Fix permissions or paths, then run `spectre doctor`."
-        )
+        _cli_fail(t("cli.error.filesystem", error=exc_label(exc)))
+    except httpx.HTTPError as exc:
+        # Raw transport errors carry the request URL in their text: type only.
+        _cli_fail(error_message(exc))
 
 
 def _execute(request: InvestigationRequest) -> InvestigationResult:
@@ -412,10 +412,7 @@ def report(
         if "graphml" in wanted:
             written.append(str(write_graph_exports(result, settings.reports_dir)))
     except OSError as exc:
-        _cli_fail(
-            f"Reports directory is not writable ({exc.__class__.__name__}). "
-            "Set SPECTRE_REPORTS_DIR and run `spectre doctor`."
-        )
+        _cli_fail(t("cli.error.reports_dir", error=exc_label(exc)))
     for path in written:
         typer.echo(path)
 
