@@ -17,7 +17,7 @@ from spectre_osint.browser.models import (
 )
 from spectre_osint.cli.display import (
     configure_cli_logging,
-    console,
+    get_console,
     print_auth_status,
     print_banner,
 )
@@ -72,6 +72,7 @@ def auth_login(
         raise typer.BadParameter(str(exc)) from exc
     spec = AUTH_PLATFORMS[slug]
     print_banner()
+    console = get_console()
     console.print(
         Panel(
             f"[bold]SPECTRE AUTH[/bold]\n{spec.display_name} · AUTHENTICATED_PUBLIC · {spec.auth_capability.value}",
@@ -131,6 +132,7 @@ def auth_login(
 
 
 def _print_login_failure(spec, status: SessionStatus) -> None:
+    console = get_console()
     console.print(f"[red]Authentication not established:[/red] {status.value}")
     if status == SessionStatus.CAPTCHA_REQUIRED:
         console.print("CAPTCHA_REQUIRED — SPECTRE will not solve it.")
@@ -177,6 +179,7 @@ def auth_logout(platform: str = typer.Argument(...)) -> None:
         service.logout(platform)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    console = get_console()
     console.print("Local SPECTRE session cleared.")
     console.print("Browser profile removed or already absent.")
     console.print("Personal Chrome untouched.")
@@ -196,6 +199,7 @@ def auth_verify(platform: str = typer.Argument(...)) -> None:
         profile = asyncio.run(service.verify(platform))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    console = get_console()
     if profile.status == SessionStatus.EXPIRED:
         console.print("SESSION_EXPIRED")
         console.print("Session expired — manual login required")

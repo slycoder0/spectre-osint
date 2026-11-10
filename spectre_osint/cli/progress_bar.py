@@ -38,9 +38,15 @@ def _as_int(value: Any) -> int | None:
 
 
 class LiveProgress:
-    def __init__(self, console: Console | None = None, *, auto_refresh: bool = True) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        auto_refresh: bool = True,
+        enabled: bool | None = None,
+    ) -> None:
         self.console = console or Console(stderr=True, highlight=False)
-        self.enabled = bool(self.console.is_terminal)
+        self.enabled = bool(self.console.is_terminal) if enabled is None else enabled
         self._auto_refresh = auto_refresh
         self._progress: Progress | None = None
         self._task: TaskID | None = None
@@ -90,10 +96,17 @@ class LiveProgress:
             progress.update(self._task, total=total, completed=min(current, total), count=f"{current}/{total}")
 
 
-def make_progress_display(*, verbose: bool) -> contextlib.AbstractContextManager[ProgressSink]:
-    """The progress sink for one investigation, as a context manager."""
+def make_progress_display(
+    *, verbose: bool, plain: bool = False
+) -> contextlib.AbstractContextManager[ProgressSink]:
+    """The progress sink for one investigation, as a context manager.
+
+    `--plain` means no animation and no style: the live bar is off (like a pipe) and the
+    verbose reporter writes without color.
+    """
     if verbose:
         from spectre_osint.cli.display import CliProgressReporter
 
-        return contextlib.nullcontext(CliProgressReporter(Console(stderr=True, highlight=False)))
-    return LiveProgress()
+        reporter_console = Console(stderr=True, highlight=False, color_system=None if plain else "auto")
+        return contextlib.nullcontext(CliProgressReporter(reporter_console))
+    return LiveProgress(enabled=False) if plain else LiveProgress()

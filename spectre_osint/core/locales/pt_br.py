@@ -5,6 +5,68 @@ from __future__ import annotations
 MESSAGES: dict[str, str] = {
     # --- CLI global --------------------------------------------------------------------
     "cli.lang_invalid": "Idioma não suportado: {value}. Use um destes: {supported}.",
+    "cli.banner.tagline": "passive-first, apenas fontes públicas",
+    # --- spectre config ---------------------------------------------------------------
+    "cli.config.lang_saved": "Idioma salvo: {language} ({path})",
+    "cli.config.lang_env_override": (
+        "Aviso: SPECTRE_LANG={value} está definida neste ambiente e continua tendo prioridade."
+    ),
+    # --- erros da CLI (stderr): pelo tipo do erro, nunca o texto da exceção -------------
+    "cli.error.label": "Erro",
+    "cli.error.ssrf": (
+        "o alvo aponta para um endereço privado, local ou reservado. O SPECTRE só consulta "
+        "destinos públicos (política SSRF)."
+    ),
+    "cli.error.validation": (
+        "a entrada não é um alvo válido para este comando. Confira o formato; "
+        "`spectre <comando> --help` mostra o que é aceito."
+    ),
+    "cli.error.rate_limited": (
+        "um serviço remoto aplicou limite de requisições. Espere e tente de novo; "
+        "o SPECTRE não contorna limites."
+    ),
+    "cli.error.tls": (
+        "não foi possível verificar a conexão segura (certificado TLS). O SPECTRE não "
+        "ignora a verificação de certificados."
+    ),
+    "cli.error.network": (
+        "não foi possível alcançar um serviço remoto ({error}). Confira a conexão e tente de novo."
+    ),
+    "cli.error.not_configured": "um provedor opcional não está configurado. Rode `spectre doctor`.",
+    "cli.error.path_safety": (
+        "um caminho de arquivo ou de perfil de navegador foi recusado por segurança (fora "
+        "das pastas do SPECTRE ou perfil pessoal)."
+    ),
+    "cli.error.authorization": (
+        "o recon ativo exige --authorized depois de confirmar a autorização legal."
+    ),
+    "cli.error.auth": (
+        "não foi possível usar a sessão autenticada ({error}). Rode `spectre auth status`."
+    ),
+    "cli.error.filesystem": (
+        "erro de sistema de arquivos ({error}). Corrija permissões ou caminhos e rode "
+        "`spectre doctor`."
+    ),
+    "cli.error.storage": (
+        "não foi possível gravar dados, logs ou relatórios do SPECTRE ({error}). Defina "
+        "SPECTRE_DATA_DIR / SPECTRE_REPORTS_DIR / SPECTRE_LOGS_DIR e rode `spectre doctor`."
+    ),
+    "cli.error.database": (
+        "o banco de dados não aceita gravação ({error}). Defina SPECTRE_DATA_DIR / "
+        "SPECTRE_DATABASE_URL e rode `spectre doctor`."
+    ),
+    "cli.error.reports_dir": (
+        "a pasta de relatórios não aceita gravação ({error}). Defina SPECTRE_REPORTS_DIR e "
+        "rode `spectre doctor`."
+    ),
+    "cli.error.config_write": (
+        "não foi possível salvar a preferência ({error}). Confira SPECTRE_CONFIG_FILE ou as "
+        "permissões da pasta."
+    ),
+    "cli.error.generic": (
+        "o SPECTRE não conseguiu terminar ({error}). Rode `spectre doctor` ou tente de novo "
+        "com --debug."
+    ),
     # --- progresso ao vivo (stderr, só em TTY) -----------------------------------------
     "progress.initializing": "Iniciando",
     "progress.catalog": "Consultando perfis públicos",

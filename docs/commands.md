@@ -15,7 +15,9 @@ spectre [OPÇÕES GLOBAIS] COMANDO [ARGUMENTOS] [OPÇÕES]
 | Opção | Descrição |
 | :--- | :--- |
 | `--version` | Exibe a versão instalada do SPECTRE e sai. |
-| `--no-banner` | Suprime a exibição do banner inicial no terminal. |
+| `--lang en\|pt-BR` | Idioma da saída de terminal (vence `SPECTRE_LANG` e a config salva por `spectre config lang`). |
+| `--no-banner` | Suprime o banner pequeno de 3 linhas (que só aparece em terminal). |
+| `--plain` | Saída simples: sem cor, sem banner, ícones ASCII (`[+] [~] [?]`) e sem barra de progresso. Automático com `NO_COLOR` ou quando a saída não é um terminal. |
 | `--compact` | Saída compacta orientada a resumo. |
 | `--verbose` | Expande a apresentação do resultado: exibe a tabela de entidades, acrescenta a coluna de detalhe na tabela de plataformas e mantém os pivôs visíveis em modo compacto. Não altera `SPECTRE_LOG_LEVEL` nem emite logs por achado; as tabelas de entidades e de achados seguem limitadas a 40 linhas e o texto de detalhe é truncado. |
 | `--help` | Exibe a mensagem de ajuda e opções do comando. |
@@ -40,6 +42,17 @@ Exibe a versão instalada do SPECTRE OSINT (equivalente à opção global `--ver
 
 ```bash
 spectre version
+```
+
+### `spectre config lang`
+Salva o idioma preferido (`pt_br` / `pt-BR` ou `en`) no arquivo de config do usuário
+(`SPECTRE_CONFIG_FILE`). `--lang` e `SPECTRE_LANG` continuam vencendo quando definidos; o
+comando avisa se `SPECTRE_LANG` estiver sobrepondo a escolha. Valor não suportado é erro de
+uso (código 2) e nada é gravado.
+
+```bash
+spectre config lang pt_br
+spectre config lang en
 ```
 
 ---
@@ -174,6 +187,9 @@ Executa o helper de busca pública via Google Custom Search Engine (Google CSE).
 ```bash
 spectre search "alice_osint github"
 ```
+
+A consulta é o alvo deste comando: ela roda dentro de um `target_scope()` e fica registrada na
+rede de segurança dos logs só enquanto o comando dura.
 
 ### `spectre case`
 Gerencia casos de investigação locais para agrupar múltiplas consultas sob o mesmo contexto investigativo.

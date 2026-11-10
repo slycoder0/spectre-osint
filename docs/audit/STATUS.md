@@ -3,13 +3,50 @@
 Arquivo vivo. **Atualize em todo PR de fase.** É o ponto de partida depois de um `/clear`.
 Roadmap e achados: [`2026-11-05-auditoria.md`](2026-11-05-auditoria.md) (seção 5).
 
-_Última atualização: 2026-11-06 — `fix/b2-08-tldextract-offline` (PR aberto, aguardando merge)._
+_Última atualização: 2026-11-10 — `feat/b2-09-visual-identity` (PR aberto, aguardando revisão)._
 
 ## Fase atual
 
-**Marco B2-08 — `fix/b2-08-tldextract-offline`** (validação de domínio sem rede): **PR aberto,
-aguardando merge (só com pedido explícito).** A Fase 2.5 (PR #18) foi mergeada em `main`
-(merge `be2d943`); a Fase 2 (PR #17), em `b2f8d89`. Próxima: **Fase 3** (ver "Próximo").
+**Fase 3A — `feat/b2-09-visual-identity`** (identidade visual, sem menu): **PR aberto,
+aguardando revisão do arquiteto e merge (só com pedido explícito).** O B2-08 (PR #19) foi
+mergeado em `main` (merge `b5798a4`). A Fase 3 foi dividida: **3A** (este PR) e **3B** (menu
+TUI com questionary, PR separado — ver "Próximo").
+
+### O que a Fase 3A fez
+
+1. **Tema central `cli/theme.py`:** papéis → estilos Rich (`found`, `platform`, `uncertain`,
+   `unknown`, `muted`, `title`, `banner`) e ícones `✔` encontrado / `◐` incerto (LIKELY) /
+   `?` desconhecido (linha de não verificados), com fallback ASCII automático `[+] [~] [?]`
+   quando o encoding do console não imprime os glifos (`cp1252`, `cp437`).
+2. **Banner pequeno de 3 linhas** (letras box-drawing + `OSINT · v<versão>` + slogan
+   traduzido; versão ASCII em console sem Unicode). `spectre username` o mostra só em
+   terminal; os demais comandos só com `--verbose`; no máximo uma vez por comando. O banner
+   ASCII grande (`BANNER_WIDE` / `BANNER_NARROW`) foi removido.
+3. **Cor com moderação na saída compacta** (`cli/render.py`): ícones, plataformas e a linha de
+   não verificados (amarela com pendências, apagada com 0). URLs e nomes observados saem sem
+   estilo. A linha "N não verificados" continua sempre presente, inclusive com 0, em todos os
+   temas (testado).
+4. **Tema simples** (sem cor, sem banner, ícones ASCII) com `--plain`, `NO_COLOR` não vazio ou
+   stdout não-TTY. `--plain` também desliga a barra de progresso e reconstrói o console de
+   stdout sem `color_system` (seções legadas do `--verbose`). Módulos usam `get_console()` em
+   vez de importar `console` (guarda AST no teste). **Mudança visível em pipes:** as linhas de
+   perfil ganham `[+]` / `[~]` e a de não verificados `[?]`.
+5. **`_cli_fail` sem `str(exc)`:** `cli/errors.py` escolhe a mensagem pelo tipo do erro
+   (`cli.error.*`, EN/PT-BR) e mostra a classe via `exc_label` quando ajuda (causa de
+   `ProviderUnavailable`, `OSError`, genérico). As 6 chamadas usam só texto do catálogo
+   (guarda AST). `httpx.HTTPError` cru agora termina com mensagem, não traceback. Antes,
+   `SSRFBlocked` imprimia o IP/host bloqueado e `ConnectError` a URL.
+6. **`spectre config lang <pt_br|en>`** grava com `save_language()`; confirma no idioma novo,
+   avisa quando `SPECTRE_LANG` sobrepõe, valor inválido = código 2 sem gravar, erro de escrita
+   = mensagem traduzida.
+7. **`spectre search`** roda dentro de `target_scope()` e registra a consulta na rede de
+   segurança só durante o comando.
+
+Regressões: `tests/test_theme.py`, `tests/test_visual_identity.py`, `tests/test_cli_errors.py`,
+`tests/test_config_lang.py`, `tests/test_search_scope.py`; snapshots compactos atualizados em
+`tests/test_username_presentation.py`, `tests/test_pr17_review_fixes.py` e
+`tests/test_cli_cyber.py`. Todos falharam antes da implementação (os de erro com o stub
+`str(exc)` mostrando IP/URL no stderr).
 
 ### B2-08 — `tldextract` offline
 
@@ -161,7 +198,8 @@ Regressões em `tests/test_pr17_review_fixes.py` (todas falharam antes da corre�
 | 1 | `fix/b2-03b2-display-name-rejection` | #16 | mergeado (`5ee5fd7`) |
 | 2 | `feat/b2-06-presentation-i18n` | #17 | mergeado (`b2f8d89`) |
 | 2.5 | `fix/b2-07-logs-no-target-data` | #18 | mergeado (`be2d943`) |
-| — | `fix/b2-08-tldextract-offline` | #19 | aberto, aguardando merge |
+| — | `fix/b2-08-tldextract-offline` | #19 | mergeado (`b5798a4`) |
+| 3A | `feat/b2-09-visual-identity` | (este PR) | aberto, aguardando revisão |
 
 Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/technical/i18n.md`):
 
@@ -176,13 +214,24 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 
 ## Próximo
 
-1. Merge do PR de B2-08 (só com pedido explícito).
-2. **Fase 3 — menu interativo (fluxo de username primeiro) + identidade visual — PRÓXIMA.**
-   `spectre` sem argumentos abre o menu sobre a mesma camada `services/` e as mesmas views; tela
-   de Configurações grava o idioma com `core.i18n.save_language()`. O plano da Fase 3 foi entregue
-   ao arquiteto junto com o PR #18 (texto, sem branch) e espera revisão antes de começar.
+1. Revisão do arquiteto e merge do PR da Fase 3A (só com pedido explícito).
+2. **Fase 3B — menu TUI (questionary)**: `spectre` sem argumentos abre o menu sobre a mesma
+   camada `services/`, as mesmas views e o mesmo tema (`cli/theme.py`); tela de
+   Configurações grava o idioma com `core.i18n.save_language()`; mensagens de erro do menu
+   reutilizam `cli/errors.py`. Dependência nova (questionary) entra só na 3B.
 
-## Últimos resultados dos portões (B2-08, 2026-11-06)
+## Últimos resultados dos portões (Fase 3A, 2026-11-10)
+
+```text
+pytest -q        1251 passed in 139.17s   (local: --basetemp fora do repo)
+ruff check       All checks passed!
+mypy             Success: no issues found in 137 source files
+pip check        No broken requirements found.
+pip-audit        No known vulnerabilities found
+                 (spectre-osint: not on PyPI, skipped — esperado)
+```
+
+## Portões do B2-08 (2026-11-06)
 
 ```text
 pytest -q        1181 passed in 112.71s   (local: --basetemp fora do repo; dentro do repo
@@ -261,8 +310,10 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
 ## Decisões em aberto
 
 - Quando cortar o `0.1.0b2` (Fase 6) — depois da Fase 3 ou só no fim do roadmap.
-- Comando de CLI para salvar o idioma (`spectre config lang …`) ou só pelo menu.
-- Fase 3: biblioteca do menu (questionary × prompt_toolkit) e perguntas abertas do plano.
+- (Resolvida na Fase 3A) comando de CLI para o idioma: `spectre config lang <pt_br|en>`.
+- Fase 3B: questionary decidido pelo arquiteto; perguntas abertas do plano do menu.
+- Ícones em pipes: a Fase 3A põe `[+] [~] [?]` também na saída não-TTY (scripts que
+  comparavam linhas exatas mudam). Alternativa, se o arquiteto preferir: ícones só em TTY.
 - (Resolvida na Fase 2.5) a regra "mudou o que é cacheado → suba `RESULT_SCHEMA_VERSION`"
   agora está nos invariantes do `CLAUDE.md`.
 
@@ -281,9 +332,16 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   `dnspython` (UDP/TCP 53) e `core/ssrf.py` resolve nomes com `getaddrinfo`. Não é HTTP e é
   deliberado, mas fica fora da política SSRF / UA; decidir se o resolvedor precisa de política
   própria (ex.: bloquear IP privado nas respostas) numa fase de segurança.
-- **`_cli_fail` / stderr com `str(exc)` → Fase 3**, junto com as mensagens de erro do menu:
-  `SSRFBlocked` mostra o IP, `ConnectError` mostra a URL. Não é log (não é gravado), mas aparece
-  no terminal. Mensagens de exceção continuam nos achados e relatórios por desenho.
+- ~~`_cli_fail` / stderr com `str(exc)`~~ — **resolvido na Fase 3A** (`cli/errors.py`, por
+  tipo de erro). Mensagens de exceção continuam nos achados e relatórios por desenho.
+- **`typer.BadParameter(str(exc))`** em `auth login` / `auth logout` / `auth verify` (nome de
+  plataforma inválido) e no `network` (`AuthorizationRequired`): texto do próprio código ou da
+  entrada do operador, não do alvo remoto; fora do escopo da 3A, traduzir junto com o `auth`.
+- **`--plain` e as seções legadas do `--verbose`:** sem cor, mas ainda com glifos Unicode das
+  tabelas/painéis Rich e do `•` do `CliProgressReporter`. Forçar `box.ASCII` / `safe_box`
+  quando essas seções forem traduzidas.
+- **Verificação visual em terminal real** do banner, das cores e do fallback `cp1252` (os
+  testes simulam TTY; a sessão de implementação não tinha console interativo).
 - ~~Rede de segurança por processo, nunca limpa~~ — **resolvido na revisão do PR #18**
   (`target_scope()` por investigação, limite de 256 formas).
 - **Build congelado (.exe, fase futura):** `core/log_vocabulary.py` lê as palavras dos templates
@@ -295,8 +353,7 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   reservados (`%5F` para `_`, `%2D` para `-`, `%2E` para `.`), codificação dupla (`%252F`,
   `alice%2540example.com`) e Unicode em outra normalização (NFD × NFC) passam crus se chegarem
   ao log por um call site errado. O guarda real continua sendo a regra do call site.
-- **`spectre search <consulta>`** não abre `target_scope()` nem registra a consulta: só a regra
-  do call site (guarda AST) protege esse comando. Abrir um escopo quando o menu chamar a busca.
+- ~~`spectre search <consulta>` sem `target_scope()`~~ — **resolvido na Fase 3A**.
 - **Avisos de bibliotecas de terceiros** vão só para o arquivo de log (decisão desta revisão);
   com `--debug` eles não aparecem no terminal.
 - **Guarda AST é heurística** (nomes/chaves/atributos com cara de alvo); o canário dinâmico
@@ -313,7 +370,7 @@ Execução anterior da Fase 2 (diretórios isolados, cwd fora do repo, stderr n�
   USERNAME SUMMARY / PUBLIC MENTIONS / DISCOVERY GAIN / INTELLIGENCE SUMMARY / IDENTITY
   CORRELATION / Scoring), saída genérica dos demais comandos (`email`, `domain`, `ip`, `url`,
   `hash`, `company`, `person`, `threat`, `wayback`, `investigate` não-username), `auth`,
-  `cache`, `case`, `providers`, `report`, mensagens de erro de `_cli_fail`, o
+  `cache`, `case`, `providers`, `report`, o
   `CliProgressReporter` do modo verbose e os textos de `--help` do Typer.
 - ~~Logs com dados do alvo~~ — **resolvido na Fase 2.5 (PR #18).** Logs antigos
   (`logs/spectre.log`) podem conter dados do alvo; o doctor avisa, nada é apagado.

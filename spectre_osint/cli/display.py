@@ -4,8 +4,12 @@ Default output is compact (B2-06): a username investigation prints only the view
 by `services/views.py` through `cli/render.py` — found profiles, per-platform names and
 the unverified count. `--verbose` prepends the detailed sections (every platform,
 mentions, discovery, identity correlation, scores, internal metrics) and keeps the same
-closing summary, so verbose is always a superset of compact. The ASCII banner is shown
-only in verbose mode.
+closing summary, so verbose is always a superset of compact.
+
+The small 3-line banner (Phase 3A) is printed by `spectre username`, and by other
+commands only in verbose mode, and only when the theme allows it (`cli/theme.py`: stdout
+is a terminal, no `--plain`, no `NO_COLOR`) and no `--no-banner` / `SPECTRE_NO_BANNER` /
+`NO_BANNER` asks otherwise. At most once per command.
 
 The detailed sections below are legacy English text; their i18n is a registered
 follow-up (docs/audit/STATUS.md).
@@ -14,7 +18,6 @@ follow-up (docs/audit/STATUS.md).
 from __future__ import annotations
 
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,8 +26,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from spectre_osint import __version__
-from spectre_osint.cli.render import render_username
+from spectre_osint.cli.render import render_banner, render_username
+from spectre_osint.cli.theme import Theme, resolve_theme
 from spectre_osint.core.entities import InvestigationResult
 from spectre_osint.core.logger import setup_logging
 from spectre_osint.core.presentation import (
@@ -47,21 +50,11 @@ class DisplayOptions:
     no_banner: bool = False
     verbose: bool = False
     debug: bool = False
+    plain: bool = False
 
 
 _OPTIONS = DisplayOptions()
-
-BANNER_WIDE = r"""
-  ███████╗██████╗ ███████╗ ██████╗████████╗██████╗ ███████╗
-  ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔════╝
-  ███████╗██████╔╝█████╗  ██║        ██║   ██████╔╝█████╗
-  ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══██╗██╔══╝
-  ███████║██║     ███████╗╚██████╗   ██║   ██║  ██║███████╗
-  ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
-           O S I N T   I N T E L L I G E N C E
-"""
-
-BANNER_NARROW = "SPECTRE  ·  OSINT INTELLIGENCE"
+_BANNER_SHOWN = False
 
 STATUS_STYLE = {
     "CONFIRMED": "bold green",
@@ -104,16 +97,30 @@ def configure_display(
     compact: bool = False,
     verbose: bool = False,
     debug: bool = False,
+    plain: bool = False,
 ) -> None:
     """Set global display options. `compact` is accepted for compatibility only:
-    compact output is the default since B2-06."""
-    global _OPTIONS
+    compact output is the default since B2-06. `plain` turns off every Rich style on
+    stdout (the legacy verbose sections included) and the live progress bar."""
+    global _OPTIONS, _BANNER_SHOWN, console
     del compact
-    _OPTIONS = DisplayOptions(no_banner=no_banner, verbose=verbose, debug=debug)
+    _OPTIONS = DisplayOptions(no_banner=no_banner, verbose=verbose, debug=debug, plain=plain)
+    _BANNER_SHOWN = False
+    console = Console(highlight=False, color_system=None) if plain else Console(highlight=False)
+
+
+def get_console() -> Console:
+    """The stdout console for the current command (rebuilt by `configure_display`)."""
+    return console
 
 
 def display_options() -> DisplayOptions:
     return _OPTIONS
+
+
+def current_theme() -> Theme:
+    """The theme for stdout right now (resolved per call: tests and the menu swap stdout)."""
+    return resolve_theme(plain=_OPTIONS.plain)
 
 
 def configure_cli_logging(file_level: str, logs_dir: Path) -> None:
@@ -128,21 +135,21 @@ def configure_cli_logging(file_level: str, logs_dir: Path) -> None:
         setup_logging(file_level, logs_dir, console_level="INFO" if _OPTIONS.verbose else None)
 
 
-def _want_banner() -> bool:
-    if not _OPTIONS.verbose or _OPTIONS.no_banner:
-        return False
-    if os.environ.get("SPECTRE_NO_BANNER") or os.environ.get("NO_BANNER"):
-        return False
-    return True
+def _banner_switched_off() -> bool:
+    return bool(_OPTIONS.no_banner or os.environ.get("SPECTRE_NO_BANNER") or os.environ.get("NO_BANNER"))
 
 
-def print_banner() -> None:
-    if not _want_banner():
+def print_banner(*, command: bool = False) -> None:
+    """The small banner. `command=True` is a command's own banner (`spectre username`);
+    otherwise it is shown only with --verbose. Never twice in one command."""
+    global _BANNER_SHOWN
+    if _BANNER_SHOWN or not (command or _OPTIONS.verbose) or _banner_switched_off():
         return
-    width = shutil.get_terminal_size(fallback=(80, 24)).columns
-    art = BANNER_WIDE if width >= 70 else BANNER_NARROW
-    console.print(art, style="bold green")
-    console.print(f"[dim]v{__version__}  ·  passive-first  ·  localhost[/dim]\n")
+    theme = current_theme()
+    if not theme.banner:
+        return
+    render_banner(console, theme)
+    _BANNER_SHOWN = True
 
 
 class CliProgressReporter:
@@ -224,7 +231,7 @@ def print_result(result: InvestigationResult) -> None:
             _print_pivots(result)
             _print_metrics(result)
             console.print()
-        render_username(build_username_view(result), console, verbose=verbose)
+        render_username(build_username_view(result), console, verbose=verbose, theme=current_theme())
         return
 
     _print_header(result)

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import NoReturn
 
+import httpx
 import typer
 from rich.prompt import Confirm
 
@@ -19,6 +21,7 @@ from spectre_osint.cli.display import (
     print_providers,
     print_result,
 )
+from spectre_osint.cli.errors import error_message
 from spectre_osint.cli.progress_bar import make_progress_display
 from spectre_osint.core.case_manager import CaseManager
 from spectre_osint.core.config import get_settings
@@ -26,8 +29,17 @@ from spectre_osint.core.database import init_db
 from spectre_osint.core.entities import InvestigationResult
 from spectre_osint.core.exceptions import AuthorizationRequired, SpectreError
 from spectre_osint.core.http_client import HttpClient
-from spectre_osint.core.i18n import SUPPORTED_LANGUAGES, resolve_language, set_language, t
+from spectre_osint.core.i18n import (
+    LANG_ENV,
+    SUPPORTED_LANGUAGES,
+    normalize_language,
+    resolve_language,
+    save_language,
+    set_language,
+    t,
+)
 from spectre_osint.core.inputs import parse_target_inputs
+from spectre_osint.core.redaction import exc_label, register_target_values, target_scope
 from spectre_osint.core.registry import default_registry
 from spectre_osint.core.types import EntityType
 from spectre_osint.modules.metadata import analyze_metadata
@@ -49,12 +61,16 @@ app = typer.Typer(
 )
 case_app = typer.Typer(help="Investigation case management.")
 app.add_typer(case_app, name="case")
+config_app = typer.Typer(help="Saved preferences (language).", no_args_is_help=True)
+app.add_typer(config_app, name="config")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
 
 
-def _cli_fail(message: str) -> None:
-    typer.echo(message, err=True)
+def _cli_fail(message: str) -> NoReturn:
+    """End the command with a translated message on stderr. `message` is catalog text
+    (`error_message()` or `t("cli.error.*")`), never `str(exc)` (Phase 3A)."""
+    typer.echo(f"{t('cli.error.label')}: {message}", err=True)
     raise typer.Exit(1)
 
 
@@ -66,18 +82,12 @@ def _bootstrap() -> None:
         configure_cli_logging(settings.log_level, settings.logs_dir)
         init_db(settings)
     except OSError as exc:
-        _cli_fail(
-            f"Cannot write SPECTRE data/logs/reports ({exc.__class__.__name__}). "
-            "Set SPECTRE_DATA_DIR / SPECTRE_REPORTS_DIR / SPECTRE_LOGS_DIR and run `spectre doctor`."
-        )
+        _cli_fail(t("cli.error.storage", error=exc_label(exc)))
     except Exception as exc:
         from sqlalchemy.exc import OperationalError
 
         if isinstance(exc, OperationalError):
-            _cli_fail(
-                f"Database is not writable ({type(exc).__name__}). "
-                "Set SPECTRE_DATA_DIR / SPECTRE_DATABASE_URL and run `spectre doctor`."
-            )
+            _cli_fail(t("cli.error.database", error=exc_label(exc)))
         raise
 
 
@@ -85,12 +95,12 @@ def _run(coro):
     try:
         return asyncio.run(coro)
     except SpectreError as exc:
-        _cli_fail(str(exc))
+        _cli_fail(error_message(exc))
     except OSError as exc:
-        _cli_fail(
-            f"Filesystem error ({exc.__class__.__name__}). "
-            "Fix permissions or paths, then run `spectre doctor`."
-        )
+        _cli_fail(t("cli.error.filesystem", error=exc_label(exc)))
+    except httpx.HTTPError as exc:
+        # Raw transport errors carry the request URL in their text: type only.
+        _cli_fail(error_message(exc))
 
 
 def _execute(request: InvestigationRequest) -> InvestigationResult:
@@ -98,7 +108,8 @@ def _execute(request: InvestigationRequest) -> InvestigationResult:
 
     async def _go() -> InvestigationResult:
         _bootstrap()
-        with make_progress_display(verbose=display_options().verbose) as progress:
+        options = display_options()
+        with make_progress_display(verbose=options.verbose, plain=options.plain) as progress:
             return await run_investigation(request, progress=progress)
 
     return _run(_go())
@@ -154,7 +165,13 @@ def _root(
     ),
     debug: bool = typer.Option(False, "--debug", help="DEBUG logs on stderr (always in the log file)."),
     no_banner: bool = typer.Option(
-        False, "--no-banner", help="Never print the ASCII banner (shown only with --verbose)."
+        False, "--no-banner", help="Never print the small banner (shown on a terminal only)."
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Plain output: no color, no banner, ASCII icons, no progress bar. "
+        "Also automatic with NO_COLOR or when stdout is not a terminal.",
     ),
     compact: bool = typer.Option(
         False, "--compact", hidden=True, help="Deprecated: compact output is the default."
@@ -169,7 +186,7 @@ def _root(
             t("cli.lang_invalid", value=lang, supported=", ".join(SUPPORTED_LANGUAGES)),
             param_hint="--lang",
         ) from exc
-    configure_display(no_banner=no_banner, compact=compact, verbose=verbose, debug=debug)
+    configure_display(no_banner=no_banner, compact=compact, verbose=verbose, debug=debug, plain=plain)
 
 
 @app.command()
@@ -221,6 +238,7 @@ def username(
         case_name=case_name,
         refresh=refresh,
     )
+    print_banner(command=True)
     print_result(_execute(request))
 
 
@@ -404,10 +422,7 @@ def report(
         if "graphml" in wanted:
             written.append(str(write_graph_exports(result, settings.reports_dir)))
     except OSError as exc:
-        _cli_fail(
-            f"Reports directory is not writable ({exc.__class__.__name__}). "
-            "Set SPECTRE_REPORTS_DIR and run `spectre doctor`."
-        )
+        _cli_fail(t("cli.error.reports_dir", error=exc_label(exc)))
     for path in written:
         typer.echo(path)
 
@@ -418,14 +433,18 @@ def search_cmd(query: str = typer.Argument(..., help="Public web search query"))
     _bootstrap()
 
     async def _run_search():
-        settings = get_settings()
-        http = HttpClient(settings)
-        try:
-            from spectre_osint.modules.search.engine import SearchEngine
+        # The query is the target here: register it in the log safety net for this
+        # command only, like an investigation does (B2-07 / Phase 3A).
+        with target_scope():
+            register_target_values(query)
+            settings = get_settings()
+            http = HttpClient(settings)
+            try:
+                from spectre_osint.modules.search.engine import SearchEngine
 
-            return await SearchEngine(http, settings).search(query)
-        finally:
-            await http.close()
+                return await SearchEngine(http, settings).search(query)
+            finally:
+                await http.close()
 
     finding = _run(_run_search())
     typer.echo(f"{finding.status}: {finding.summary}")
@@ -456,6 +475,30 @@ def network(
     for finding in bundle["findings"]:
         typer.echo(finding.summary)
         typer.echo(finding.data)
+
+
+@config_app.command("lang")
+def config_lang(
+    language: str = typer.Argument(..., help="pt_br (pt-BR) or en"),
+) -> None:
+    """Save the output language. `--lang` and SPECTRE_LANG still win when given."""
+    import os
+
+    normalized = normalize_language(language)
+    if normalized is None:
+        raise typer.BadParameter(
+            t("cli.lang_invalid", value=language, supported=", ".join(SUPPORTED_LANGUAGES)),
+            param_hint="LANGUAGE",
+        )
+    try:
+        path = save_language(normalized)
+    except OSError as exc:
+        _cli_fail(t("cli.error.config_write", error=exc_label(exc)))
+    set_language(normalized)
+    typer.echo(t("cli.config.lang_saved", language=normalized, path=path))
+    env_value = os.environ.get(LANG_ENV)
+    if env_value and normalize_language(env_value) not in (None, normalized):
+        typer.echo(t("cli.config.lang_env_override", value=env_value))
 
 
 @case_app.command("create")

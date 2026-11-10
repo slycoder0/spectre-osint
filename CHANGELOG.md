@@ -7,6 +7,12 @@ The format is based on Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- **Identidade visual (B2-09, Fase 3A):** em terminal, `spectre username` abre com um banner
+  pequeno de 3 linhas e marca os perfis com ícones (`✔` encontrado, `◐` provável, `?` não
+  verificados), com cor só nesses pontos. Console sem Unicode recebe `[+] [~] [?]`.
+- **`--plain`** (global): sem cor, sem banner, ícones ASCII e sem barra de progresso. O mesmo
+  vale automaticamente com `NO_COLOR` ou quando a saída não é um terminal (pipes e scripts).
+- **`spectre config lang <pt_br|en>`** salva o idioma preferido.
 - **Saída em português e inglês (B2-06):** `--lang en|pt-BR`, a variável `SPECTRE_LANG` e a
   config persistida escolhem o idioma do terminal; sem nenhuma delas vale o locale do sistema,
   com inglês como fallback. `spectre username` e `spectre doctor` já saem traduzidos.
@@ -173,6 +179,10 @@ The format is based on Keep a Changelog.
     registro do perfil preservado, diagnóstico limitado e determinístico;
 
 ### Fixed
+- **Mensagens de erro amigáveis e traduzidas (B2-09):** o terminal não mostra mais o texto da
+  exceção — um bloqueio SSRF não imprime o IP/host bloqueado e uma falha de conexão não
+  imprime a URL. Erros de rede não tratados terminam com mensagem, não com traceback.
+- **`spectre search`** passa a proteger a consulta na rede de segurança dos logs (B2-09).
 - **Validação de domínio 100% offline (B2-08):** o SPECTRE não baixa mais a Public Suffix List
   por conta própria (nem imprime traceback no stderr sem rede); usa só a lista embutida no
   pacote `tldextract`.
@@ -295,6 +305,9 @@ The format is based on Keep a Changelog.
   autoridade de consumo de B2-03B seguem intocados;
 
 ### Changed
+- **Saída compacta com ícones (B2-09):** cada perfil encontrado começa com `[+]` (ou `[~]` se
+  provável) e a linha de não verificados com `[?]`, também em pipes. O banner ASCII grande do
+  `--verbose` foi trocado pelo banner pequeno, que só aparece em terminal.
 - **Novo arquivo de log (B2-07):** os logs vão para `SPECTRE_LOGS_DIR/spectre-osint.log`. O
   `spectre.log` antigo fica onde está, sem ser misturado às linhas novas.
 - **Saída compacta por padrão (B2-06):** `spectre username` mostra só os perfis encontrados
