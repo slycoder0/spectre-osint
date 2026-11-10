@@ -17,7 +17,7 @@ spectre [OPÇÕES GLOBAIS] COMANDO [ARGUMENTOS] [OPÇÕES]
 | `--version` | Exibe a versão instalada do SPECTRE e sai. |
 | `--lang en\|pt-BR` | Idioma da saída de terminal (vence `SPECTRE_LANG` e a config salva por `spectre config lang`). |
 | `--no-banner` | Suprime o banner pequeno de 3 linhas (que só aparece em terminal). |
-| `--plain` | Saída simples: sem cor, sem banner, ícones ASCII (`[+] [~] [?]`) e sem barra de progresso. Automático com `NO_COLOR` ou quando a saída não é um terminal. |
+| `--plain` | Saída simples: sem cor, sem banner, ícones ASCII (`[+] [~] [?]`) e sem barra de progresso. Com `NO_COLOR` ou saída que não é terminal, cor, banner e ícones também ficam simples, mas a barra de progresso (stderr) continua seguindo o stderr. |
 | `--compact` | Saída compacta orientada a resumo. |
 | `--verbose` | Expande a apresentação do resultado: exibe a tabela de entidades, acrescenta a coluna de detalhe na tabela de plataformas e mantém os pivôs visíveis em modo compacto. Não altera `SPECTRE_LOG_LEVEL` nem emite logs por achado; as tabelas de entidades e de achados seguem limitadas a 40 linhas e o texto de detalhe é truncado. |
 | `--help` | Exibe a mensagem de ajuda e opções do comando. |

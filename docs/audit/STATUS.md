@@ -223,7 +223,7 @@ Fase 2, em poucas linhas (detalhes em `docs/technical/presentation.md` e `docs/t
 ## Últimos resultados dos portões (Fase 3A, 2026-11-10)
 
 ```text
-pytest -q        1251 passed in 139.17s   (local: --basetemp fora do repo)
+pytest -q        1252 passed in 127.73s   (local: --basetemp fora do repo; após o ajuste da revisão do PR #20)
 ruff check       All checks passed!
 mypy             Success: no issues found in 137 source files
 pip check        No broken requirements found.
