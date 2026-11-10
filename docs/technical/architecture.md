@@ -67,7 +67,7 @@ spectre_osint/
 
 ### CLI — `spectre_osint/cli/`
 - **Responsabilidade:** Comandos do operador, `spectre --version`, `spectre doctor`.
-- **Entradas:** `sys.argv`, `.env` e variáveis de ambiente via `Settings`; flags globais `--lang`, `--verbose`, `--debug`, `--no-banner`.
+- **Entradas:** `sys.argv`, `.env` e variáveis de ambiente via `Settings`; flags globais `--lang`, `--verbose`, `--debug`, `--no-banner`, `--plain`. Tema (cores, ícones, banner) central em `cli/theme.py`; mensagens de erro por tipo em `cli/errors.py`.
 - **Saídas:** `stdout` (Rich) com saída **compacta por padrão** (B2-06); progresso e logs opcionais em `stderr`; códigos de saída (`doctor`: 0 pronto/opcional, 1 ação necessária). Detalhes em [Camada de Apresentação](presentation.md) e [i18n](i18n.md).
 - **Fronteira:** O CLI não calcula fatos: pede ao serviço (`services/`) e entrega a view ao renderer (`cli/render.py`).
 

@@ -33,17 +33,39 @@ relatório neutro (o contrato do `--json`) e `render_doctor()` o traduz.
 
 ## 2. `spectre username` — saída compacta (padrão)
 
+Em terminal UTF-8 (com cor nos ícones, nas plataformas e na linha de não verificados):
+
 ```text
+┌─┐┌─┐┌─┐┌─┐┌┬┐┬─┐┌─┐
+└─┐├─┘├┤ │   │ ├┬┘├┤   OSINT · v0.1.0b1
+└─┘┴  └─┘└─┘ ┴ ┴└─└─┘  passive-first, public sources only
+
 alice_osint — 3 profiles found (sites checked: 8)
-  GitHub        https://github.com/alice_osint
-  Hugging Face  https://huggingface.co/alice_osint
-  Keybase       https://keybase.io/alice_osint (likely)
+  ✔ GitHub        https://github.com/alice_osint
+  ✔ Hugging Face  https://huggingface.co/alice_osint
+  ◐ Keybase       https://keybase.io/alice_osint (likely)
 
 Names observed on each platform (not proof of the same person):
   GitHub: Alice Example
   Hugging Face: A. Example
 
-4 not verified: 1 blocked, 1 needs login, 1 rate-limited, 1 inconclusive (--verbose lists them)
+? 4 not verified: 1 blocked, 1 needs login, 1 rate-limited, 1 inconclusive (--verbose lists them)
+Full report: reports/alice_osint.html
+```
+
+Em pipe / redirecionamento / `--plain` / `NO_COLOR` (sem banner, sem cor, ícones ASCII):
+
+```text
+alice_osint — 3 profiles found (sites checked: 8)
+  [+] GitHub        https://github.com/alice_osint
+  [+] Hugging Face  https://huggingface.co/alice_osint
+  [~] Keybase       https://keybase.io/alice_osint (likely)
+
+Names observed on each platform (not proof of the same person):
+  GitHub: Alice Example
+  Hugging Face: A. Example
+
+[?] 4 not verified: 1 blocked, 1 needs login, 1 rate-limited, 1 inconclusive (--verbose lists them)
 Full report: reports/alice_osint.html
 ```
 
@@ -65,16 +87,42 @@ Regras (aplicadas em `services/views.py`, testadas em `tests/test_username_prese
   `observed` validado por `read_observed()`; só para perfis encontrados; nunca um campo
   rejeitado (`rejected_by`), nunca `source_method=INPUT` (entrada do operador) e nunca um
   nome que é só o próprio handle (`is_generic_display_name`).
-- **Score e risco ficam ocultos** por padrão, assim como banner e métricas internas
+- **Score e risco ficam ocultos** por padrão, assim como métricas internas
   (entidades, relacionamentos, provedores consultados).
+
+### 2.1 Tema, ícones e banner (B2-09, Fase 3A)
+
+`cli/theme.py` concentra cores, estilos e ícones; os renderers pedem um **papel**
+(`found`, `platform`, `muted`…) e nunca escrevem um estilo Rich direto.
+
+| Ícone | ASCII | Significado |
+| :--- | :--- | :--- |
+| `✔` | `[+]` | perfil encontrado (`CONFIRMED`) |
+| `◐` | `[~]` | incerto: perfil `LIKELY` (o sufixo `(likely)` continua) |
+| `?` | `[?]` | desconhecido: a linha de não verificados (sempre, inclusive `0`) |
+
+- **Cor com moderação:** ícones, nomes de plataforma e a linha de não verificados (amarela com
+  pendências, apagada com `0`). URLs e nomes observados vêm de páginas de terceiros e saem
+  sem estilo.
+- **Banner pequeno de 3 linhas** (nada de arte ASCII grande), só em terminal: `spectre
+  username` sempre; os demais comandos só com `--verbose`. No máximo uma vez por comando.
+- **Tema simples** (sem cor, sem banner, ícones ASCII) com qualquer um de: `--plain`, `NO_COLOR`
+  não vazio, stdout que não é TTY. `--plain` também desliga a barra de progresso e o estilo
+  das seções legadas do `--verbose`.
+- **Fallback automático:** terminal cujo encoding não imprime os glifos (`cp1252`, `cp437`)
+  recebe os ícones e o banner em ASCII; a cor continua.
+- **Erros** (`_cli_fail`): `Error: …` / `Erro: …` traduzido, escolhido pelo tipo do erro em
+  `cli/errors.py`, nunca `str(exc)` (um bloqueio SSRF não mostra o IP; uma falha de conexão
+  não mostra a URL). A classe aparece via `exc_label` quando ajuda (`ConnectError`,
+  `PermissionError`).
 
 ## 3. `--verbose`
 
 Superconjunto do compacto: imprime antes as seções detalhadas (todas as plataformas com
 status, menções, descoberta, correlação de identidade, painel de score/risco, pivôs e
 métricas internas) e termina com o mesmo bloco compacto. O painel `INTELLIGENCE SUMMARY`
-não tem mais a linha `Observed name` que fundia nomes de perfis diferentes. O banner ASCII
-só aparece no `--verbose` (e respeita `--no-banner`, `SPECTRE_NO_BANNER`, `NO_BANNER`).
+não tem mais a linha `Observed name` que fundia nomes de perfis diferentes. O banner é o
+mesmo banner pequeno da seção 2.1 (respeita `--no-banner`, `SPECTRE_NO_BANNER`, `NO_BANNER`).
 
 As seções detalhadas ainda estão só em inglês (follow-up registrado em
 `docs/audit/STATUS.md`).

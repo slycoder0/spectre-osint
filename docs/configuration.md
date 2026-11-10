@@ -102,18 +102,19 @@ cp .env.example .env
 
 ### 7. Apresentação no Terminal (Idioma, Banner)
 
-Estas variáveis **não são campos de `Settings`**: são lidas diretamente do ambiente do processo (`core/i18n.py` e `_want_banner()` em `spectre_osint/cli/display.py`). Como o `Settings` carrega o `.env` apenas para os próprios campos (`env_file=".env"` com `extra="ignore"`) e o projeto não utiliza `load_dotenv`, **declará-las no arquivo `.env` não produz efeito** — elas precisam estar exportadas no ambiente do shell.
+Estas variáveis **não são campos de `Settings`**: são lidas diretamente do ambiente do processo (`core/i18n.py`, `cli/theme.py` e `print_banner()` em `spectre_osint/cli/display.py`). Como o `Settings` carrega o `.env` apenas para os próprios campos (`env_file=".env"` com `extra="ignore"`) e o projeto não utiliza `load_dotenv`, **declará-las no arquivo `.env` não produz efeito** — elas precisam estar exportadas no ambiente do shell.
 
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
 | `SPECTRE_LANG` | não definida | Idioma da saída de terminal: `en` ou `pt-BR` (aceita `pt`, `pt_BR`, `en_US`…). Perde para `--lang` e vence a config persistida e o locale do sistema. Valor não suportado é ignorado. Veja [i18n](technical/i18n.md). |
 | `SPECTRE_CONFIG_FILE` | pasta de config do usuário | Arquivo JSON de preferências (`{"language": "pt-BR"}`). Padrão: `%APPDATA%\spectre\config.json` (Windows), `~/Library/Application Support/spectre/config.json` (macOS), `$XDG_CONFIG_HOME/spectre/config.json` ou `~/.config/spectre/config.json` (demais). |
-| `SPECTRE_NO_BANNER` | não definida | Qualquer valor **não vazio** suprime o banner ASCII. Equivale à opção global `--no-banner`. |
+| `NO_COLOR` | não definida | Qualquer valor **não vazio** ([no-color.org](https://no-color.org)) desliga cor, banner e ícones Unicode, como `--plain` (a barra de progresso continua). |
+| `SPECTRE_NO_BANNER` | não definida | Qualquer valor **não vazio** suprime o banner. Equivale à opção global `--no-banner`. |
 | `NO_BANNER` | não definida | Mesma semântica, na convenção genérica sem prefixo. Qualquer valor não vazio também suprime o banner. |
 
 Limites que o operador precisa conhecer:
 
-- **Desde a B2-06 o banner só aparece com `--verbose`.** A saída padrão é compacta e não tem banner; as variáveis acima e `--no-banner` o suprimem também no modo verbose.
+- **Desde a B2-09 (Fase 3A) o banner é pequeno (3 linhas) e só aparece em terminal**: em `spectre username` e, nos demais comandos, com `--verbose`. Pipes, redirecionamentos, `--plain` e `NO_COLOR` nunca recebem banner; as variáveis acima e `--no-banner` o suprimem também em terminal.
 - **O valor não é interpretado como booleano.** Apenas a presença de uma string não vazia é testada, portanto `SPECTRE_NO_BANNER=0` e `SPECTRE_NO_BANNER=false` **também suprimem** o banner. Para manter o banner, deixe a variável indefinida (ou com string vazia).
 - **Basta uma das três formas.** `--no-banner`, `SPECTRE_NO_BANNER` e `NO_BANNER` são verificadas de forma independente; qualquer uma delas ativa é suficiente.
 - **O escopo é apenas o banner.** Suprimi-lo não altera o resultado, o nível de log, nem a apresentação controlada por `--verbose`. Logs vão só para `SPECTRE_LOGS_DIR/spectre-osint.log` (sem dados do alvo; o `spectre.log` de versões anteriores pode conter e nunca é tocado); no terminal, apenas com `--verbose` (INFO) ou `--debug` (DEBUG), sempre em stderr.
