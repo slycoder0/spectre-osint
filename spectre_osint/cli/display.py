@@ -25,6 +25,7 @@ from rich.table import Table
 
 from spectre_osint import __version__
 from spectre_osint.cli.render import render_username
+from spectre_osint.cli.theme import Theme, resolve_theme
 from spectre_osint.core.entities import InvestigationResult
 from spectre_osint.core.logger import setup_logging
 from spectre_osint.core.presentation import (
@@ -114,6 +115,11 @@ def configure_display(
 
 def display_options() -> DisplayOptions:
     return _OPTIONS
+
+
+def current_theme() -> Theme:
+    """The theme for stdout right now (resolved per call: tests and the menu swap stdout)."""
+    return resolve_theme()
 
 
 def configure_cli_logging(file_level: str, logs_dir: Path) -> None:
@@ -224,7 +230,7 @@ def print_result(result: InvestigationResult) -> None:
             _print_pivots(result)
             _print_metrics(result)
             console.print()
-        render_username(build_username_view(result), console, verbose=verbose)
+        render_username(build_username_view(result), console, verbose=verbose, theme=current_theme())
         return
 
     _print_header(result)

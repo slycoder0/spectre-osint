@@ -55,13 +55,13 @@ def test_username_result_with_only_the_sweep_finding_stays_compact(capsys) -> No
     print_result(_result(EntityType.USERNAME, [_sweep()]))
     out = strip_ansi(capsys.readouterr().out)
     assert out.splitlines()[0] == "alice_osint — 0 profiles found (sites checked: 0)"
-    assert "0 not verified" in out.splitlines()
+    assert "[?] 0 not verified" in out.splitlines()
     assert "Findings" not in out
 
 
 def test_sweep_finding_alone_triggers_the_compact_view_whatever_the_target_type(capsys) -> None:
     print_result(_result(EntityType.PERSON, [_sweep()], target="Alice Example"))
-    assert "0 not verified" in strip_ansi(capsys.readouterr().out).splitlines()
+    assert "[?] 0 not verified" in strip_ansi(capsys.readouterr().out).splitlines()
 
 
 def test_email_and_domain_keep_the_legacy_table(capsys) -> None:

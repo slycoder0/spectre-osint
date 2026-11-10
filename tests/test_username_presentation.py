@@ -247,29 +247,29 @@ def test_search_candidates_and_mentions_are_never_found_profiles() -> None:
 
 EN_SNAPSHOT = """\
 alice_osint — 3 profiles found (sites checked: 8)
-  GitHub        https://github.com/alice_osint
-  Hugging Face  https://huggingface.co/alice_osint
-  Keybase       https://keybase.io/alice_osint (likely)
+  [+] GitHub        https://github.com/alice_osint
+  [+] Hugging Face  https://huggingface.co/alice_osint
+  [~] Keybase       https://keybase.io/alice_osint (likely)
 
 Names observed on each platform (not proof of the same person):
   GitHub: Alice Example
   Hugging Face: A. Example
 
-4 not verified: 1 blocked, 1 needs login, 1 rate-limited, 1 inconclusive (--verbose lists them)
+[?] 4 not verified: 1 blocked, 1 needs login, 1 rate-limited, 1 inconclusive (--verbose lists them)
 Full report: reports/alice_osint.html
 """
 
 PT_BR_SNAPSHOT = """\
 alice_osint — 3 perfis encontrados (sites consultados: 8)
-  GitHub        https://github.com/alice_osint
-  Hugging Face  https://huggingface.co/alice_osint
-  Keybase       https://keybase.io/alice_osint (provável)
+  [+] GitHub        https://github.com/alice_osint
+  [+] Hugging Face  https://huggingface.co/alice_osint
+  [~] Keybase       https://keybase.io/alice_osint (provável)
 
 Nomes observados em cada plataforma (não prova que sejam a mesma pessoa):
   GitHub: Alice Example
   Hugging Face: A. Example
 
-4 não verificados: 1 bloqueado, 1 exige login, 1 com limite de requisições, 1 inconclusivo (--verbose mostra quais)
+[?] 4 não verificados: 1 bloqueado, 1 exige login, 1 com limite de requisições, 1 inconclusivo (--verbose mostra quais)
 Relatório completo: reports/alice_osint.html
 """
 
@@ -289,9 +289,9 @@ def test_unverified_line_is_present_even_at_zero() -> None:
     only_found = _result([_site("GitHub", "CONFIRMED", url="https://github.com/alice_osint")])
     assert _render(build_username_view(only_found)) == (
         "alice_osint — 1 profile found (sites checked: 1)\n"
-        "  GitHub  https://github.com/alice_osint\n"
+        "  [+] GitHub  https://github.com/alice_osint\n"
         "\n"
-        "0 not verified\n"
+        "[?] 0 not verified\n"
     )
 
 
@@ -299,7 +299,7 @@ def test_unverified_line_is_present_with_no_rows_at_all() -> None:
     set_language("pt-BR")
     out = _render(build_username_view(_result([])))
     assert out.splitlines()[0] == "alice_osint — 0 perfis encontrados (sites consultados: 0)"
-    assert "0 não verificados" in out.splitlines()
+    assert "[?] 0 não verificados" in out.splitlines()
 
 
 def test_hint_is_omitted_in_verbose_mode() -> None:
